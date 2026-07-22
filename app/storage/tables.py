@@ -3,7 +3,17 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.storage.database import Base
@@ -24,6 +34,19 @@ class UserRow(Base):
     display_name: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     facts: Mapped[list[ProfileFactRow]] = relationship(cascade="all, delete-orphan")
+
+
+class LlmPreferenceRow(Base):
+    __tablename__ = "llm_preferences"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    provider: Mapped[str] = mapped_column(String(50))
+    model: Mapped[str] = mapped_column(String(200))
+    encrypted_api_key: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class CvFileRow(Base):
@@ -113,6 +136,9 @@ class ApplicationAnswerRow(Base):
 
 class WorkflowTaskRow(Base):
     __tablename__ = "workflow_tasks"
+    __table_args__ = (
+        Index("ix_workflow_tasks_queue_claim", "queue_name", "state", "scheduled_for"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     application_id: Mapped[str | None] = mapped_column(ForeignKey("applications.id"), nullable=True)

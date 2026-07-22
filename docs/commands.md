@@ -115,8 +115,8 @@ Upload a CV with the API after creating a user:
 curl.exe -F "file=@C:\path\resume.pdf;type=application/pdf" http://localhost:8000/v1/users/{user_id}/cv-files
 ```
 
-Only PDF and DOCX files are accepted. The default maximum size is 5 MiB; stored names are generated
-UUIDs and the original filename is retained only as metadata.
+PDF, DOCX, DOC, TXT, RTF, ODT, HTML/HTM, and Markdown files are accepted. The default maximum size
+is 5 MiB; stored names are generated UUIDs and the original filename is retained only as metadata.
 
 With Compose running, verify the complete upload-to-review path and cleanup:
 

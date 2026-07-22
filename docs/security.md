@@ -1,6 +1,8 @@
 # Security model
 
-- Credentials come from environment variables; `.env` is ignored.
+- Deployment credentials come from environment variables; `.env` is ignored by version control.
+  Per-user LLM API keys may be entered in the dashboard and are stored in PostgreSQL only after
+  Fernet authenticated encryption. API responses expose only whether a key is configured.
 - Production configuration refuses to start without `APP_API_KEY` or `APP_API_CLIENTS_JSON`.
   A legacy `APP_API_KEY` is an administrator key; the JSON alternative maps multiple constant-time
   checked keys to least-privilege scopes such as `profiles:write`, `profiles:delete`,
@@ -15,8 +17,9 @@
   a wrong key marks the saved state corrupted.
 - Browser-state reads, replacement, retention, and user deletion are root-confined. PostgreSQL stores
   only a relative encrypted-file path and nonsensitive lifecycle metadata.
-- Uploaded files accept only PDF/DOCX, enforce MIME/extension/signature or ZIP structure and size,
-  use generated storage names, and permit deletion only under the configured artifact root.
+- Uploaded resumes use an extension/MIME allowlist, validate signatures or archive structure where
+  applicable, enforce size limits, use generated storage names, and permit deletion only under the
+  configured artifact root.
 - Tool invocations require explicit scopes and record status-only audit events without input payloads.
 - Retention cleanup resolves every path under the configured artifact root before deletion.
 - External Greenhouse reads accept only an exact hostname allowlist over HTTPS on the standard port,

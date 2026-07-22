@@ -101,9 +101,14 @@ fixture. Docker Compose health checks will be run when Docker is available.
 - 2026-07-18: Browser review screenshots are now registered as protected evidence together with the
   human checkpoint and final task transition. Application review resolves only through an explicit
   decision, preventing the generic resume action from rerunning a completed form preparation loop.
+- 2026-07-22: Added Anthropic/Gemini selection, live provider model discovery, encrypted per-user
+  API-key persistence, user-bound model routing, extended resume formats, and migrations `0011` and
+  `0012`. Live Gemini discovery returned 41 models and the saved key was absent from API responses.
+  Ruff, mypy, 127 tests, Alembic drift check, Docker builds, and port-8000 smoke tests passed.
 
 ## Final result
 
 The initial controlled operational increment is implemented and locally verified. It reaches a
 durable screenshot-backed review checkpoint without external submission, survives restart, and
-runs with PostgreSQL, Redis, API, dispatcher, and retention services under Docker Compose.
+runs with PostgreSQL, Redis, API, dispatcher, and retention services under Docker Compose. The
+dashboard now also supports encrypted per-user LLM settings and expanded resume ingestion.

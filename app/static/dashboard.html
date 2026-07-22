@@ -58,17 +58,32 @@
       <h2>0. Доступ</h2>
       <div class="hint">API-ключ (если сервис настроен без ключа — оставьте пустым). ID пользователя сохраняется в браузере.</div>
       <div class="row">
-        <div><label>API key</label><input id="api-key" type="password" autocomplete="off"></div>
+        <div><label>Ключ доступа к приложению</label><input id="api-key" type="password" autocomplete="off" placeholder="обычно пусто для локального запуска"></div>
         <div><label>User ID</label><input id="user-id" placeholder="ещё не создан"></div>
         <div style="flex:0"><button id="create-user" type="button">Создать пользователя</button></div>
       </div>
     </section>
 
     <section class="step">
-      <h2>1. Резюме</h2>
-      <div class="hint">PDF или DOCX. Мы извлечём текст и попросим модель выделить навыки и суммировать опыт — вы всё сможете поправить перед сохранением.</div>
+      <h2>1. Языковая модель</h2>
+      <div class="hint">Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Получите список доступных моделей, выберите одну и сохраните.</div>
       <div class="row">
-        <div><input id="resume-file" type="file" accept=".pdf,.docx"></div>
+        <div><label>Провайдер</label><select id="llm-provider"><option value="gemini">Google Gemini</option><option value="anthropic">Anthropic Claude</option></select></div>
+        <div><label>API-ключ провайдера</label><input id="llm-api-key" type="password" autocomplete="new-password" placeholder="вставьте ключ"></div>
+        <div style="flex:0"><button id="load-models" type="button">Получить модели</button></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label>Модель</label><select id="llm-model"><option value="">сначала получите список</option></select></div>
+        <div style="flex:0"><button id="save-llm" type="button" class="primary">Сохранить настройку</button></div>
+      </div>
+      <div id="llm-state" class="task-state"></div>
+    </section>
+
+    <section class="step">
+      <h2>2. Резюме</h2>
+      <div class="hint">PDF, DOCX, DOC, TXT, RTF, ODT, HTML или Markdown. Мы извлечём текст и попросим выбранную модель выделить навыки и суммировать опыт.</div>
+      <div class="row">
+        <div><input id="resume-file" type="file" accept=".pdf,.docx,.doc,.txt,.rtf,.odt,.html,.htm,.md"></div>
         <div style="flex:0"><button id="upload-resume" type="button" class="primary">Загрузить и проанализировать</button></div>
       </div>
       <div id="draft-block" style="display:none; margin-top:16px;">
@@ -85,7 +100,7 @@
     </section>
 
     <section class="step">
-      <h2>2. Локации</h2>
+      <h2>3. Локации</h2>
       <div class="hint">Через запятую, например: Москва, Санкт-Петербург. Оставьте пустым для поиска везде.</div>
       <div class="row">
         <div><input id="locations" placeholder="везде"></div>
@@ -94,7 +109,7 @@
     </section>
 
     <section class="step">
-      <h2>3. Поиск</h2>
+      <h2>4. Поиск</h2>
       <div class="hint">Ищем через управляемый браузер, а не API. Для LinkedIn сначала сохраните свою сессию командой из README.</div>
       <div class="chips" style="margin-bottom:14px;">
         <label class="chip"><input id="source-headhunter" type="checkbox" checked> hh.ru</label>
@@ -147,13 +162,60 @@
 
     let lastCvFileId = null;
 
+    async function loadSavedLlmPreference() {
+      const userId = userIdInput.value.trim();
+      if (!userId) return;
+      const response = await fetch(`/v1/users/${userId}/llm-preference`, {headers: headers(false)});
+      if (!response.ok) return;
+      const preference = await response.json();
+      if (!preference) return;
+      document.querySelector('#llm-provider').value = preference.provider;
+      const modelSelect = document.querySelector('#llm-model');
+      modelSelect.replaceChildren(new Option(preference.model, preference.model, true, true));
+      document.querySelector('#llm-state').textContent = `Сохранено: ${preference.provider} / ${preference.model}. Ключ уже настроен.`;
+    }
+
+    document.querySelector('#load-models').addEventListener('click', async () => {
+      try {
+        const provider = document.querySelector('#llm-provider').value;
+        const apiKey = document.querySelector('#llm-api-key').value.trim();
+        if (!apiKey) throw new Error('Введите API-ключ провайдера');
+        showStatus('Получаем доступные модели…');
+        const payload = await asJson(await fetch('/v1/llm/models', {
+          method: 'POST', headers: headers(true), body: JSON.stringify({provider, api_key: apiKey})
+        }));
+        const modelSelect = document.querySelector('#llm-model'); modelSelect.replaceChildren();
+        payload.models.forEach(model => modelSelect.append(new Option(model, model)));
+        if (!payload.models.length) throw new Error('Провайдер не вернул подходящих моделей');
+        showStatus(`Доступно моделей: ${payload.models.length}`);
+      } catch (error) { showError(error); }
+    });
+
+    document.querySelector('#save-llm').addEventListener('click', async () => {
+      try {
+        const userId = userIdInput.value.trim();
+        if (!userId) throw new Error('Сначала создайте пользователя');
+        const provider = document.querySelector('#llm-provider').value;
+        const model = document.querySelector('#llm-model').value;
+        if (!model) throw new Error('Выберите модель');
+        const apiKey = document.querySelector('#llm-api-key').value.trim();
+        const body = {provider, model}; if (apiKey) body.api_key = apiKey;
+        const preference = await asJson(await fetch(`/v1/users/${userId}/llm-preference`, {
+          method: 'PUT', headers: headers(true), body: JSON.stringify(body)
+        }));
+        document.querySelector('#llm-api-key').value = '';
+        document.querySelector('#llm-state').textContent = `Сохранено: ${preference.provider} / ${preference.model}.`;
+        showStatus('Настройка LLM сохранена в зашифрованном виде.');
+      } catch (error) { showError(error); }
+    });
+
     document.querySelector('#upload-resume').addEventListener('click', async () => {
       try {
         sessionStorage.setItem('dashboardApiKey', keyInput.value);
         const userId = userIdInput.value.trim();
         if (!userId) throw new Error('Сначала создайте или укажите User ID');
         const file = document.querySelector('#resume-file').files[0];
-        if (!file) throw new Error('Выберите файл резюме (PDF или DOCX)');
+        if (!file) throw new Error('Выберите файл резюме');
         showStatus('Загружаем резюме…');
         const form = new FormData(); form.append('file', file);
         const cvFile = await asJson(await fetch(`/v1/users/${userId}/cv-files`, {
@@ -275,6 +337,7 @@
         showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
       } catch (error) { showError(error); }
     });
+    loadSavedLlmPreference();
   </script>
 </body>
 </html>

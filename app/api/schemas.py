@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, SecretStr
 
 
 class VacancyRequest(BaseModel):
@@ -252,6 +252,27 @@ class ConfirmedProfileFactResponse(BaseModel):
     name: str
     value: str
     is_verified: bool
+
+
+class LlmModelsRequest(BaseModel):
+    provider: Literal["anthropic", "gemini"]
+    api_key: SecretStr
+
+
+class LlmModelsResponse(BaseModel):
+    models: list[str]
+
+
+class LlmPreferenceUpdateRequest(BaseModel):
+    provider: Literal["anthropic", "gemini"]
+    model: str = Field(min_length=1, max_length=200)
+    api_key: SecretStr | None = None
+
+
+class LlmPreferenceResponse(BaseModel):
+    provider: Literal["anthropic", "gemini"]
+    model: str
+    api_key_configured: bool = True
 
 
 class DiscoverHeadHunterVacanciesRequest(BaseModel):

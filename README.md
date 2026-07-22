@@ -41,8 +41,8 @@ docker compose --profile browser up --build -d
 ## API
 
 With the supplied Docker configuration, the personal dashboard is available at
-`http://127.0.0.1:8001/dashboard`; the detailed review queue is available at
-`http://127.0.0.1:8001/review`. Set `APP_HTTP_PORT` in `.env` to choose another host port.
+`http://127.0.0.1:8000/dashboard`; the detailed review queue is available at
+`http://127.0.0.1:8000/review`. Set `APP_HTTP_PORT` in `.env` to choose another host port.
 
 ### Enable browser search and submission
 
@@ -64,13 +64,25 @@ python scripts/browser_login_capture.py linkedin --user-id <user-id>
 The script never asks for a password or verification code. You enter them directly on the site.
 CAPTCHA and verification checkpoints are never bypassed automatically.
 
+### Choose an LLM in the dashboard
+
+After creating a user, select Google Gemini or Anthropic Claude in `/dashboard`, paste the
+provider API key, and click **Get models**. The list is loaded from the provider's official model
+API. Select a model and save it. The API key is encrypted with
+`APP_BROWSER_STATE_ENCRYPTION_KEY` before PostgreSQL persistence and is never returned to the
+browser. Environment-based LLM settings remain a fallback for users without a saved preference.
+
+Resume upload accepts PDF, DOCX, legacy DOC (best-effort text recovery), TXT, RTF, ODT, HTML/HTM,
+and Markdown. Scanned/image-only documents still require OCR before upload.
+
 - `GET /health` and `GET /ready`
 - `GET /metrics`
 - `GET /v1/connectors` for explicit capabilities and safety limitations
 - `POST /v1/connectors/browser-handoff` for manual hh.ru/LinkedIn browser continuation
 - `POST /v1/assessments`
 - `POST /v1/users` and `POST /v1/users/{user_id}/facts`
-- `POST /v1/users/{user_id}/cv-files` for validated PDF/DOCX CV uploads
+- `POST /v1/users/{user_id}/cv-files` for validated resume uploads
+- `POST /v1/llm/models` and `GET/PUT /v1/users/{user_id}/llm-preference` for user LLM setup
 - `DELETE /v1/users/{user_id}` for profile/application/task deletion
 - `POST /v1/vacancies` and `POST /v1/applications/prepare`
 - `GET /v1/applications/{application_id}/task` for durable dispatch evidence

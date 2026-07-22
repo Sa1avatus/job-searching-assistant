@@ -23,8 +23,15 @@ class SavedDocument:
 
 
 ALLOWED_DOCUMENTS: dict[str, tuple[str, ...]] = {
+    ".doc": ("application/msword", "application/octet-stream"),
     ".docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document",),
+    ".html": ("text/html", "application/xhtml+xml"),
+    ".htm": ("text/html", "application/xhtml+xml"),
+    ".md": ("text/markdown", "text/plain"),
+    ".odt": ("application/vnd.oasis.opendocument.text",),
     ".pdf": ("application/pdf",),
+    ".rtf": ("application/rtf", "text/rtf", "text/plain"),
+    ".txt": ("text/plain", "application/octet-stream"),
 }
 
 
@@ -43,7 +50,7 @@ class DocumentStorage:
             raise InvalidDocumentError("Document filename is invalid")
         extension = Path(normalized_filename).suffix.casefold()
         if extension not in ALLOWED_DOCUMENTS:
-            raise InvalidDocumentError("Only PDF and DOCX documents are supported")
+            raise InvalidDocumentError("Unsupported resume document format")
         if content_type not in ALLOWED_DOCUMENTS[extension]:
             raise InvalidDocumentError("Document extension and content type do not match")
         if not content or len(content) > self._max_document_bytes:
@@ -52,6 +59,12 @@ class DocumentStorage:
             raise InvalidDocumentError("PDF signature is invalid")
         if extension == ".docx" and not self._is_docx(content):
             raise InvalidDocumentError("DOCX structure is invalid")
+        if extension == ".doc" and not content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+            raise InvalidDocumentError("DOC structure is invalid")
+        if extension == ".odt" and not self._is_odt(content):
+            raise InvalidDocumentError("ODT structure is invalid")
+        if extension == ".rtf" and not content.lstrip().startswith(b"{\\rtf"):
+            raise InvalidDocumentError("RTF structure is invalid")
 
         self._root_directory.mkdir(parents=True, exist_ok=True)
         storage_path = self._root_directory / f"{uuid.uuid4()}{extension}"
@@ -94,3 +107,11 @@ class DocumentStorage:
         except (zipfile.BadZipFile, OSError):
             return False
         return "[Content_Types].xml" in names and "word/document.xml" in names
+
+    @staticmethod
+    def _is_odt(content: bytes) -> bool:
+        try:
+            with zipfile.ZipFile(BytesIO(content)) as archive:
+                return "content.xml" in archive.namelist()
+        except (zipfile.BadZipFile, OSError):
+            return False

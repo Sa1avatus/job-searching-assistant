@@ -59,6 +59,10 @@ from app.api.schemas import (
     HumanActionResumeRequest,
     ImportedVacancyResponse,
     LinkedInReferenceImportRequest,
+    LlmModelsRequest,
+    LlmModelsResponse,
+    LlmPreferenceResponse,
+    LlmPreferenceUpdateRequest,
     PrepareApplicationRequest,
     ProfileFactRequest,
     ProfileFactResponse,
@@ -79,6 +83,13 @@ from app.config import Settings, get_settings
 from app.domain.models import ProfileFact, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy
 from app.domain.resume_text import UnreadableResumeError, extract_resume_text
+from app.llm.preferences import (
+    InvalidLlmPreference,
+    LlmModelDiscoveryError,
+    LlmPreferenceNotFound,
+    LlmPreferenceService,
+    fetch_available_models,
+)
 from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
 from app.llm.router import ModelProvider, ModelRouter, NoModelAvailableError
@@ -103,7 +114,13 @@ from app.services.resume_intake import ResumeIntakeService
 from app.storage.database import SessionFactory, session_scope
 from app.storage.documents import DocumentStorage, InvalidDocumentError
 from app.storage.evidence_artifacts import EvidenceArtifactStorage, InvalidEvidenceArtifact
-from app.storage.tables import ApplicationRow, CvFileRow, WorkerHeartbeatRow, WorkflowTaskRow
+from app.storage.tables import (
+    ApplicationRow,
+    CvFileRow,
+    LlmPreferenceRow,
+    WorkerHeartbeatRow,
+    WorkflowTaskRow,
+)
 from app.workers.browser_tasks import _restore_browser_session
 from app.workers.browser_worker import create_session_store
 
@@ -201,6 +218,34 @@ def build_model_providers(
             )
         )
     return tuple(providers)
+
+
+def _llm_preference_service(session: Session, settings: Settings) -> LlmPreferenceService:
+    encryption_key = _configured_secret(settings.browser_state_encryption_key)
+    if encryption_key is None:
+        raise InvalidLlmPreference("APP_BROWSER_STATE_ENCRYPTION_KEY is required")
+    return LlmPreferenceService(session, encryption_key=encryption_key)
+
+
+def build_user_model_providers(
+    http_client: httpx.AsyncClient,
+    session: Session,
+    user_id: str,
+    settings: Settings,
+) -> tuple[ModelProvider, ...]:
+    encryption_key = _configured_secret(settings.browser_state_encryption_key)
+    if encryption_key is None:
+        return build_model_providers(http_client, settings)
+    preference = LlmPreferenceService(session, encryption_key=encryption_key).load(user_id)
+    if preference is None:
+        return build_model_providers(http_client, settings)
+    if preference.provider == "anthropic":
+        return (
+            AnthropicMessagesProvider(
+                http_client, api_key=preference.api_key, model=preference.model
+            ),
+        )
+    return (GeminiProvider(http_client, api_key=preference.api_key, model=preference.model),)
 
 
 async def model_router() -> AsyncIterator[ModelRouter]:
@@ -412,6 +457,56 @@ def create_user(
     return UserResponse(id=user.id, display_name=user.display_name)
 
 
+@app.post("/v1/llm/models", response_model=LlmModelsResponse)
+async def list_llm_models(
+    request: LlmModelsRequest,
+    http_client: Annotated[httpx.AsyncClient, Depends(headhunter_http_client)],
+) -> LlmModelsResponse:
+    try:
+        models = await fetch_available_models(
+            http_client,
+            provider=request.provider,
+            api_key=request.api_key.get_secret_value(),
+        )
+    except (InvalidLlmPreference, LlmModelDiscoveryError, httpx.HTTPError) as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return LlmModelsResponse(models=models)
+
+
+@app.get(
+    "/v1/users/{user_id}/llm-preference",
+    response_model=LlmPreferenceResponse | None,
+)
+def get_llm_preference(
+    user_id: str, session: Annotated[Session, Depends(session_scope)]
+) -> LlmPreferenceResponse | None:
+    row = session.get(LlmPreferenceRow, user_id)
+    if row is None:
+        return None
+    return LlmPreferenceResponse(provider=row.provider, model=row.model)  # type: ignore[arg-type]
+
+
+@app.put("/v1/users/{user_id}/llm-preference", response_model=LlmPreferenceResponse)
+def update_llm_preference(
+    user_id: str,
+    request: LlmPreferenceUpdateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> LlmPreferenceResponse:
+    settings = get_settings()
+    try:
+        row = _llm_preference_service(session, settings).save(
+            user_id=user_id,
+            provider=request.provider,
+            model=request.model,
+            api_key=request.api_key.get_secret_value() if request.api_key is not None else None,
+        )
+    except LlmPreferenceNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InvalidLlmPreference as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return LlmPreferenceResponse(provider=row.provider, model=row.model)  # type: ignore[arg-type]
+
+
 @app.post(
     "/v1/users/{user_id}/facts",
     response_model=ProfileFactResponse,
@@ -485,7 +580,7 @@ async def extract_profile_from_cv(
     user_id: str,
     cv_file_id: str,
     session: Annotated[Session, Depends(session_scope)],
-    router: Annotated[ModelRouter, Depends(model_router)],
+    http_client: Annotated[httpx.AsyncClient, Depends(headhunter_http_client)],
     storage: Annotated[DocumentStorage, Depends(document_storage)],
 ) -> ExtractedProfileResponse:
     """Draft skills/summary/search keywords from an uploaded resume. Writes nothing yet.
@@ -495,7 +590,11 @@ async def extract_profile_from_cv(
     profile facts. Requires APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY to be set.
     """
     settings = get_settings()
-    if not llm_is_configured(settings):
+    try:
+        providers = build_user_model_providers(http_client, session, user_id, settings)
+    except InvalidLlmPreference as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    if not providers:
         raise HTTPException(
             status_code=503,
             detail=(
@@ -512,7 +611,7 @@ async def extract_profile_from_cv(
     except (OSError, UnreadableResumeError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     try:
-        draft = await ResumeIntakeService(router).draft_profile(resume_text)
+        draft = await ResumeIntakeService(ModelRouter(providers)).draft_profile(resume_text)
     except NoModelAvailableError as error:
         raise HTTPException(status_code=502, detail=f"Resume analysis failed: {error}") from error
     return ExtractedProfileResponse(
@@ -592,8 +691,9 @@ async def discover_headhunter_vacancies(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except NoSearchKeywordsError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    if llm_is_configured(settings):
-        materials_router = ModelRouter(build_model_providers(http_client, settings))
+    providers = build_user_model_providers(http_client, session, user_id, settings)
+    if providers:
+        materials_router = ModelRouter(providers)
         materials_service = MaterialsGenerationService(session, materials_router)
         for outcome in outcomes:
             if outcome.status != "created":
@@ -664,8 +764,9 @@ async def discover_linkedin_vacancies(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except LinkedInSessionRequiredError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    if llm_is_configured(settings):
-        materials_router = ModelRouter(build_model_providers(http_client, settings))
+    providers = build_user_model_providers(http_client, session, user_id, settings)
+    if providers:
+        materials_router = ModelRouter(providers)
         materials_service = MaterialsGenerationService(session, materials_router)
         for outcome in outcomes:
             if outcome.status != "created":
@@ -1118,7 +1219,7 @@ def _materials_response(application: ApplicationRow) -> ApplicationMaterialsResp
 async def generate_application_materials(
     application_id: str,
     session: Annotated[Session, Depends(session_scope)],
-    router: Annotated[ModelRouter, Depends(model_router)],
+    http_client: Annotated[httpx.AsyncClient, Depends(headhunter_http_client)],
 ) -> ApplicationMaterialsResponse:
     """Draft a cover letter and open screening answers from the candidate's verified facts.
 
@@ -1129,7 +1230,14 @@ async def generate_application_materials(
     app/services/materials_generation.py. Requires APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY.
     """
     settings = get_settings()
-    if not llm_is_configured(settings):
+    application = session.get(ApplicationRow, application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+    try:
+        providers = build_user_model_providers(http_client, session, application.user_id, settings)
+    except InvalidLlmPreference as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    if not providers:
         raise HTTPException(
             status_code=503,
             detail=(
@@ -1137,7 +1245,9 @@ async def generate_application_materials(
             ),
         )
     try:
-        await MaterialsGenerationService(session, router).draft_materials(application_id)
+        await MaterialsGenerationService(session, ModelRouter(providers)).draft_materials(
+            application_id
+        )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except NoVerifiedFactsError as error:
@@ -1146,9 +1256,6 @@ async def generate_application_materials(
         raise HTTPException(
             status_code=502, detail=f"Materials drafting failed: {error}"
         ) from error
-    application = session.get(ApplicationRow, application_id)
-    if application is None:
-        raise HTTPException(status_code=404, detail="Application not found")
     return _materials_response(application)
 
 

@@ -34,6 +34,9 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert "apply-headhunter" in response.text
     assert "apply-linkedin" in response.text
     assert "source-linkedin" in response.text
+    assert "/v1/llm/models" in response.text
+    assert "llm-preference" in response.text
+    assert ".doc,.txt,.rtf,.odt,.html,.htm,.md" in response.text
 
 
 def test_assessment_returns_grounded_gap() -> None:

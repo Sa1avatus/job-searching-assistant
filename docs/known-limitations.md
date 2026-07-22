@@ -67,7 +67,8 @@
 - Human-action/CAPTCHA checkpoints and encrypted Playwright storage state are durable. The worker
   does not yet reconnect an open tab, preserve in-memory JavaScript state, or automatically resume
   an external action; recovery starts a new context from cookies/localStorage.
-- Resume text extraction (`app/domain/resume_text.py`) handles PDF and DOCX; scanned/image-only
-  PDFs will yield little or no extractable text and are rejected rather than silently proceeding.
+- Resume text extraction handles PDF, DOCX, DOC, TXT, RTF, ODT, HTML/HTM, and Markdown. Legacy DOC
+  recovery is best-effort; scanned/image-only files still require OCR and are rejected when they
+  yield too little usable text.
 - The personal dashboard (`/dashboard`) drives both hh.ru and LinkedIn discovery. LinkedIn search
   still requires an explicitly enabled connector and a previously captured signed-in session.
