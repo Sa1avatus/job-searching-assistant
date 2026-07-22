@@ -9,9 +9,14 @@ services:
       APP_MAX_DOCUMENT_BYTES: 5242880
       APP_HH_USER_AGENT: ${APP_HH_USER_AGENT:-JobSearchingAssistant/0.1 (local personal assistant)}
       APP_HH_ACCESS_TOKEN: ${APP_HH_ACCESS_TOKEN:-}
+      APP_BROWSER_STATE_ENCRYPTION_KEY: ${APP_BROWSER_STATE_ENCRYPTION_KEY:-}
+      APP_ENABLE_HEADHUNTER_APPLY: ${APP_ENABLE_HEADHUNTER_APPLY:-false}
+      APP_ENABLE_LINKEDIN_APPLY: ${APP_ENABLE_LINKEDIN_APPLY:-false}
+      APP_ANTHROPIC_API_KEY: ${APP_ANTHROPIC_API_KEY:-}
+      APP_GEMINI_API_KEY: ${APP_GEMINI_API_KEY:-}
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.api.main:app --host 0.0.0.0 --port 8000"]
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${APP_HTTP_PORT:-8001}:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -23,7 +28,7 @@ services:
       timeout: 3s
       retries: 5
     volumes:
-      - recruitment-artifacts:/app/.artifacts
+      - ./.artifacts:/app/.artifacts
 
   postgres:
     image: postgres:16-alpine
@@ -56,7 +61,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     volumes:
-      - recruitment-artifacts:/app/.artifacts
+      - ./.artifacts:/app/.artifacts
 
   dispatcher:
     build: .
@@ -87,6 +92,8 @@ services:
       APP_REDIS_URL: redis://redis:6379/0
       APP_ARTIFACT_DIRECTORY: /app/.artifacts
       APP_BROWSER_STATE_ENCRYPTION_KEY: ${APP_BROWSER_STATE_ENCRYPTION_KEY:-}
+      APP_ENABLE_HEADHUNTER_APPLY: ${APP_ENABLE_HEADHUNTER_APPLY:-false}
+      APP_ENABLE_LINKEDIN_APPLY: ${APP_ENABLE_LINKEDIN_APPLY:-false}
       APP_MAX_BROWSER_STATE_BYTES: 2097152
       APP_WORKER_POLL_SECONDS: 2
     command: ["python", "-m", "app.workers.browser_worker"]
@@ -99,7 +106,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     volumes:
-      - recruitment-artifacts:/app/.artifacts
+      - ./.artifacts:/app/.artifacts
 
   redis:
     image: redis:7-alpine
@@ -117,4 +124,3 @@ services:
 volumes:
   recruitment-postgres:
   recruitment-redis:
-  recruitment-artifacts:

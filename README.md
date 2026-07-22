@@ -25,7 +25,7 @@ python -m venv .venv
 python -m pip install -e ".[dev]"
 playwright install chromium
 Copy-Item .env.example .env
-docker compose up --build -d
+docker compose --profile browser up --build -d
 ```
 
 ## Safety defaults
@@ -40,8 +40,9 @@ docker compose up --build -d
 
 ## API
 
-The personal dashboard is available at `http://127.0.0.1:8000/dashboard`; the detailed review
-queue is available at `http://127.0.0.1:8000/review`.
+With the supplied Docker configuration, the personal dashboard is available at
+`http://127.0.0.1:8001/dashboard`; the detailed review queue is available at
+`http://127.0.0.1:8001/review`. Set `APP_HTTP_PORT` in `.env` to choose another host port.
 
 ### Enable browser search and submission
 
