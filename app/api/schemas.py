@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl, SecretStr
@@ -306,6 +307,27 @@ class DiscoveryOutcomeResponse(BaseModel):
     source_url: str
     match_score: int
     status: str
+
+
+class SavedVacancyResponse(BaseModel):
+    application_id: str
+    vacancy_id: str
+    title: str
+    company: str
+    source_url: str
+    location: str
+    match_score: int
+    status: str
+    source: Literal["headhunter", "linkedin", "registry", "other"]
+    created_at: datetime
+
+
+class SavedVacancyPageResponse(BaseModel):
+    items: list[SavedVacancyResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
 
 
 class DiscoverLinkedInVacanciesRequest(BaseModel):

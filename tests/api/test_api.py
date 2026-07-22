@@ -48,6 +48,10 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert "linkedin-login" in response.text
     assert "Я вошёл — сохранить" in response.text
     assert ".doc,.txt,.rtf,.odt,.html,.htm,.md" in response.text
+    assert "Все сохранённые вакансии" in response.text
+    assert "/vacancies?" in response.text
+    assert "data-menu=\"sessions\"" in response.text
+    assert "vacancy-previous" in response.text
 
 
 def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:

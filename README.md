@@ -43,6 +43,9 @@ docker compose --profile browser up --build -d
 With the supplied Docker configuration, the personal dashboard is available at
 `http://127.0.0.1:8000/dashboard`; the detailed review queue is available at
 `http://127.0.0.1:8000/review`. Set `APP_HTTP_PORT` in `.env` to choose another host port.
+The dashboard uses separate menu sections for saved vacancies, search, resume, browser sessions,
+the LLM, and local access. **Saved vacancies** lists every application belonging to the selected
+user with server-side text/source/status/location/score filters and 20-item pagination.
 
 ### Enable browser search and submission
 
@@ -77,6 +80,7 @@ and Markdown. Scanned/image-only documents still require OCR before upload.
 - `POST /v1/connectors/browser-handoff` for manual hh.ru/LinkedIn browser continuation
 - `POST /v1/assessments`
 - `POST /v1/users` and `POST /v1/users/{user_id}/facts`
+- `GET /v1/users/{user_id}/vacancies` for filtered, paginated saved vacancies
 - `POST /v1/users/{user_id}/cv-files` for validated resume uploads
 - `POST /v1/llm/models` and `GET/PUT /v1/users/{user_id}/llm-preference` for user LLM setup
 - `GET /v1/users/{user_id}/browser-sessions` plus `POST` to its per-site `start`, `confirm`, and
@@ -94,6 +98,10 @@ and Markdown. Scanned/image-only documents still require OCR before upload.
 - `POST /v1/vacancies/import-headhunter` for browser-based hh.ru extraction
 - `POST /v1/vacancies/import-linkedin-reference` for policy-safe manual LinkedIn references
 - `GET /v1/review-queue` and `POST /v1/applications/{application_id}/decision`
+
+Browser discovery expands a multi-word search into a bounded set of queries: the complete phrase,
+comma/semicolon-separated phrases, and individual words. Results are deduplicated by source URL
+before extraction, which improves recall without allowing an unbounded number of site requests.
 
 The review interface displays answer provenance, missing facts, legal declarations, and active
 human-action instructions. Draft edits are stored separately from verified profile facts and never

@@ -7,7 +7,11 @@ from sqlalchemy.pool import StaticPool
 from adapters.job_boards.browser_apply_common import CaptchaChallenge
 from adapters.job_boards.headhunter_browser import ExtractedHeadHunterVacancy, HeadHunterSearchHit
 from app.domain.forms import FormField, FormFieldType
-from app.services.job_discovery import JobDiscoveryService, NoSearchKeywordsError
+from app.services.job_discovery import (
+    JobDiscoveryService,
+    NoSearchKeywordsError,
+    build_search_queries,
+)
 from app.services.recruitment import RecruitmentService
 from app.storage.database import Base
 
@@ -159,6 +163,22 @@ def test_discover_passes_explicit_search_text_over_facts() -> None:
                 locations=["Москва"],
                 search_text="data engineer",
             )
-        assert adapter.search_calls == [("data engineer", ["Москва"])]
+        assert adapter.search_calls == [
+            ("data engineer", ["Москва"]),
+            ("data", ["Москва"]),
+            ("engineer", ["Москва"]),
+        ]
 
     asyncio.run(run())
+
+
+def test_build_search_queries_combines_phrases_and_words_without_duplicates() -> None:
+    assert build_search_queries("Data Engineer, Python; FastAPI Python") == [
+        "Data Engineer, Python; FastAPI Python",
+        "Data Engineer",
+        "Python",
+        "FastAPI Python",
+        "Data",
+        "Engineer",
+        "FastAPI",
+    ]

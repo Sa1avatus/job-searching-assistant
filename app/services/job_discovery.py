@@ -12,14 +12,15 @@ submission.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChallenge, LoginRequired
-from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter
-from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
+from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter, HeadHunterSearchHit
+from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter, LinkedInSearchHit
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError, RecruitmentService
 from app.storage.tables import ApplicationRow, UserRow, VacancyRow
 
@@ -30,6 +31,7 @@ class LinkedInSessionRequiredError(RuntimeError):
 
 _DEFAULT_LIMIT = 15
 _MAX_LIMIT = 50
+_MAX_SEARCH_QUERIES = 8
 
 
 class NoSearchKeywordsError(RuntimeError):
@@ -45,6 +47,36 @@ class DiscoveryOutcome:
     source_url: str
     match_score: int
     status: str  # "created" | "already_existed"
+
+
+def build_search_queries(search_text: str) -> list[str]:
+    """Expand a candidate-entered phrase into a small, site-friendly query set."""
+    normalized_text = " ".join(search_text.split()).strip(" ,;|")
+    if not normalized_text:
+        return []
+
+    phrases = [
+        " ".join(phrase.split())
+        for phrase in re.split(r"[,;|\n]+", search_text)
+        if phrase.strip()
+    ]
+    candidates = [normalized_text, *phrases]
+    for phrase in phrases:
+        words = re.findall(r"[\w#+.-]{2,}", phrase, flags=re.UNICODE)
+        candidates.extend(words)
+
+    queries: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized_candidate = candidate.strip(" ,;|")
+        key = normalized_candidate.casefold()
+        if not normalized_candidate or key in seen:
+            continue
+        seen.add(key)
+        queries.append(normalized_candidate)
+        if len(queries) == _MAX_SEARCH_QUERIES:
+            break
+    return queries
 
 
 class JobDiscoveryService:
@@ -71,15 +103,24 @@ class JobDiscoveryService:
             )
 
         limit = min(max(limit, 1), _MAX_LIMIT)
-        try:
-            hits = await headhunter_adapter.search(text=text, location_names=locations, limit=limit)
-        except (CaptchaChallenge, ApplyBlocked):
-            # A CAPTCHA/blocked search page mid-run should surface as "found nothing this time"
-            # rather than a hard failure; the caller can retry once the challenge is resolved.
-            return []
+        hits_by_url: dict[str, HeadHunterSearchHit] = {}
+        for query in build_search_queries(text):
+            try:
+                query_hits = await headhunter_adapter.search(
+                    text=query, location_names=locations, limit=limit
+                )
+            except (CaptchaChallenge, ApplyBlocked):
+                # Preserve results collected before a challenge appeared on a later query.
+                break
+            for hit in query_hits:
+                hits_by_url.setdefault(hit.source_url, hit)
+                if len(hits_by_url) == limit:
+                    break
+            if len(hits_by_url) == limit:
+                break
 
         outcomes: list[DiscoveryOutcome] = []
-        for hit in hits:
+        for hit in hits_by_url.values():
             outcome = await self._stage_one(
                 recruitment, headhunter_adapter, user_id, hit.source_url
             )
@@ -184,17 +225,27 @@ class JobDiscoveryService:
             )
 
         limit = min(max(limit, 1), _MAX_LIMIT)
-        try:
-            hits = await linkedin_adapter.search(text=text, location_names=locations, limit=limit)
-        except LoginRequired as error:
-            raise LinkedInSessionRequiredError(
-                "Сессия LinkedIn истекла. Авторизуйтесь заново в личном кабинете"
-            ) from error
-        except (CaptchaChallenge, ApplyBlocked):
-            return []
+        hits_by_url: dict[str, LinkedInSearchHit] = {}
+        for query in build_search_queries(text):
+            try:
+                query_hits = await linkedin_adapter.search(
+                    text=query, location_names=locations, limit=limit
+                )
+            except LoginRequired as error:
+                raise LinkedInSessionRequiredError(
+                    "Сессия LinkedIn истекла. Авторизуйтесь заново в личном кабинете"
+                ) from error
+            except (CaptchaChallenge, ApplyBlocked):
+                break
+            for hit in query_hits:
+                hits_by_url.setdefault(hit.source_url, hit)
+                if len(hits_by_url) == limit:
+                    break
+            if len(hits_by_url) == limit:
+                break
 
         outcomes: list[DiscoveryOutcome] = []
-        for hit in hits:
+        for hit in hits_by_url.values():
             outcome = await self._stage_linkedin(
                 recruitment, linkedin_adapter, user_id, hit.source_url
             )

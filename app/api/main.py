@@ -70,6 +70,8 @@ from app.api.schemas import (
     ProfileFactResponse,
     ReviewDecisionRequest,
     ReviewItemResponse,
+    SavedVacancyPageResponse,
+    SavedVacancyResponse,
     ScreeningAnswerResponse,
     TaskTransitionResponse,
     UserRequest,
@@ -120,6 +122,7 @@ from app.services.recruitment import (
     RecruitmentService,
 )
 from app.services.resume_intake import ResumeIntakeService
+from app.services.vacancy_catalog import VacancyCatalogService
 from app.storage.database import SessionFactory, session_scope
 from app.storage.documents import DocumentStorage, InvalidDocumentError
 from app.storage.evidence_artifacts import EvidenceArtifactStorage, InvalidEvidenceArtifact
@@ -373,6 +376,47 @@ def dashboard_interface() -> FileResponse:
             "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
         },
+    )
+
+
+@app.get(
+    "/v1/users/{user_id}/vacancies",
+    response_model=SavedVacancyPageResponse,
+)
+def list_saved_vacancies(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    query: str = "",
+    source: str = "all",
+    status_filter: str = "all",
+    location: str = "",
+    min_match_score: int = 0,
+    page: int = 1,
+    page_size: int = 20,
+) -> SavedVacancyPageResponse:
+    if source not in {"all", "headhunter", "linkedin", "registry", "other"}:
+        raise HTTPException(status_code=422, detail="Unsupported vacancy source")
+    if not 0 <= min_match_score <= 100 or page < 1 or not 1 <= page_size <= 100:
+        raise HTTPException(status_code=422, detail="Invalid vacancy pagination or score filter")
+    try:
+        vacancy_page = VacancyCatalogService(session).list_saved_vacancies(
+            user_id,
+            query=query,
+            source=source,
+            status=status_filter,
+            location=location,
+            min_match_score=min_match_score,
+            page=page,
+            page_size=page_size,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return SavedVacancyPageResponse(
+        items=[SavedVacancyResponse(**asdict(item)) for item in vacancy_page.items],
+        total=vacancy_page.total,
+        page=vacancy_page.page,
+        page_size=vacancy_page.page_size,
+        total_pages=vacancy_page.total_pages,
     )
 
 

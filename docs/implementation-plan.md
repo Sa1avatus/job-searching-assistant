@@ -105,6 +105,12 @@ fixture. Docker Compose health checks will be run when Docker is available.
   API-key persistence, user-bound model routing, extended resume formats, and migrations `0011` and
   `0012`. Live Gemini discovery returned 41 models and the saved key was absent from API responses.
   Ruff, mypy, 127 tests, Alembic drift check, Docker builds, and port-8000 smoke tests passed.
+- 2026-07-22: Added the dashboard vacancy catalog with per-user server-side filtering and
+  pagination, menu-based settings/search/resume/session navigation, and bounded phrase/word search
+  expansion with URL deduplication for hh.ru and LinkedIn. The live PostgreSQL catalog returned 202
+  user vacancies across 11 pages; LinkedIn filtering returned 81 records and browser UI checks
+  confirmed pagination, filtering, status labels, and an error-free console. The Windows server
+  launcher now pins imports to this project root instead of a previously installed package copy.
 
 ## Final result
 

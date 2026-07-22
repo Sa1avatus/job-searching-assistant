@@ -8,11 +8,17 @@
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
     * { box-sizing: border-box; }
     body { margin: 0; background: #0b1020; color: #eef2ff; min-height: 100vh; }
-    header, main { width: min(1080px, calc(100% - 32px)); margin: 0 auto; }
+    header, main { width: min(1280px, calc(100% - 32px)); margin: 0 auto; }
     header { padding: 40px 0 20px; }
     h1 { margin: 0; font-size: clamp(26px, 5vw, 40px); letter-spacing: -0.03em; }
     .eyebrow { color: #8da2fb; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; font-size: 12px; }
-    section.step { background: linear-gradient(145deg, #111a34, #0e162b); border: 1px solid #263154; border-radius: 18px; padding: 22px; margin-bottom: 18px; box-shadow: 0 18px 45px #02061755; }
+    main.dashboard-shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; padding-bottom: 40px; }
+    .sidebar { position: sticky; top: 18px; display: grid; gap: 7px; padding: 12px; background: #0e162b; border: 1px solid #263154; border-radius: 18px; }
+    .menu-button { width: 100%; text-align: left; background: transparent; border-color: transparent; color: #aab5d6; }
+    .menu-button.active { background: #1d294d; border-color: #5065a8; color: #fff; }
+    .dashboard-content { min-width: 0; }
+    section.step { display: none; background: linear-gradient(145deg, #111a34, #0e162b); border: 1px solid #263154; border-radius: 18px; padding: 22px; margin-bottom: 18px; box-shadow: 0 18px 45px #02061755; }
+    section.step.active { display: block; }
     section.step h2 { margin: 0 0 4px; font-size: 18px; }
     section.step .hint { color: #aab5d6; font-size: 13px; margin-bottom: 14px; }
     input, textarea, button, select { border: 1px solid #303b60; border-radius: 10px; padding: 10px 13px; font: inherit; }
@@ -31,7 +37,7 @@
     .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .chip { display: flex; align-items: center; gap: 6px; background: #17224a; border: 1px solid #35437a; border-radius: 999px; padding: 6px 12px; font-size: 13px; }
     .chip input[type=checkbox] { width: auto; }
-    #results { display: grid; gap: 16px; }
+    #results.active { display: grid; gap: 16px; }
     article { background: linear-gradient(145deg, #111a34, #0e162b); border: 1px solid #263154; border-radius: 18px; padding: 20px; }
     .topline { display: flex; gap: 16px; justify-content: space-between; align-items: start; }
     h3 { margin: 2px 0 4px; font-size: 20px; }
@@ -50,6 +56,19 @@
     .session-card h3 { margin: 0 0 5px; font-size: 17px; }
     .session-status { color: #f5b942; font-weight: 700; }
     .session-status.authorized { color: #6ee7b7; }
+    .vacancy-filters { display: grid; grid-template-columns: minmax(220px, 2fr) repeat(4, minmax(125px, 1fr)); gap: 10px; align-items: end; }
+    .vacancy-list { display: grid; gap: 12px; margin-top: 18px; }
+    .vacancy-card { border: 1px solid #303b60; border-radius: 14px; padding: 16px; background: #101831; }
+    .vacancy-card .actions { align-items: center; justify-content: space-between; }
+    .pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 18px; }
+    .filter-actions { display: flex; gap: 8px; margin-top: 12px; }
+    @media (max-width: 850px) {
+      main.dashboard-shell { grid-template-columns: 1fr; }
+      .sidebar { position: static; display: flex; overflow-x: auto; }
+      .menu-button { width: auto; white-space: nowrap; }
+      .vacancy-filters { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 520px) { .vacancy-filters { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -57,11 +76,43 @@
     <div class="eyebrow">Личный кабинет</div>
     <h1>Поиск и отклик на вакансии</h1>
   </header>
-  <main>
+  <main class="dashboard-shell">
+    <nav class="sidebar" aria-label="Разделы личного кабинета">
+      <button class="menu-button active" type="button" data-menu="vacancies">Все вакансии</button>
+      <button class="menu-button" type="button" data-menu="search">Поиск</button>
+      <button class="menu-button" type="button" data-menu="resume">Резюме</button>
+      <button class="menu-button" type="button" data-menu="sessions">Сессии сайтов</button>
+      <button class="menu-button" type="button" data-menu="model">Модель</button>
+      <button class="menu-button" type="button" data-menu="access">Доступ</button>
+    </nav>
+    <div class="dashboard-content">
     <div id="status" role="status" aria-live="polite"></div>
 
-    <section class="step">
-      <h2>0. Доступ</h2>
+    <section class="step active" data-panel="vacancies">
+      <h2>Все сохранённые вакансии</h2>
+      <div class="hint">Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.</div>
+      <div class="vacancy-filters">
+        <div><label for="vacancy-query">Текст</label><input id="vacancy-query" placeholder="должность, компания или описание"></div>
+        <div><label for="vacancy-source">Источник</label><select id="vacancy-source"><option value="all">Все</option><option value="headhunter">hh.ru</option><option value="linkedin">LinkedIn</option><option value="registry">Реестр</option><option value="other">Другие</option></select></div>
+        <div><label for="vacancy-status">Статус</label><select id="vacancy-status"><option value="all">Все</option><option value="saved">Сохранена</option><option value="awaiting_review">Ожидает решения</option><option value="approved">Принята</option><option value="rejected">Отклонена</option><option value="skipped">Пропущена</option><option value="submitted">Отправлена</option><option value="interview">Собеседование</option></select></div>
+        <div><label for="vacancy-location">Локация</label><input id="vacancy-location" placeholder="например, Москва"></div>
+        <div><label for="vacancy-score">Соответствие от</label><input id="vacancy-score" type="number" min="0" max="100" value="0"></div>
+      </div>
+      <div class="filter-actions">
+        <button id="apply-vacancy-filters" type="button" class="primary">Применить</button>
+        <button id="reset-vacancy-filters" type="button">Сбросить</button>
+      </div>
+      <div id="vacancy-summary" class="task-state"></div>
+      <div id="vacancy-list" class="vacancy-list"></div>
+      <div class="pagination">
+        <button id="vacancy-previous" type="button">← Назад</button>
+        <span id="vacancy-page">Страница 1</span>
+        <button id="vacancy-next" type="button">Вперёд →</button>
+      </div>
+    </section>
+
+    <section class="step" data-panel="access">
+      <h2>Доступ</h2>
       <div class="hint">API-ключ (если сервис настроен без ключа — оставьте пустым). ID пользователя сохраняется в браузере.</div>
       <div class="row">
         <div><label>Ключ доступа к приложению</label><input id="api-key" type="password" autocomplete="off" placeholder="обычно пусто для локального запуска"></div>
@@ -70,8 +121,8 @@
       </div>
     </section>
 
-    <section class="step">
-      <h2>1. Языковая модель</h2>
+    <section class="step" data-panel="model">
+      <h2>Языковая модель</h2>
       <div class="hint">Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Получите список доступных моделей, выберите одну и сохраните.</div>
       <div class="row">
         <div><label>Провайдер</label><select id="llm-provider"><option value="gemini">Google Gemini</option><option value="anthropic">Anthropic Claude</option></select></div>
@@ -85,8 +136,8 @@
       <div id="llm-state" class="task-state"></div>
     </section>
 
-    <section class="step">
-      <h2>2. Сессии сайтов</h2>
+    <section class="step" data-panel="sessions">
+      <h2>Сессии сайтов</h2>
       <div class="hint">Вход выполняется вручную в отдельном окне Chromium. Приложение не получает пароль, код подтверждения или CAPTCHA — сохраняются только зашифрованные cookies и состояние сайта.</div>
       <div id="browser-sessions" class="session-grid">
         <article class="session-card" data-site="headhunter">
@@ -112,8 +163,8 @@
       </div>
     </section>
 
-    <section class="step">
-      <h2>3. Резюме</h2>
+    <section class="step" data-panel="resume">
+      <h2>Резюме</h2>
       <div class="hint">PDF, DOCX, DOC, TXT, RTF, ODT, HTML или Markdown. Мы извлечём текст и попросим выбранную модель выделить навыки и суммировать опыт.</div>
       <div class="row">
         <div><input id="resume-file" type="file" accept=".pdf,.docx,.doc,.txt,.rtf,.odt,.html,.htm,.md"></div>
@@ -132,8 +183,8 @@
       </div>
     </section>
 
-    <section class="step">
-      <h2>4. Локации</h2>
+    <section class="step" data-panel="search">
+      <h2>Локации</h2>
       <div class="hint">Через запятую, например: Москва, Санкт-Петербург. Оставьте пустым для поиска везде.</div>
       <div class="row">
         <div><input id="locations" placeholder="везде"></div>
@@ -141,8 +192,8 @@
       </div>
     </section>
 
-    <section class="step">
-      <h2>5. Поиск</h2>
+    <section class="step" data-panel="search">
+      <h2>Поиск</h2>
       <div class="hint">Ищем через управляемый браузер, а не API. Перед поиском авторизуйтесь на выбранных сайтах в разделе выше.</div>
       <div class="chips" style="margin-bottom:14px;">
         <label class="chip"><input id="source-headhunter" type="checkbox" checked> hh.ru</label>
@@ -151,7 +202,8 @@
       <button id="search" type="button" class="primary">Найти вакансии</button>
     </section>
 
-    <section id="results"></section>
+    <section id="results" class="step" data-panel="search"></section>
+    </div>
   </main>
   <script>
     const statusNode = document.querySelector('#status');
@@ -179,6 +231,25 @@
       }
       return response.json();
     }
+
+    function activatePanel(panelName) {
+      document.querySelectorAll('[data-panel]').forEach(node => {
+        node.classList.toggle('active', node.dataset.panel === panelName);
+      });
+      document.querySelectorAll('[data-menu]').forEach(button => {
+        const isActive = button.dataset.menu === panelName;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-current', isActive ? 'page' : 'false');
+      });
+      localStorage.setItem('dashboardActivePanel', panelName);
+    }
+
+    document.querySelectorAll('[data-menu]').forEach(button => {
+      button.addEventListener('click', () => {
+        activatePanel(button.dataset.menu);
+        if (button.dataset.menu === 'vacancies') loadSavedVacancies().catch(showError);
+      });
+    });
 
     const browserSiteLabels = {headhunter: 'hh.ru', linkedin: 'LinkedIn'};
     let browserSessionStatuses = {};
@@ -298,6 +369,7 @@
         userIdInput.value = user.id;
         localStorage.setItem('dashboardUserId', user.id);
         await loadBrowserSessionStatuses();
+        await loadSavedVacancies();
         showStatus(`Пользователь создан: ${user.id}`);
       } catch (error) { showError(error); }
     });
@@ -447,6 +519,95 @@
       return card;
     }
 
+    const vacancySourceLabels = {
+      headhunter: 'hh.ru', linkedin: 'LinkedIn', registry: 'Импортированный реестр', other: 'Другой источник'
+    };
+    const vacancyStatusLabels = {
+      saved: 'Сохранена', awaiting_review: 'Ожидает решения', approved: 'Принята',
+      rejected: 'Отклонена', skipped: 'Пропущена', submitted: 'Отправлена',
+      interview: 'Собеседование', draft: 'Черновик'
+    };
+    let vacancyPage = 1;
+    let vacancyTotalPages = 1;
+
+    function renderSavedVacancy(item) {
+      const card = element('article', undefined, 'vacancy-card');
+      const top = element('div', undefined, 'topline');
+      const title = element('div');
+      title.append(element('div', item.company, 'company'), element('h3', item.title));
+      const metadata = [
+        vacancySourceLabels[item.source] || item.source,
+        item.location || 'Локация не указана',
+        vacancyStatusLabels[item.status] || item.status,
+        new Date(item.created_at).toLocaleDateString('ru-RU')
+      ];
+      title.append(element('div', metadata.join(' · '), 'meta'));
+      top.append(title, element('div', `${item.match_score}%`, 'score'));
+      const actions = element('div', undefined, 'actions');
+      const link = element('a', 'Открыть вакансию');
+      link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
+      const applicationLink = element('a', 'Материалы и решение');
+      applicationLink.href = `/review?application_id=${encodeURIComponent(item.application_id)}`;
+      applicationLink.className = 'link-btn';
+      actions.append(applicationLink, link);
+      card.append(top, actions);
+      return card;
+    }
+
+    async function loadSavedVacancies(requestedPage = vacancyPage) {
+      const userId = userIdInput.value.trim();
+      const list = document.querySelector('#vacancy-list');
+      if (!userId) {
+        list.replaceChildren(element('div', 'Укажите User ID в разделе «Доступ».', 'empty'));
+        document.querySelector('#vacancy-summary').textContent = '';
+        return;
+      }
+      const parameters = new URLSearchParams({
+        query: document.querySelector('#vacancy-query').value.trim(),
+        source: document.querySelector('#vacancy-source').value,
+        status_filter: document.querySelector('#vacancy-status').value,
+        location: document.querySelector('#vacancy-location').value.trim(),
+        min_match_score: document.querySelector('#vacancy-score').value || '0',
+        page: String(requestedPage),
+        page_size: '20'
+      });
+      list.replaceChildren(element('div', 'Загружаем вакансии…', 'empty'));
+      const payload = await asJson(await fetch(`/v1/users/${userId}/vacancies?${parameters}`, {
+        headers: headers(false)
+      }));
+      vacancyPage = payload.page;
+      vacancyTotalPages = payload.total_pages;
+      list.replaceChildren();
+      if (!payload.items.length) {
+        list.append(element('div', 'По заданным фильтрам вакансий нет.', 'empty'));
+      } else {
+        payload.items.forEach(item => list.append(renderSavedVacancy(item)));
+      }
+      const start = payload.total ? (payload.page - 1) * payload.page_size + 1 : 0;
+      const end = Math.min(payload.page * payload.page_size, payload.total);
+      document.querySelector('#vacancy-summary').textContent = `Показано ${start}–${end} из ${payload.total}`;
+      document.querySelector('#vacancy-page').textContent = `Страница ${payload.page} из ${payload.total_pages}`;
+      document.querySelector('#vacancy-previous').disabled = payload.page <= 1;
+      document.querySelector('#vacancy-next').disabled = payload.page >= payload.total_pages;
+    }
+
+    document.querySelector('#apply-vacancy-filters').addEventListener('click', () => {
+      vacancyPage = 1; loadSavedVacancies().catch(showError);
+    });
+    document.querySelector('#reset-vacancy-filters').addEventListener('click', () => {
+      document.querySelector('#vacancy-query').value = '';
+      document.querySelector('#vacancy-source').value = 'all';
+      document.querySelector('#vacancy-status').value = 'all';
+      document.querySelector('#vacancy-location').value = '';
+      document.querySelector('#vacancy-score').value = '0';
+      vacancyPage = 1; loadSavedVacancies().catch(showError);
+    });
+    document.querySelector('#vacancy-previous').addEventListener('click', () => loadSavedVacancies(vacancyPage - 1).catch(showError));
+    document.querySelector('#vacancy-next').addEventListener('click', () => loadSavedVacancies(vacancyPage + 1).catch(showError));
+    document.querySelector('#vacancy-query').addEventListener('keydown', event => {
+      if (event.key === 'Enter') { vacancyPage = 1; loadSavedVacancies().catch(showError); }
+    });
+
     document.querySelector('#search').addEventListener('click', async () => {
       try {
         const userId = userIdInput.value.trim();
@@ -465,6 +626,7 @@
           .map(([source]) => source)
           .filter(source => !browserSessionStatuses[source]?.is_authorized);
         if (missingSessions.length) {
+          activatePanel('sessions');
           document.querySelector('#browser-sessions').scrollIntoView({behavior: 'smooth', block: 'center'});
           throw new Error(`Сначала авторизуйтесь: ${missingSessions.map(source => browserSiteLabels[source]).join(', ')}`);
         }
@@ -484,6 +646,7 @@
           return;
         }
         outcomes.forEach(item => results.append(renderResult(item)));
+        loadSavedVacancies(1).catch(() => {});
         showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
       } catch (error) { showError(error); }
     });
@@ -492,9 +655,12 @@
       localStorage.setItem('dashboardUserId', userIdInput.value.trim());
       loadSavedLlmPreference();
       loadBrowserSessionStatuses().catch(showError);
+      loadSavedVacancies(1).catch(showError);
     });
+    activatePanel(localStorage.getItem('dashboardActivePanel') || 'vacancies');
     loadSavedLlmPreference();
     loadBrowserSessionStatuses().catch(showError);
+    loadSavedVacancies().catch(showError);
   </script>
 </body>
 </html>
