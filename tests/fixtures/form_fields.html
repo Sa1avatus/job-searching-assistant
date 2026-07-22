@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Complete form fixture</title></head>
+  <body>
+    <form>
+      <label for="employee-code">Employee code</label>
+      <input id="employee-code" name="employee_code" minlength="3" maxlength="8" pattern="[A-Z0-9]+" required>
+
+      <label for="motivation">Motivation</label>
+      <textarea id="motivation" maxlength="500"></textarea>
+
+      <label for="location">Location</label>
+      <select id="location"><option>Bangkok</option><option>Remote</option></select>
+
+      <fieldset>
+        <legend>Work arrangement</legend>
+        <label><input type="radio" name="work_mode" value="remote" required> Remote</label>
+        <label><input type="radio" name="work_mode" value="hybrid"> Hybrid</label>
+      </fieldset>
+
+      <label><input id="terms" type="checkbox" required> Accept terms</label>
+
+      <label for="resume">Resume</label>
+      <input id="resume" type="file" accept=".pdf,.docx">
+
+      <label for="start-date">Start date</label>
+      <input id="start-date" type="date" min="2026-01-01" max="2027-12-31">
+
+      <label for="experience">Years of experience</label>
+      <input id="experience" type="number" min="0" max="50" step="0.5">
+
+      <label for="unsupported">Preference intensity</label>
+      <input id="unsupported" type="range" min="0" max="10">
+
+      <input id="disabled-field" disabled>
+      <input id="submit-control" type="submit">
+    </form>
+  </body>
+</html>

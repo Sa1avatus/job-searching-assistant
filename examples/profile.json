@@ -1,0 +1,8 @@
+{
+  "facts": [
+    {"category": "skill", "name": "Python", "value": "advanced", "is_verified": true},
+    {"category": "skill", "name": "PostgreSQL", "value": "production", "is_verified": true},
+    {"category": "contact", "name": "email", "value": "candidate@example.test", "is_verified": true}
+  ]
+}
+

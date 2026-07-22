@@ -1,0 +1,8 @@
+{
+  "source_url": "https://example.test/jobs/42",
+  "title": "Senior Python Engineer",
+  "company": "Example Company",
+  "required_skills": ["Python", "PostgreSQL"],
+  "preferred_skills": ["Playwright"]
+}
+

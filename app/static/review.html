@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Application review queue</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0b1020; color: #eef2ff; min-height: 100vh; }
+    header, main { width: min(1080px, calc(100% - 32px)); margin: 0 auto; }
+    header { padding: 48px 0 24px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: end; }
+    h1 { margin: 0; font-size: clamp(28px, 5vw, 48px); letter-spacing: -0.04em; }
+    .eyebrow { color: #8da2fb; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; font-size: 12px; }
+    .auth { display: grid; grid-template-columns: minmax(160px, 220px) auto; gap: 8px; align-items: end; }
+    .auth label { min-width: 0; }
+    input, textarea, button { border: 1px solid #303b60; border-radius: 10px; padding: 10px 13px; font: inherit; }
+    input, textarea { background: #101831; color: #fff; width: 100%; }
+    textarea { min-height: 92px; resize: vertical; }
+    button { background: #1d294d; color: #fff; cursor: pointer; font-weight: 700; }
+    button:hover { border-color: #8da2fb; }
+    button:disabled { opacity: .5; cursor: wait; }
+    #status { min-height: 24px; color: #aab5d6; margin: 4px 0 20px; }
+    #queue { display: grid; gap: 16px; padding-bottom: 56px; }
+    article { background: linear-gradient(145deg, #111a34, #0e162b); border: 1px solid #263154; border-radius: 18px; padding: 22px; box-shadow: 0 18px 45px #02061755; }
+    .topline { display: flex; gap: 16px; justify-content: space-between; align-items: start; }
+    h2 { margin: 2px 0 4px; font-size: 22px; }
+    .company, .meta { color: #aab5d6; }
+    .score { min-width: 64px; height: 64px; border: 1px solid #5065a8; border-radius: 50%; display: grid; place-items: center; font-size: 20px; font-weight: 800; }
+    .warnings { margin: 18px 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+    .warnings li { background: #3b1d2b; color: #ffc9d8; padding: 9px 11px; border-radius: 9px; }
+    .materials { display: grid; gap: 14px; margin-top: 18px; }
+    .materials label { display: grid; gap: 6px; color: #c5cdef; font-weight: 700; }
+    .field-note { color: #aab5d6; font-size: 13px; font-weight: 400; }
+    .human-action { margin-top: 18px; padding: 14px; border: 1px solid #9a6b23; border-radius: 12px; background: #35250f; color: #ffe3ad; }
+    .evidence-gallery { display: grid; gap: 10px; margin-top: 10px; }
+    .evidence-gallery img { display: block; max-width: 100%; max-height: 520px; border: 1px solid #6f5328; border-radius: 10px; }
+    .actions { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 18px; }
+    .approve { background: #124d3b; border-color: #24765e; }
+    .reject { background: #5a2030; border-color: #8c344b; }
+    a { color: #a9baff; }
+    .empty { border: 1px dashed #344166; border-radius: 18px; padding: 44px; text-align: center; color: #aab5d6; }
+    @media (max-width: 720px) { header { grid-template-columns: 1fr; align-items: start; } .auth { width: 100%; grid-template-columns: minmax(0, 1fr) auto; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div><div class="eyebrow">Human checkpoint</div><h1>Review queue</h1></div>
+    <div class="auth">
+      <label><span class="eyebrow">API key</span><br><input id="api-key" type="password" autocomplete="off" aria-label="API key"></label>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+  <main>
+    <div id="status" role="status" aria-live="polite"></div>
+    <section id="queue" aria-label="Applications awaiting review"></section>
+  </main>
+  <script>
+    const queue = document.querySelector('#queue');
+    const statusNode = document.querySelector('#status');
+    const keyInput = document.querySelector('#api-key');
+    const evidenceObjectUrls = new Set();
+    keyInput.value = sessionStorage.getItem('reviewApiKey') || '';
+    const headers = () => keyInput.value ? {'X-API-Key': keyInput.value} : {};
+    const element = (name, text, className) => {
+      const node = document.createElement(name);
+      if (text !== undefined) node.textContent = text;
+      if (className) node.className = className;
+      return node;
+    };
+    async function decide(applicationId, decision, buttons) {
+      buttons.forEach(button => button.disabled = true);
+      const response = await fetch(`/v1/applications/${applicationId}/decision`, {
+        method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'},
+        body: JSON.stringify({decision})
+      });
+      if (!response.ok) throw new Error(`Decision failed (${response.status})`);
+      await loadQueue();
+    }
+    async function retryTask(applicationId, buttons) {
+      buttons.forEach(button => button.disabled = true);
+      const response = await fetch(`/v1/applications/${applicationId}/retry`, {method: 'POST', headers: headers()});
+      if (!response.ok) throw new Error(`Retry failed (${response.status})`);
+      await loadQueue();
+    }
+    async function prepareBrowserReview(applicationId, buttons) {
+      buttons.forEach(button => button.disabled = true);
+      const response = await fetch(`/v1/applications/${applicationId}/prepare-browser-review`, {
+        method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'},
+        body: JSON.stringify({confirmation: 'prepare_without_submission'})
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || `Browser preparation failed (${response.status})`);
+      }
+      await loadQueue();
+    }
+    async function saveMaterials(item, coverLetter, answerInputs, buttons) {
+      buttons.forEach(button => button.disabled = true);
+      const screening_answers = answerInputs.map(input => ({field_id: input.dataset.fieldId, answer: input.value || null}));
+      const response = await fetch(`/v1/applications/${item.id}/materials`, {
+        method: 'PATCH', headers: {...headers(), 'Content-Type': 'application/json'},
+        body: JSON.stringify({cover_letter_text: coverLetter.value, screening_answers})
+      });
+      if (!response.ok) throw new Error(`Save failed (${response.status})`);
+      await loadQueue();
+    }
+    async function resumeHumanAction(item, buttons) {
+      buttons.forEach(button => button.disabled = true);
+      const response = await fetch(`/v1/applications/${item.id}/resume`, {
+        method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'},
+        body: JSON.stringify({confirmation: 'confirmed in review interface'})
+      });
+      if (!response.ok) throw new Error(`Resume failed (${response.status})`);
+      await loadQueue();
+    }
+    async function loadEvidence(artifact, button, holder) {
+      button.disabled = true;
+      const response = await fetch(artifact.url, {headers: headers()});
+      if (!response.ok) throw new Error(`Evidence unavailable (${response.status})`);
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const image = element('img'); image.src = objectUrl; image.alt = `Evidence ${artifact.kind}`;
+      evidenceObjectUrls.add(objectUrl);
+      holder.replaceChildren(image);
+    }
+    function renderItem(item) {
+      const card = element('article');
+      const top = element('div', undefined, 'topline');
+      const title = element('div');
+      title.append(element('div', item.company, 'company'), element('h2', item.vacancy_title));
+      top.append(title, element('div', `${item.match_score}%`, 'score'));
+      card.append(top);
+      const meta = element('div', undefined, 'meta');
+      meta.append('CV: ', element('strong', item.selected_cv_filename || 'not selected'), ' · ');
+      const source = element('a', 'Source vacancy'); source.href = item.source_url; source.target = '_blank'; source.rel = 'noopener noreferrer';
+      meta.append(source); card.append(meta);
+      card.append(element('div', `Workflow: ${item.current_workflow_state}`, 'meta'));
+      if (item.warnings.length) {
+        const warnings = element('ul', undefined, 'warnings');
+        item.warnings.forEach(warning => warnings.append(element('li', warning)));
+        card.append(warnings);
+      }
+      const materials = element('div', undefined, 'materials');
+      const coverLabel = element('label', 'Cover letter');
+      const coverLetter = element('textarea'); coverLetter.value = item.cover_letter_text || '';
+      coverLetter.setAttribute('aria-label', `Cover letter for ${item.company}`);
+      coverLabel.append(coverLetter); materials.append(coverLabel);
+      const answerInputs = item.screening_answers.map(answer => {
+        const label = element('label', answer.label + (answer.is_required ? ' *' : ''));
+        const input = element('textarea'); input.value = answer.answer || '';
+        input.dataset.fieldId = answer.field_id;
+        input.setAttribute('aria-label', answer.label);
+        const note = element('span', `Source: ${answer.answer_source}${answer.warning ? ` · ${answer.warning}` : ''}`, 'field-note');
+        label.append(input, note); materials.append(label); return input;
+      });
+      card.append(materials);
+      if (item.active_human_action) {
+        const checkpoint = element('div', undefined, 'human-action');
+        checkpoint.append(
+          element('strong', `Human action: ${item.active_human_action.kind}`),
+          element('div', item.active_human_action.instructions),
+          element('div', item.active_human_action.evidence.join(' · '), 'field-note')
+        );
+        const gallery = element('div', undefined, 'evidence-gallery');
+        item.active_human_action.artifacts.forEach(artifact => {
+          const holder = element('div');
+          const loadButton = element('button', `Load ${artifact.kind} (${Math.ceil(artifact.size_bytes / 1024)} KiB)`);
+          loadButton.type = 'button';
+          loadButton.addEventListener('click', () => loadEvidence(artifact, loadButton, holder).catch(showError));
+          holder.append(loadButton); gallery.append(holder);
+        });
+        checkpoint.append(gallery);
+        card.append(checkpoint);
+      }
+      const actions = element('div', undefined, 'actions');
+      const specs = [['approve', 'Approve', 'approve'], ['reject', 'Reject', 'reject'], ['skip', 'Skip', '']];
+      const buttons = specs.map(([decision, label, className]) => {
+        const button = element('button', label, className); button.type = 'button';
+        button.addEventListener('click', () => decide(item.id, decision, buttons).catch(showError));
+        actions.append(button); return button;
+      });
+      const save = element('button', 'Save draft'); save.type = 'button'; buttons.push(save);
+      save.addEventListener('click', () => saveMaterials(item, coverLetter, answerInputs, buttons).catch(showError));
+      actions.append(save);
+      if (item.adapter_name === 'greenhouse' && ['scheduled', 'waiting_for_user'].includes(item.current_workflow_state)) {
+        const prepare = element('button', 'Prepare Greenhouse form (no submit)', 'approve');
+        prepare.type = 'button'; buttons.push(prepare);
+        prepare.addEventListener('click', () => prepareBrowserReview(item.id, buttons).catch(showError));
+        actions.append(prepare);
+      }
+      if (item.active_human_action && item.active_human_action.kind !== 'application_review') {
+        const resume = element('button', 'Resume after human action', 'approve');
+        resume.type = 'button'; buttons.push(resume);
+        resume.addEventListener('click', () => resumeHumanAction(item, buttons).catch(showError));
+        actions.append(resume);
+      }
+      if (['failed', 'interrupted', 'cancelled', 'waiting_for_external_system'].includes(item.current_workflow_state)) {
+        const retry = element('button', 'Retry'); retry.type = 'button'; buttons.push(retry);
+        retry.addEventListener('click', () => retryTask(item.id, buttons).catch(showError));
+        actions.append(retry);
+      }
+      card.append(actions); return card;
+    }
+    function showError(error) { statusNode.textContent = error.message; }
+    async function loadQueue() {
+      evidenceObjectUrls.forEach(objectUrl => URL.revokeObjectURL(objectUrl));
+      evidenceObjectUrls.clear();
+      sessionStorage.setItem('reviewApiKey', keyInput.value);
+      statusNode.textContent = 'Loading…'; queue.replaceChildren();
+      const response = await fetch('/v1/review-queue', {headers: headers()});
+      if (!response.ok) throw new Error(`Queue unavailable (${response.status})`);
+      const items = await response.json();
+      items.forEach(item => queue.append(renderItem(item)));
+      if (!items.length) queue.append(element('div', 'Nothing is waiting for review.', 'empty'));
+      statusNode.textContent = `${items.length} application${items.length === 1 ? '' : 's'} awaiting review`;
+    }
+    document.querySelector('#refresh').addEventListener('click', () => loadQueue().catch(showError));
+    loadQueue().catch(showError);
+  </script>
+</body>
+</html>

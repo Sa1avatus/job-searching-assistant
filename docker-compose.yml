@@ -1,0 +1,120 @@
+services:
+  api:
+    build: .
+    environment:
+      APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
+      APP_REDIS_URL: redis://redis:6379/0
+      APP_SUBMISSION_MODE: review
+      APP_ARTIFACT_DIRECTORY: /app/.artifacts
+      APP_MAX_DOCUMENT_BYTES: 5242880
+      APP_HH_USER_AGENT: ${APP_HH_USER_AGENT:-JobSearchingAssistant/0.1 (local personal assistant)}
+      APP_HH_ACCESS_TOKEN: ${APP_HH_ACCESS_TOKEN:-}
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.api.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - recruitment-artifacts:/app/.artifacts
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: recruitment
+      POSTGRES_USER: recruitment
+      POSTGRES_PASSWORD: recruitment
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recruitment"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - recruitment-postgres:/var/lib/postgresql/data
+
+  retention:
+    build: .
+    environment:
+      APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
+      APP_ARTIFACT_DIRECTORY: /app/.artifacts
+      APP_RETENTION_DAYS: 30
+      APP_RETENTION_INTERVAL_SECONDS: 86400
+    command: ["python", "-m", "app.workers.retention"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - recruitment-artifacts:/app/.artifacts
+
+  dispatcher:
+    build: .
+    environment:
+      APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
+      APP_REDIS_URL: redis://redis:6379/0
+      APP_WORKER_LEASE_SECONDS: 120
+      APP_WORKER_POLL_SECONDS: 2
+      APP_WORKER_RETRY_SECONDS: 30
+      APP_WORKER_MAX_ATTEMPTS: 3
+    command: ["python", "-m", "app.workers.dispatcher"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  browser-worker:
+    profiles: ["browser"]
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
+    environment:
+      APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
+      APP_REDIS_URL: redis://redis:6379/0
+      APP_ARTIFACT_DIRECTORY: /app/.artifacts
+      APP_BROWSER_STATE_ENCRYPTION_KEY: ${APP_BROWSER_STATE_ENCRYPTION_KEY:-}
+      APP_MAX_BROWSER_STATE_BYTES: 2097152
+      APP_WORKER_POLL_SECONDS: 2
+    command: ["python", "-m", "app.workers.browser_worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - recruitment-artifacts:/app/.artifacts
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - recruitment-redis:/data
+
+volumes:
+  recruitment-postgres:
+  recruitment-redis:
+  recruitment-artifacts:

@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Личный кабинет — поиск вакансий</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0b1020; color: #eef2ff; min-height: 100vh; }
+    header, main { width: min(1080px, calc(100% - 32px)); margin: 0 auto; }
+    header { padding: 40px 0 20px; }
+    h1 { margin: 0; font-size: clamp(26px, 5vw, 40px); letter-spacing: -0.03em; }
+    .eyebrow { color: #8da2fb; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; font-size: 12px; }
+    section.step { background: linear-gradient(145deg, #111a34, #0e162b); border: 1px solid #263154; border-radius: 18px; padding: 22px; margin-bottom: 18px; box-shadow: 0 18px 45px #02061755; }
+    section.step h2 { margin: 0 0 4px; font-size: 18px; }
+    section.step .hint { color: #aab5d6; font-size: 13px; margin-bottom: 14px; }
+    input, textarea, button, select { border: 1px solid #303b60; border-radius: 10px; padding: 10px 13px; font: inherit; }
+    input, textarea, select { background: #101831; color: #fff; width: 100%; }
+    textarea { min-height: 72px; resize: vertical; }
+    button { background: #1d294d; color: #fff; cursor: pointer; font-weight: 700; }
+    button:hover { border-color: #8da2fb; }
+    button:disabled { opacity: .5; cursor: wait; }
+    button.primary { background: #124d3b; border-color: #24765e; }
+    button.accept { background: #124d3b; border-color: #24765e; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+    .row > div { flex: 1; min-width: 220px; }
+    label { display: block; font-weight: 700; color: #c5cdef; margin-bottom: 6px; font-size: 13px; }
+    #status { min-height: 22px; color: #aab5d6; margin: 4px 0 14px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .chip { display: flex; align-items: center; gap: 6px; background: #17224a; border: 1px solid #35437a; border-radius: 999px; padding: 6px 12px; font-size: 13px; }
+    .chip input[type=checkbox] { width: auto; }
+    #results { display: grid; gap: 16px; }
+    article { background: linear-gradient(145deg, #111a34, #0e162b); border: 1px solid #263154; border-radius: 18px; padding: 20px; }
+    .topline { display: flex; gap: 16px; justify-content: space-between; align-items: start; }
+    h3 { margin: 2px 0 4px; font-size: 20px; }
+    .company, .meta { color: #aab5d6; }
+    .score { min-width: 58px; height: 58px; border: 1px solid #5065a8; border-radius: 50%; display: grid; place-items: center; font-size: 18px; font-weight: 800; }
+    .cover-letter { margin-top: 14px; }
+    .cover-letter textarea { min-height: 120px; }
+    .actions { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 14px; }
+    a.link-btn { color: #a9baff; text-decoration: none; border: 1px solid #303b60; border-radius: 10px; padding: 10px 13px; font-weight: 700; }
+    a.link-btn:hover { border-color: #8da2fb; }
+    .empty { border: 1px dashed #344166; border-radius: 18px; padding: 40px; text-align: center; color: #aab5d6; }
+    .badge { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #223056; color: #aab5d6; }
+    .task-state { margin-top: 8px; font-size: 13px; color: #aab5d6; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="eyebrow">Личный кабинет</div>
+    <h1>Поиск и отклик на вакансии</h1>
+  </header>
+  <main>
+    <div id="status" role="status" aria-live="polite"></div>
+
+    <section class="step">
+      <h2>0. Доступ</h2>
+      <div class="hint">API-ключ (если сервис настроен без ключа — оставьте пустым). ID пользователя сохраняется в браузере.</div>
+      <div class="row">
+        <div><label>API key</label><input id="api-key" type="password" autocomplete="off"></div>
+        <div><label>User ID</label><input id="user-id" placeholder="ещё не создан"></div>
+        <div style="flex:0"><button id="create-user" type="button">Создать пользователя</button></div>
+      </div>
+    </section>
+
+    <section class="step">
+      <h2>1. Резюме</h2>
+      <div class="hint">PDF или DOCX. Мы извлечём текст и попросим модель выделить навыки и суммировать опыт — вы всё сможете поправить перед сохранением.</div>
+      <div class="row">
+        <div><input id="resume-file" type="file" accept=".pdf,.docx"></div>
+        <div style="flex:0"><button id="upload-resume" type="button" class="primary">Загрузить и проанализировать</button></div>
+      </div>
+      <div id="draft-block" style="display:none; margin-top:16px;">
+        <label>Найденные навыки (снимите галочку, если что-то лишнее)</label>
+        <div id="skills-chips" class="chips"></div>
+        <label style="margin-top:14px;">Краткое summary опыта</label>
+        <textarea id="summary-text"></textarea>
+        <label style="margin-top:14px;">Ключевые слова для поиска</label>
+        <input id="keywords-text">
+        <div class="row" style="margin-top:14px;">
+          <div style="flex:0"><button id="confirm-facts" type="button" class="primary">Подтвердить и сохранить</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="step">
+      <h2>2. Локации</h2>
+      <div class="hint">Через запятую, например: Москва, Санкт-Петербург. Оставьте пустым для поиска везде.</div>
+      <div class="row">
+        <div><input id="locations" placeholder="везде"></div>
+        <div style="flex:0"><label>&nbsp;</label><label class="chip"><input id="anywhere" type="checkbox" checked> Везде</label></div>
+      </div>
+    </section>
+
+    <section class="step">
+      <h2>3. Поиск</h2>
+      <div class="hint">Ищем на hh.ru по вашим подтверждённым навыкам, создаём черновики откликов с подобранным сопроводительным письмом.</div>
+      <button id="search" type="button" class="primary">Найти вакансии</button>
+    </section>
+
+    <section id="results"></section>
+  </main>
+  <script>
+    const statusNode = document.querySelector('#status');
+    const keyInput = document.querySelector('#api-key');
+    const userIdInput = document.querySelector('#user-id');
+    keyInput.value = sessionStorage.getItem('dashboardApiKey') || '';
+    userIdInput.value = localStorage.getItem('dashboardUserId') || '';
+    const headers = (json) => {
+      const h = keyInput.value ? {'X-API-Key': keyInput.value} : {};
+      if (json) h['Content-Type'] = 'application/json';
+      return h;
+    };
+    const element = (name, text, className) => {
+      const node = document.createElement(name);
+      if (text !== undefined) node.textContent = text;
+      if (className) node.className = className;
+      return node;
+    };
+    function showError(error) { statusNode.textContent = error.message; }
+    function showStatus(text) { statusNode.textContent = text; }
+    async function asJson(response) {
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || `Request failed (${response.status})`);
+      }
+      return response.json();
+    }
+
+    document.querySelector('#create-user').addEventListener('click', async () => {
+      try {
+        keyInput.dispatchEvent(new Event('change'));
+        const name = prompt('Ваше имя для профиля:', 'Candidate') || 'Candidate';
+        const user = await asJson(await fetch('/v1/users', {
+          method: 'POST', headers: headers(true), body: JSON.stringify({display_name: name})
+        }));
+        userIdInput.value = user.id;
+        localStorage.setItem('dashboardUserId', user.id);
+        showStatus(`Пользователь создан: ${user.id}`);
+      } catch (error) { showError(error); }
+    });
+
+    let lastCvFileId = null;
+
+    document.querySelector('#upload-resume').addEventListener('click', async () => {
+      try {
+        sessionStorage.setItem('dashboardApiKey', keyInput.value);
+        const userId = userIdInput.value.trim();
+        if (!userId) throw new Error('Сначала создайте или укажите User ID');
+        const file = document.querySelector('#resume-file').files[0];
+        if (!file) throw new Error('Выберите файл резюме (PDF или DOCX)');
+        showStatus('Загружаем резюме…');
+        const form = new FormData(); form.append('file', file);
+        const cvFile = await asJson(await fetch(`/v1/users/${userId}/cv-files`, {
+          method: 'POST', headers: headers(false), body: form
+        }));
+        lastCvFileId = cvFile.id;
+        showStatus('Анализируем резюме (это может занять до минуты)…');
+        const draft = await asJson(await fetch(`/v1/users/${userId}/cv-files/${cvFile.id}/extract-profile`, {
+          method: 'POST', headers: headers(false)
+        }));
+        const chips = document.querySelector('#skills-chips'); chips.replaceChildren();
+        draft.skills.forEach(skill => {
+          const chip = element('label', undefined, 'chip');
+          const checkbox = element('input'); checkbox.type = 'checkbox'; checkbox.checked = true; checkbox.value = skill;
+          chip.append(checkbox, document.createTextNode(skill));
+          chips.append(chip);
+        });
+        document.querySelector('#summary-text').value = draft.experience_summary || '';
+        document.querySelector('#keywords-text').value = draft.search_keywords || '';
+        document.querySelector('#draft-block').style.display = 'block';
+        showStatus(`Найдено навыков: ${draft.skills.length}. Проверьте список и подтвердите.`);
+      } catch (error) { showError(error); }
+    });
+
+    document.querySelector('#confirm-facts').addEventListener('click', async () => {
+      try {
+        const userId = userIdInput.value.trim();
+        const skills = [...document.querySelectorAll('#skills-chips input:checked')].map(c => c.value);
+        const experience_summary = document.querySelector('#summary-text').value;
+        showStatus('Сохраняем подтверждённые факты…');
+        await asJson(await fetch(`/v1/users/${userId}/confirm-profile-facts`, {
+          method: 'POST', headers: headers(true), body: JSON.stringify({skills, experience_summary})
+        }));
+        showStatus(`Сохранено навыков: ${skills.length}. Теперь можно искать вакансии.`);
+      } catch (error) { showError(error); }
+    });
+
+    document.querySelector('#anywhere').addEventListener('change', (event) => {
+      document.querySelector('#locations').disabled = event.target.checked;
+    });
+    document.querySelector('#locations').disabled = document.querySelector('#anywhere').checked;
+
+    function renderResult(item) {
+      const card = element('article');
+      const top = element('div', undefined, 'topline');
+      const title = element('div');
+      title.append(element('div', item.company, 'company'), element('h3', item.title));
+      top.append(title, element('div', `${item.match_score}%`, 'score'));
+      card.append(top);
+      if (item.status === 'already_existed') card.append(element('span', 'уже был в списке ранее', 'badge'));
+      const meta = element('div', undefined, 'meta');
+      const link = element('a', 'Открыть вакансию на hh.ru'); link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
+      card.append(meta);
+      const coverBlock = element('div', undefined, 'cover-letter');
+      coverBlock.append(element('label', 'Сопроводительное письмо (можно отредактировать)'));
+      const coverText = element('textarea'); coverText.id = `cover-${item.application_id}`;
+      coverBlock.append(coverText);
+      card.append(coverBlock);
+      const taskState = element('div', '', 'task-state'); taskState.id = `state-${item.application_id}`;
+      const actions = element('div', undefined, 'actions');
+      const accept = element('button', 'Принять и откликнуться', 'accept'); accept.type = 'button';
+      accept.addEventListener('click', async () => {
+        accept.disabled = true;
+        try {
+          taskState.textContent = 'Отправляем отклик…';
+          const task = await asJson(await fetch(`/v1/applications/${item.application_id}/apply-headhunter`, {
+            method: 'POST', headers: headers(true),
+            body: JSON.stringify({confirmation: 'submit_real_application_i_understand_the_platform_tos_risk'})
+          }));
+          taskState.textContent = `Статус: ${task.state}. Обновите вручную через /v1/applications/${item.application_id}/task, если статус waiting_for_user.`;
+        } catch (error) {
+          taskState.textContent = `Не удалось отправить автоматически: ${error.message}. Откройте вакансию по ссылке и откликнитесь вручную.`;
+        } finally { accept.disabled = false; }
+      });
+      actions.append(accept, link);
+      card.append(actions, taskState);
+      // Load current materials (cover letter) for this application.
+      fetch(`/v1/applications/${item.application_id}/materials`, {headers: headers(false)})
+        .then(response => response.ok ? response.json() : null)
+        .then(materials => { if (materials) coverText.value = materials.cover_letter_text || ''; });
+      return card;
+    }
+
+    document.querySelector('#search').addEventListener('click', async () => {
+      try {
+        const userId = userIdInput.value.trim();
+        if (!userId) throw new Error('Сначала создайте или укажите User ID');
+        const anywhere = document.querySelector('#anywhere').checked;
+        const locations = anywhere ? [] : document.querySelector('#locations').value.split(',').map(s => s.trim()).filter(Boolean);
+        showStatus('Ищем вакансии на hh.ru и готовим отклики…');
+        const results = document.querySelector('#results'); results.replaceChildren();
+        const outcomes = await asJson(await fetch(`/v1/users/${userId}/discover-headhunter-vacancies`, {
+          method: 'POST', headers: headers(true), body: JSON.stringify({locations, limit: 15})
+        }));
+        if (!outcomes.length) { results.append(element('div', 'Ничего не найдено. Попробуйте другие ключевые слова или локации.', 'empty')); showStatus('0 результатов'); return; }
+        outcomes.forEach(item => results.append(renderResult(item)));
+        showStatus(`Найдено: ${outcomes.length}`);
+      } catch (error) { showError(error); }
+    });
+  </script>
+</body>
+</html>

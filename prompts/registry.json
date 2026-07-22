@@ -1,0 +1,16 @@
+{
+  "prompts": [
+    {
+      "name": "vacancy_match",
+      "purpose": "Explain a deterministic vacancy assessment without inventing experience.",
+      "version": 1,
+      "template": "Explain the assessment for {vacancy_title}. Use only these verified facts: {verified_facts}.",
+      "input_schema": "VacancyMatchPromptInput",
+      "output_schema": "VacancyMatchExplanation",
+      "model_task_class": "strong_reasoning",
+      "created_on": "2026-07-18",
+      "is_active": true
+    }
+  ]
+}
+

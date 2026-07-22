@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "job-searching-assistant"
+version = "0.1.0"
+description = "Policy-safe, resumable recruitment automation platform"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.13,<2",
+  "cryptography>=44,<48",
+  "fastapi>=0.115,<1",
+  "httpx>=0.27,<1",
+  "playwright>=1.49,<2",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic-settings>=2.7,<3",
+  "pypdf>=5.1,<7",
+  "python-docx>=1.1,<2",
+  "python-multipart>=0.0.20,<1",
+  "redis>=5.2,<7",
+  "sqlalchemy>=2.0,<3",
+  "structlog>=24.4,<26",
+  "typer>=0.15,<1",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+dev = ["mypy>=1.14,<2", "pip-audit>=2.9,<3", "pytest>=8.3,<9", "ruff>=0.9,<1"]
+
+[project.scripts]
+recruitment-assistant = "app.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true

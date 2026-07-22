@@ -1,0 +1,304 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "ATS-001",
+      "title": "Implement Greenhouse adapter",
+      "description": "Extract vacancies and fill review-mode applications using semantic locators.",
+      "category": "adapter",
+      "priority": 1,
+      "expected_impact": "First real ATS workflow",
+      "complexity": "large",
+      "dependencies": [
+        "FORM-001",
+        "SEC-001"
+      ],
+      "acceptance_criteria": [
+        "Fixture tests pass",
+        "Real read-only extraction smoke test passes",
+        "No submit in CI"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "FORM-001",
+      "title": "Implement accessible form discovery",
+      "description": "Convert Playwright DOM observations into validated FormField records.",
+      "category": "browser",
+      "priority": 1,
+      "expected_impact": "Reliable adapter-independent field mapping",
+      "complexity": "medium",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "All field types covered",
+        "Controlled fixture extraction passes"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SEC-001",
+      "title": "Add API authentication and authorization",
+      "description": "Protect personal profile, review actions, artifacts, and administrative endpoints.",
+      "category": "security",
+      "priority": 1,
+      "expected_impact": "Prevents unauthorized access to employment data",
+      "complexity": "medium",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Unauthorized requests rejected",
+        "Scopes tested",
+        "Secrets remain external"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "HH-001",
+      "title": "Implement HeadHunter public vacancy connector",
+      "description": "Extract hh.ru vacancies through the official HTTPS JSON API without submission.",
+      "category": "adapter",
+      "priority": 1,
+      "expected_impact": "Russian-market vacancy ingestion",
+      "complexity": "medium",
+      "dependencies": [
+        "SEC-001"
+      ],
+      "acceptance_criteria": [
+        "Strict URL tests pass",
+        "Official API fixture passes",
+        "Read-only live smoke passes"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "LI-001",
+      "title": "Implement policy-safe LinkedIn connector boundary",
+      "description": "Canonicalize user-provided job references without scraping; reserve partner API integration for approved credentials.",
+      "category": "adapter",
+      "priority": 1,
+      "expected_impact": "LinkedIn tracking without policy violations",
+      "complexity": "medium",
+      "dependencies": [
+        "SEC-001"
+      ],
+      "acceptance_criteria": [
+        "Lookalike URLs rejected",
+        "No network request to LinkedIn",
+        "Manual import persists provenance"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "QUEUE-001",
+      "title": "Add Redis worker leases and domain rate limits",
+      "description": "Prevent duplicate concurrent application work and enforce conservative per-domain limits.",
+      "category": "resilience",
+      "priority": 1,
+      "expected_impact": "Safe multi-worker execution",
+      "complexity": "large",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Lease recovery tested",
+        "Duplicate workers blocked",
+        "Rate limits measured"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SELECTOR-001",
+      "title": "Add bounded versioned selector recovery",
+      "description": "Try deterministic semantic alternatives after selector failure and persist reversible proven mappings.",
+      "category": "resilience",
+      "priority": 2,
+      "expected_impact": "Recover controlled form redesigns without unbounded retries",
+      "complexity": "medium",
+      "dependencies": [
+        "FORM-001"
+      ],
+      "acceptance_criteria": [
+        "Recovery attempts are bounded",
+        "Successful fallback is versioned",
+        "Redesign regression fixture passes"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "BROWSER-QUEUE-001",
+      "title": "Route durable tasks to the isolated Chromium worker",
+      "description": "Persist typed browser task payloads, isolate queue claims, and stop controlled execution at a screenshot-backed review boundary.",
+      "category": "resilience",
+      "priority": 1,
+      "expected_impact": "Restart-safe background browser execution without arbitrary external navigation",
+      "complexity": "medium",
+      "dependencies": [
+        "QUEUE-001",
+        "FORM-001"
+      ],
+      "acceptance_criteria": [
+        "Dispatcher cannot claim browser tasks",
+        "Browser worker claims through PostgreSQL",
+        "Controlled Compose smoke reaches waiting_for_user",
+        "Evidence records submission=false"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "GREENHOUSE-BROWSER-001",
+      "title": "Connect Greenhouse review preparation to the durable browser queue",
+      "description": "Route an explicitly confirmed reviewed application to Chromium using only persisted inputs and stop before submission.",
+      "category": "adapter",
+      "priority": 1,
+      "expected_impact": "Usable API and web path from reviewed Greenhouse vacancy to screenshot-backed form preparation",
+      "complexity": "large",
+      "dependencies": [
+        "ATS-001",
+        "BROWSER-QUEUE-001",
+        "SEC-001"
+      ],
+      "acceptance_criteria": [
+        "Required answers and managed CV are validated",
+        "Task payload cannot inject a URL",
+        "Redirects leave trusted hosts only by failing",
+        "Review UI labels the no-submit action",
+        "Compose boundary smoke passes"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "HH-BROWSER-001",
+      "title": "Real hh.ru response submission via user-captured browser session",
+      "description": "Opt-in (APP_ENABLE_HEADHUNTER_APPLY) browser automation that submits a real hh.ru response using a session the user captures by hand (scripts/browser_login_capture.py). No password is ever typed by the automation; CAPTCHA/verification checkpoints pause at waiting_for_user with a screenshot.",
+      "category": "adapter",
+      "priority": 1,
+      "expected_impact": "First real (irreversible) submission workflow, opt-in and scoped to hh.ru only",
+      "complexity": "large",
+      "dependencies": [
+        "HH-001",
+        "BROWSER-QUEUE-001",
+        "SEC-001"
+      ],
+      "acceptance_criteria": [
+        "Off by default",
+        "No credentials stored",
+        "CAPTCHA routes to waiting_for_user with screenshot",
+        "Resume field does not block scheduling (hh.ru selects it natively)",
+        "Unit tests cover flag-gating and missing-session routing"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "LI-BROWSER-001",
+      "title": "Real LinkedIn Easy Apply submission via user-captured browser session",
+      "description": "Opt-in (APP_ENABLE_LINKEDIN_APPLY) browser automation of the native Easy Apply modal only; external-redirect jobs are not attempted. Same session-capture and CAPTCHA-checkpoint model as HH-BROWSER-001. Automates against LinkedIn's explicit terms at the user's informed request.",
+      "category": "adapter",
+      "priority": 1,
+      "expected_impact": "Real submission workflow for LinkedIn Easy Apply jobs, opt-in and risk-flagged",
+      "complexity": "large",
+      "dependencies": [
+        "LI-001",
+        "BROWSER-QUEUE-001",
+        "SEC-001"
+      ],
+      "acceptance_criteria": [
+        "Off by default",
+        "No credentials stored",
+        "External-redirect jobs fail closed instead of following an unknown host",
+        "CAPTCHA routes to waiting_for_user with screenshot",
+        "Unit tests cover flag-gating and missing-session routing"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "LLM-001",
+      "title": "Wire a real model provider into app/llm for cover letters and screening answers",
+      "description": "Implement a ModelProvider (Anthropic Messages API, user-supplied API key) behind app/llm/router.py, and a materials-generation service/endpoint that drafts cover_letter_text and free-text screening answers from verified profile facts only, leaving them in awaiting_review for human edit/approval before any submission.",
+      "category": "llm",
+      "priority": 1,
+      "expected_impact": "Removes the main manual step (typing every cover letter) blocking real end-to-end usage",
+      "complexity": "medium",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Provider never invents facts not present in verified profile facts",
+        "Generated text is written to awaiting_review materials, never auto-submitted",
+        "Cost/timeout budget enforced via ModelRequest",
+        "Unit tests cover provider failure and budget-exceeded fallthrough"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SEARCH-001",
+      "title": "Criteria-based vacancy discovery for hh.ru",
+      "description": "Browser-based (not api.hh.ru) search against hh.ru's public pages via adapters/job_boards/headhunter_browser.py, auto-creating vacancies and applications in awaiting_review. Exposed as POST /v1/users/{id}/discover-headhunter-vacancies and the one-click /dashboard UI (resume upload -> confirmed skills -> locations -> search).",
+      "category": "adapter",
+      "priority": 2,
+      "expected_impact": "Removes manual per-vacancy import step",
+      "complexity": "medium",
+      "dependencies": [
+        "HH-001"
+      ],
+      "acceptance_criteria": [
+        "Dedupe against existing vacancies by source_url",
+        "Respects a configurable per-run result cap",
+        "No auto-scheduling of apply tasks without human review"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "HH-BROWSER-SEARCH-001",
+      "title": "Replace api.hh.ru with browser-based search/extraction",
+      "description": "api.hh.ru's anonymous access is CAPTCHA-limited in practice. HeadHunterBrowserAdapter.search()/extract_vacancy() now read hh.ru's public search-results and vacancy pages directly through Chromium instead, with no session required (only the separate apply step needs one). Both POST /v1/vacancies/import-headhunter and POST /v1/users/{id}/discover-headhunter-vacancies use the browser adapter exclusively; adapters/job_boards/headhunter_api.py (the HTTP client) is kept but no longer called from the API layer.",
+      "category": "adapter",
+      "priority": 1,
+      "expected_impact": "Vacancy discovery actually works where the anonymous API was blocked",
+      "complexity": "large",
+      "dependencies": [
+        "HH-BROWSER-001"
+      ],
+      "acceptance_criteria": [
+        "No api.hh.ru calls in the discovery/import path",
+        "Search works without a captured session; only apply needs one",
+        "CAPTCHA during search degrades to an empty result, not a hard failure",
+        "Unit tests cover area-id resolution, href parsing, and discovery staging with a fake adapter"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "LI-BROWSER-SEARCH-001",
+      "title": "Browser-based LinkedIn job search and vacancy extraction",
+      "description": "LinkedInBrowserAdapter.search()/extract_vacancy() added alongside the existing Easy Apply automation, gated behind APP_ENABLE_LINKEDIN_APPLY and a session captured via scripts/browser_login_capture.py linkedin (LinkedIn search is not usable anonymously, unlike hh.ru). Exposed as POST /v1/users/{id}/discover-linkedin-vacancies. Jobs without native Easy Apply are skipped during staging rather than followed to an external site. Not yet wired into the /dashboard UI (hh.ru only so far).",
+      "category": "adapter",
+      "priority": 2,
+      "expected_impact": "LinkedIn vacancies can be discovered the same way hh.ru ones are",
+      "complexity": "large",
+      "dependencies": [
+        "LI-BROWSER-001"
+      ],
+      "acceptance_criteria": [
+        "Off by default (same flag as apply)",
+        "No credentials stored; requires a hand-captured session",
+        "Non-Easy-Apply jobs are not staged",
+        "Wire into /dashboard UI (not yet done)"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "DASHBOARD-001",
+      "title": "Personal dashboard: resume -> confirmed skills -> locations -> search -> accept",
+      "description": "app/static/dashboard.html served at GET /dashboard. Upload resume (PDF/DOCX) -> LLM drafts skills/summary/keywords (extract-profile) -> human confirms (confirm-profile-facts, the only thing that becomes a verified, usable fact) -> pick locations or 'anywhere' -> one click searches hh.ru and auto-drafts cover letters -> each result shows match score, editable cover letter, a link to the vacancy, and an Accept button that calls apply-headhunter (falls back to the manual link if that's disabled/unavailable).",
+      "category": "ui",
+      "priority": 1,
+      "expected_impact": "One click from resume to a reviewable, scored shortlist with drafted cover letters",
+      "complexity": "large",
+      "dependencies": [
+        "LLM-001",
+        "HH-BROWSER-SEARCH-001"
+      ],
+      "acceptance_criteria": [
+        "Resume analysis never auto-saves; requires explicit human confirmation",
+        "Search only ever creates awaiting_review applications, never submits",
+        "Accept button uses the real apply-headhunter endpoint with explicit confirmation",
+        "LinkedIn not yet integrated into this UI"
+      ],
+      "status": "completed"
+    }
+  ]
+}

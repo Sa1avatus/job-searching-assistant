@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Controlled Application</title></head>
+  <body>
+    <main>
+      <h1>Senior Python Engineer</h1>
+      <form id="application-form">
+        <label for="full-name">Full name</label>
+        <input id="full-name" name="full_name" required>
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required>
+        <label for="resume">Resume</label>
+        <input id="resume" name="resume" type="file" required>
+        <label for="authorization">Are you authorized to work in this location?</label>
+        <select id="authorization" name="work_authorization" required>
+          <option value="">Select an option</option>
+          <option>Yes</option>
+          <option>No</option>
+        </select>
+        <button type="submit">Submit application</button>
+      </form>
+      <p id="confirmation" hidden>Application received</p>
+    </main>
+    <script>
+      document.querySelector("form").addEventListener("submit", event => {
+        event.preventDefault();
+        document.querySelector("#confirmation").hidden = false;
+      });
+    </script>
+  </body>
+</html>
