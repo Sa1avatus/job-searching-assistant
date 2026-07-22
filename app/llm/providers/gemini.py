@@ -53,7 +53,7 @@ class GeminiProvider(ModelProvider):
     async def complete(self, request: ModelRequest) -> dict[str, object]:
         response = await self._http_client.post(
             f"{_API_BASE}/{self._model}:generateContent",
-            params={"key": self._api_key},
+            headers={"x-goog-api-key": self._api_key},
             json={
                 "system_instruction": {
                     "parts": [

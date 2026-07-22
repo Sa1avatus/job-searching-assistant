@@ -105,6 +105,7 @@ from app.services.browser_authorization import (
 )
 from app.services.browser_handoff import create_browser_handoff
 from app.services.job_discovery import (
+    DiscoveryOutcome,
     JobDiscoveryService,
     LinkedInSessionRequiredError,
     NoSearchKeywordsError,
@@ -139,6 +140,12 @@ app = FastAPI(title="Job Searching Assistant", version="0.1.0")
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
 BROWSER_AUTHORIZATION_MANAGER = BrowserAuthorizationManager()
+
+
+def serialize_discovery_outcomes(
+    outcomes: list[DiscoveryOutcome],
+) -> list[DiscoveryOutcomeResponse]:
+    return [DiscoveryOutcomeResponse(**asdict(outcome)) for outcome in outcomes]
 
 
 def required_api_scope(method: str, path: str) -> str:
@@ -854,7 +861,7 @@ async def discover_headhunter_vacancies(
                 await materials_service.draft_materials(outcome.application_id)
             except Exception:  # noqa: BLE001 - a drafting failure must not fail the whole search
                 continue
-    return [DiscoveryOutcomeResponse(**outcome.__dict__) for outcome in outcomes]
+    return serialize_discovery_outcomes(outcomes)
 
 
 @app.post(
@@ -922,7 +929,7 @@ async def discover_linkedin_vacancies(
                 await materials_service.draft_materials(outcome.application_id)
             except Exception:  # noqa: BLE001 - a drafting failure must not fail the whole search
                 continue
-    return [DiscoveryOutcomeResponse(**outcome.__dict__) for outcome in outcomes]
+    return serialize_discovery_outcomes(outcomes)
 
 
 @app.post("/v1/vacancies", response_model=VacancyResponse, status_code=status.HTTP_201_CREATED)

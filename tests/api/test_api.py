@@ -1,8 +1,15 @@
 import httpx
 from fastapi.testclient import TestClient
 
-from app.api.main import app, build_model_providers, llm_is_configured, required_api_scope
+from app.api.main import (
+    app,
+    build_model_providers,
+    llm_is_configured,
+    required_api_scope,
+    serialize_discovery_outcomes,
+)
 from app.config import Settings, get_settings
+from app.services.job_discovery import DiscoveryOutcome
 
 client = TestClient(app)
 
@@ -41,6 +48,23 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert "linkedin-login" in response.text
     assert "Я вошёл — сохранить" in response.text
     assert ".doc,.txt,.rtf,.odt,.html,.htm,.md" in response.text
+
+
+def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:
+    outcome = DiscoveryOutcome(
+        application_id="application-1",
+        vacancy_id="vacancy-1",
+        title="AI Engineer",
+        company="Example",
+        source_url="https://hh.ru/vacancy/123",
+        match_score=80,
+        status="created",
+    )
+
+    response = serialize_discovery_outcomes([outcome])
+
+    assert response[0].application_id == "application-1"
+    assert response[0].match_score == 80
 
 
 def test_assessment_returns_grounded_gap() -> None:

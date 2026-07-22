@@ -26,7 +26,8 @@ def test_rejects_empty_api_key() -> None:
 @pytest.mark.asyncio
 async def test_complete_parses_json_text_part() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.params["key"] == "test-key"
+        assert request.headers["x-goog-api-key"] == "test-key"
+        assert "key" not in request.url.params
         body = json.loads(request.content)
         assert body["contents"][0]["parts"][0]["text"] == "draft a letter"
         return httpx.Response(
