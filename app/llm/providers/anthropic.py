@@ -72,7 +72,9 @@ class AnthropicMessagesProvider(ModelProvider):
         payload = response.json()
         blocks = payload.get("content") or []
         text = "".join(
-            block.get("text", "") for block in blocks if isinstance(block, dict) and block.get("type") == "text"
+            block.get("text", "")
+            for block in blocks
+            if isinstance(block, dict) and block.get("type") == "text"
         )
         text = text.strip()
         if text.startswith("```"):
@@ -81,7 +83,9 @@ class AnthropicMessagesProvider(ModelProvider):
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError as error:
-            raise AnthropicResponseError(f"Anthropic response was not valid JSON: {error}") from error
+            raise AnthropicResponseError(
+                f"Anthropic response was not valid JSON: {error}"
+            ) from error
         if not isinstance(parsed, dict):
             raise AnthropicResponseError("Anthropic response JSON was not an object")
         return parsed

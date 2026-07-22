@@ -27,6 +27,7 @@ from app.storage.tables import ApplicationRow, UserRow, VacancyRow
 class LinkedInSessionRequiredError(RuntimeError):
     """LinkedIn search needs a captured session; run scripts/browser_login_capture.py linkedin."""
 
+
 _DEFAULT_LIMIT = 15
 _MAX_LIMIT = 50
 
@@ -71,9 +72,7 @@ class JobDiscoveryService:
 
         limit = min(max(limit, 1), _MAX_LIMIT)
         try:
-            hits = await headhunter_adapter.search(
-                text=text, location_names=locations, limit=limit
-            )
+            hits = await headhunter_adapter.search(text=text, location_names=locations, limit=limit)
         except (CaptchaChallenge, ApplyBlocked):
             # A CAPTCHA/blocked search page mid-run should surface as "found nothing this time"
             # rather than a hard failure; the caller can retry once the challenge is resolved.
@@ -95,10 +94,10 @@ class JobDiscoveryService:
         user_id: str,
         source_url: str,
     ) -> DiscoveryOutcome | None:
-        existing_vacancy = self._session.scalar(
+        vacancy: VacancyRow | None = self._session.scalar(
             select(VacancyRow).where(VacancyRow.source_url == source_url)
         )
-        if existing_vacancy is None:
+        if vacancy is None:
             try:
                 extracted = await headhunter_adapter.extract_vacancy(source_url)
             except Exception:  # noqa: BLE001 - a single unreadable search hit should not abort the run
@@ -132,8 +131,8 @@ class JobDiscoveryService:
                 )
                 if vacancy is None:
                     return None
-        else:
-            vacancy = existing_vacancy
+        if vacancy is None:
+            return None
 
         existing_application = self._session.scalar(
             select(ApplicationRow).where(
@@ -210,10 +209,10 @@ class JobDiscoveryService:
         user_id: str,
         source_url: str,
     ) -> DiscoveryOutcome | None:
-        existing_vacancy = self._session.scalar(
+        vacancy: VacancyRow | None = self._session.scalar(
             select(VacancyRow).where(VacancyRow.source_url == source_url)
         )
-        if existing_vacancy is None:
+        if vacancy is None:
             try:
                 extracted = await linkedin_adapter.extract_vacancy(source_url)
             except Exception:  # noqa: BLE001 - a single unreadable search hit should not abort the run
@@ -243,8 +242,8 @@ class JobDiscoveryService:
                 )
                 if vacancy is None:
                     return None
-        else:
-            vacancy = existing_vacancy
+        if vacancy is None:
+            return None
 
         existing_application = self._session.scalar(
             select(ApplicationRow).where(

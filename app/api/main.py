@@ -30,6 +30,7 @@ from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChalle
 from adapters.job_boards.contracts import ADAPTER_CAPABILITIES
 from adapters.job_boards.greenhouse_api import GreenhouseJobBoardApi
 from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter
+from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
 from adapters.job_boards.linkedin_reference import LinkedInJobReference
 from app.api.schemas import (
     ApplicationMaterialsResponse,
@@ -37,9 +38,9 @@ from app.api.schemas import (
     ApplicationResponse,
     AssessmentRequest,
     AssessmentResponse,
+    BrowserApplySubmitRequest,
     BrowserHandoffRequest,
     BrowserHandoffResponse,
-    BrowserApplySubmitRequest,
     BrowserReviewRequest,
     ConfirmedProfileFactResponse,
     ConfirmProfileFactsRequest,
@@ -76,22 +77,18 @@ from app.browser.session_store import InvalidBrowserState, delete_browser_state_
 from app.config import Settings, get_settings
 from app.domain.models import ProfileFact, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy
-from app.observability.logging import configure_logging
-from app.observability.metrics import metrics
-from app.services.browser_handoff import create_browser_handoff
 from app.domain.resume_text import UnreadableResumeError, extract_resume_text
 from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
 from app.llm.router import ModelProvider, ModelRouter, NoModelAvailableError
-from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
+from app.observability.logging import configure_logging
+from app.observability.metrics import metrics
+from app.services.browser_handoff import create_browser_handoff
 from app.services.job_discovery import (
     JobDiscoveryService,
     LinkedInSessionRequiredError,
     NoSearchKeywordsError,
 )
-from app.storage.database import SessionFactory
-from app.workers.browser_tasks import _restore_browser_session
-from app.workers.browser_worker import create_session_store
 from app.services.materials_generation import (
     MaterialsGenerationService,
     NoVerifiedFactsError,
@@ -102,10 +99,12 @@ from app.services.recruitment import (
     RecruitmentService,
 )
 from app.services.resume_intake import ResumeIntakeService
-from app.storage.database import session_scope
+from app.storage.database import SessionFactory, session_scope
 from app.storage.documents import DocumentStorage, InvalidDocumentError
 from app.storage.evidence_artifacts import EvidenceArtifactStorage, InvalidEvidenceArtifact
 from app.storage.tables import ApplicationRow, CvFileRow, WorkerHeartbeatRow, WorkflowTaskRow
+from app.workers.browser_tasks import _restore_browser_session
+from app.workers.browser_worker import create_session_store
 
 configure_logging()
 app = FastAPI(title="Job Searching Assistant", version="0.1.0")
@@ -485,7 +484,9 @@ async def extract_profile_from_cv(
     if not llm_is_configured(settings):
         raise HTTPException(
             status_code=503,
-            detail="Resume analysis is unavailable: set APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY",
+            detail=(
+                "Resume analysis is unavailable: set APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY"
+            ),
         )
     cv_file = session.get(CvFileRow, cv_file_id)
     if cv_file is None or cv_file.user_id != user_id:
@@ -499,9 +500,7 @@ async def extract_profile_from_cv(
     try:
         draft = await ResumeIntakeService(router).draft_profile(resume_text)
     except NoModelAvailableError as error:
-        raise HTTPException(
-            status_code=502, detail=f"Resume analysis failed: {error}"
-        ) from error
+        raise HTTPException(status_code=502, detail=f"Resume analysis failed: {error}") from error
     return ExtractedProfileResponse(
         skills=draft.skills,
         experience_summary=draft.experience_summary,
@@ -626,7 +625,9 @@ async def discover_linkedin_vacancies(
                 f"{user_id}` first"
             ),
         )
-    task_artifact_directory = settings.artifact_directory / "browser-worker" / f"li-discover-{user_id}"
+    task_artifact_directory = (
+        settings.artifact_directory / "browser-worker" / f"li-discover-{user_id}"
+    )
     try:
         async with PlaywrightEngine(
             headless=settings.browser_headless,
@@ -748,7 +749,9 @@ async def import_headhunter_vacancy(
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except (RuntimeError, ApplyBlocked) as error:
-        raise HTTPException(status_code=502, detail=f"Could not read hh.ru vacancy: {error}") from error
+        raise HTTPException(
+            status_code=502, detail=f"Could not read hh.ru vacancy: {error}"
+        ) from error
     except CaptchaChallenge as error:
         raise HTTPException(
             status_code=503, detail="hh.ru presented a verification checkpoint; try again shortly"
@@ -1115,7 +1118,9 @@ async def generate_application_materials(
     if not llm_is_configured(settings):
         raise HTTPException(
             status_code=503,
-            detail="Materials drafting is unavailable: set APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY",
+            detail=(
+                "Materials drafting is unavailable: set APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY"
+            ),
         )
     try:
         await MaterialsGenerationService(session, router).draft_materials(application_id)
@@ -1124,7 +1129,9 @@ async def generate_application_materials(
     except NoVerifiedFactsError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except NoModelAvailableError as error:
-        raise HTTPException(status_code=502, detail=f"Materials drafting failed: {error}") from error
+        raise HTTPException(
+            status_code=502, detail=f"Materials drafting failed: {error}"
+        ) from error
     application = session.get(ApplicationRow, application_id)
     if application is None:
         raise HTTPException(status_code=404, detail="Application not found")

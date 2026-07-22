@@ -95,7 +95,11 @@
 
     <section class="step">
       <h2>3. Поиск</h2>
-      <div class="hint">Ищем на hh.ru по вашим подтверждённым навыкам, создаём черновики откликов с подобранным сопроводительным письмом.</div>
+      <div class="hint">Ищем через управляемый браузер, а не API. Для LinkedIn сначала сохраните свою сессию командой из README.</div>
+      <div class="chips" style="margin-bottom:14px;">
+        <label class="chip"><input id="source-headhunter" type="checkbox" checked> hh.ru</label>
+        <label class="chip"><input id="source-linkedin" type="checkbox" checked> LinkedIn</label>
+      </div>
       <button id="search" type="button" class="primary">Найти вакансии</button>
     </section>
 
@@ -201,7 +205,8 @@
       card.append(top);
       if (item.status === 'already_existed') card.append(element('span', 'уже был в списке ранее', 'badge'));
       const meta = element('div', undefined, 'meta');
-      const link = element('a', 'Открыть вакансию на hh.ru'); link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
+      const sourceLabel = item.source === 'linkedin' ? 'LinkedIn' : 'hh.ru';
+      const link = element('a', `Открыть вакансию на ${sourceLabel}`); link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
       card.append(meta);
       const coverBlock = element('div', undefined, 'cover-letter');
       coverBlock.append(element('label', 'Сопроводительное письмо (можно отредактировать)'));
@@ -214,8 +219,13 @@
       accept.addEventListener('click', async () => {
         accept.disabled = true;
         try {
-          taskState.textContent = 'Отправляем отклик…';
-          const task = await asJson(await fetch(`/v1/applications/${item.application_id}/apply-headhunter`, {
+          taskState.textContent = 'Сохраняем письмо и ставим отклик в очередь…';
+          await asJson(await fetch(`/v1/applications/${item.application_id}/materials`, {
+            method: 'PATCH', headers: headers(true),
+            body: JSON.stringify({cover_letter_text: coverText.value, screening_answers: []})
+          }));
+          const applyRoute = item.source === 'linkedin' ? 'apply-linkedin' : 'apply-headhunter';
+          const task = await asJson(await fetch(`/v1/applications/${item.application_id}/${applyRoute}`, {
             method: 'POST', headers: headers(true),
             body: JSON.stringify({confirmation: 'submit_real_application_i_understand_the_platform_tos_risk'})
           }));
@@ -241,12 +251,28 @@
         const locations = anywhere ? [] : document.querySelector('#locations').value.split(',').map(s => s.trim()).filter(Boolean);
         showStatus('Ищем вакансии на hh.ru и готовим отклики…');
         const results = document.querySelector('#results'); results.replaceChildren();
-        const outcomes = await asJson(await fetch(`/v1/users/${userId}/discover-headhunter-vacancies`, {
-          method: 'POST', headers: headers(true), body: JSON.stringify({locations, limit: 15})
+        const searchText = document.querySelector('#keywords-text').value.trim() || null;
+        const sources = [];
+        if (document.querySelector('#source-headhunter').checked) sources.push(['headhunter', 'discover-headhunter-vacancies']);
+        if (document.querySelector('#source-linkedin').checked) sources.push(['linkedin', 'discover-linkedin-vacancies']);
+        if (!sources.length) throw new Error('Выберите хотя бы один сайт для поиска');
+        const settled = await Promise.allSettled(sources.map(async ([source, route]) => {
+          const items = await asJson(await fetch(`/v1/users/${userId}/${route}`, {
+            method: 'POST', headers: headers(true), body: JSON.stringify({locations, limit: 15, search_text: searchText})
+          }));
+          return items.map(item => ({...item, source}));
         }));
-        if (!outcomes.length) { results.append(element('div', 'Ничего не найдено. Попробуйте другие ключевые слова или локации.', 'empty')); showStatus('0 результатов'); return; }
+        const outcomes = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+        const failures = settled
+          .map((result, index) => result.status === 'rejected' ? `${sources[index][0]}: ${result.reason.message}` : null)
+          .filter(Boolean);
+        if (!outcomes.length) {
+          results.append(element('div', failures.length ? 'Поиск не выполнен: проверьте настройку браузерных сессий.' : 'Ничего не найдено. Попробуйте другие ключевые слова или локации.', 'empty'));
+          showStatus(failures.length ? failures.join('; ') : '0 результатов');
+          return;
+        }
         outcomes.forEach(item => results.append(renderResult(item)));
-        showStatus(`Найдено: ${outcomes.length}`);
+        showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
       } catch (error) { showError(error); }
     });
   </script>

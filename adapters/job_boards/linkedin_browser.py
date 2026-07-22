@@ -25,7 +25,8 @@ import time
 from dataclasses import dataclass
 from urllib.parse import quote, urlparse
 
-from playwright.async_api import Locator, Page, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import Locator, Page
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChallenge, LoginRequired
 from app.browser.engine import BrowserActionResult, PlaywrightEngine
@@ -113,15 +114,15 @@ class LinkedInBrowserAdapter:
             raise ApplyBlocked(
                 "This job has no native Easy Apply control (likely an external application)"
             )
-        actions.append(
-            await self._click(page, easy_apply_button, "open-easy-apply-modal")
-        )
+        actions.append(await self._click(page, easy_apply_button, "open-easy-apply-modal"))
         if not actions[-1].is_successful:
             raise ApplyBlocked("Could not open the Easy Apply modal")
         await self._raise_if_challenge_url(page)
 
         steps_completed = 0
-        modal = page.locator("div.jobs-easy-apply-modal, div[data-test-modal-id='easy-apply-modal']")
+        modal = page.locator(
+            "div.jobs-easy-apply-modal, div[data-test-modal-id='easy-apply-modal']"
+        )
         for _ in range(_MAX_EASY_APPLY_STEPS):
             await self._raise_if_challenge_url(page)
             submit_button = modal.get_by_role("button", name="Submit application")
@@ -203,11 +204,11 @@ class LinkedInBrowserAdapter:
             job_id = await card.get_attribute("data-job-id")
             if not job_id:
                 continue
-            title_locator = card.locator(
-                ".job-card-list__title, .job-card-container__link"
-            ).first
+            title_locator = card.locator(".job-card-list__title, .job-card-container__link").first
             title = (
-                (await title_locator.inner_text()).strip() if await title_locator.count() > 0 else ""
+                (await title_locator.inner_text()).strip()
+                if await title_locator.count() > 0
+                else ""
             )
             company_locator = card.locator(".job-card-container__company-name").first
             company = (
@@ -237,18 +238,17 @@ class LinkedInBrowserAdapter:
         if not self.supports_url(page.url):
             raise RuntimeError("LinkedIn navigation left the trusted host")
 
-        title_locator = page.locator(
-            ".job-details-jobs-unified-top-card__job-title, h1"
-        ).first
+        title_locator = page.locator(".job-details-jobs-unified-top-card__job-title, h1").first
         if await title_locator.count() == 0:
             raise ApplyBlocked("This does not look like a live LinkedIn job posting page")
         title = (await title_locator.inner_text()).strip()
         company_locator = page.locator(
-            ".job-details-jobs-unified-top-card__company-name, "
-            ".jobs-unified-top-card__company-name"
+            ".job-details-jobs-unified-top-card__company-name, .jobs-unified-top-card__company-name"
         ).first
         company = (
-            (await company_locator.inner_text()).strip() if await company_locator.count() > 0 else ""
+            (await company_locator.inner_text()).strip()
+            if await company_locator.count() > 0
+            else ""
         )
         location_locator = page.locator(
             ".job-details-jobs-unified-top-card__primary-description-container"
@@ -282,7 +282,8 @@ class LinkedInBrowserAdapter:
             raise LoginRequired("LinkedIn session is not authenticated")
         checkpoint = await self._browser_engine.capture_review_checkpoint(page, target="captcha")
         raise CaptchaChallenge(
-            "LinkedIn presented a verification checkpoint", screenshot_path=checkpoint.screenshot_path
+            "LinkedIn presented a verification checkpoint",
+            screenshot_path=checkpoint.screenshot_path,
         )
 
     async def _click(self, page: Page, locator: Locator, target: str) -> BrowserActionResult:

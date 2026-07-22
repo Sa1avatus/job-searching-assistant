@@ -21,7 +21,8 @@ from dataclasses import dataclass
 from urllib.parse import quote, urlparse
 
 import structlog
-from playwright.async_api import Locator, Page, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import Locator, Page
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChallenge, LoginRequired
 from app.browser.engine import BrowserActionResult, PlaywrightEngine
@@ -166,7 +167,9 @@ class HeadHunterBrowserAdapter:
         ).first
         actions.append(await self._click(page, submit_button, "submit-response", already_ok=False))
         if not actions[-1].is_successful:
-            raise ApplyBlocked("The submit control was not found; this vacancy likely requires a test")
+            raise ApplyBlocked(
+                "The submit control was not found; this vacancy likely requires a test"
+            )
 
         await self._raise_if_captcha(page)
         confirmation = page.locator(
@@ -194,9 +197,7 @@ class HeadHunterBrowserAdapter:
         (only ``apply`` needs a captured session). CAPTCHA still routes to ``CaptchaChallenge``.
         """
         area_ids = resolve_known_area_ids(location_names or [])
-        query = "&".join(
-            [f"text={quote(text)}", *[f"area={area_id}" for area_id in area_ids]]
-        )
+        query = "&".join([f"text={quote(text)}", *[f"area={area_id}" for area_id in area_ids]])
         page = await self._browser_engine.new_page()
         navigation = await self._browser_engine.navigate(
             page, f"https://hh.ru/search/vacancy?{query}"
@@ -239,9 +240,7 @@ class HeadHunterBrowserAdapter:
             if vacancy_id is None:
                 continue
             title = (await title_link.inner_text()).strip()
-            company_locator = card.locator(
-                "[data-qa='vacancy-serp__vacancy-employer']"
-            ).first
+            company_locator = card.locator("[data-qa='vacancy-serp__vacancy-employer']").first
             company = (
                 (await company_locator.inner_text()).strip()
                 if await company_locator.count() > 0
@@ -277,7 +276,9 @@ class HeadHunterBrowserAdapter:
             "[data-qa='vacancy-company-name'], a[data-qa='vacancy-serp__vacancy-employer']"
         ).first
         company = (
-            (await company_locator.inner_text()).strip() if await company_locator.count() > 0 else ""
+            (await company_locator.inner_text()).strip()
+            if await company_locator.count() > 0
+            else ""
         )
         location_locator = page.locator("[data-qa='vacancy-view-location']").first
         location = (
@@ -292,10 +293,11 @@ class HeadHunterBrowserAdapter:
             else ""
         )
         skill_locator = page.locator("[data-qa='skills-element']")
-        required_skills = tuple(
-            (await skill_locator.nth(index).inner_text()).strip()
-            for index in range(await skill_locator.count())
-        )
+        required_skills: list[str] = []
+        for index in range(await skill_locator.count()):
+            skill = (await skill_locator.nth(index).inner_text()).strip()
+            if skill:
+                required_skills.append(skill)
         response_letter_indicator = page.locator("[data-qa='vacancy-response-letter-informer']")
         response_letter_required = await response_letter_indicator.count() > 0
         has_test_indicator = page.get_by_text("необходимо пройти тест", exact=False)
@@ -330,7 +332,7 @@ class HeadHunterBrowserAdapter:
             company=company,
             location=location,
             description_text=description_text,
-            required_skills=required_skills,
+            required_skills=tuple(required_skills),
             form_fields=tuple(fields),
             requires_sensitive_review=requires_sensitive_review,
         )

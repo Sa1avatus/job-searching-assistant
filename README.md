@@ -1,10 +1,8 @@
 # Job Searching Assistant
 
-Policy-safe recruitment automation foundation. The current increment implements verified-profile
-matching, guarded answer preparation, automatic-submission policy, auditable workflow state,
-PostgreSQL migrations, Redis coordination, a protected API, versioned prompts, and a headless
-Playwright review flow with encrypted restartable browser state in an isolated worker. It also performs public read-only Greenhouse vacancy extraction and safely
-stores selected PDF/DOCX CV files. It does **not** submit real applications yet.
+Recruitment assistant MVP with a personal dashboard, resume analysis, browser-based vacancy search,
+matching, individual cover-letter drafts, review, and explicitly enabled browser submission.
+HeadHunter and LinkedIn search do not use job-seeker APIs.
 
 Workflow tasks can be persisted with `JsonTaskRepository` for the dependency-free local slice. The
 Compose runtime uses PostgreSQL skip-locked claims and Redis leases for multi-worker-safe dispatch;
@@ -42,7 +40,28 @@ docker compose up --build -d
 
 ## API
 
-The local human review interface is available at `http://127.0.0.1:8000/review`.
+The personal dashboard is available at `http://127.0.0.1:8000/dashboard`; the detailed review
+queue is available at `http://127.0.0.1:8000/review`.
+
+### Enable browser search and submission
+
+Create a Fernet key and place it in `.env` as `APP_BROWSER_STATE_ENCRYPTION_KEY`:
+
+```powershell
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Set `APP_ENABLE_LINKEDIN_APPLY=true` to enable LinkedIn browser search and Easy Apply. Set
+`APP_ENABLE_HEADHUNTER_APPLY=true` only if the final hh.ru submission button should be enabled.
+After creating a user in the dashboard, capture signed-in sessions in visible browser windows:
+
+```powershell
+python scripts/browser_login_capture.py headhunter --user-id <user-id>
+python scripts/browser_login_capture.py linkedin --user-id <user-id>
+```
+
+The script never asks for a password or verification code. You enter them directly on the site.
+CAPTCHA and verification checkpoints are never bypassed automatically.
 
 - `GET /health` and `GET /ready`
 - `GET /metrics`
@@ -61,7 +80,7 @@ The local human review interface is available at `http://127.0.0.1:8000/review`.
   Greenhouse form preparation in the isolated Chromium worker
 - `GET /v1/evidence/{artifact_id}` for root-confined, no-store screenshot evidence
 - `POST /v1/vacancies/import-greenhouse` for strict public read-only extraction
-- `POST /v1/vacancies/import-headhunter` for official hh.ru public API extraction
+- `POST /v1/vacancies/import-headhunter` for browser-based hh.ru extraction
 - `POST /v1/vacancies/import-linkedin-reference` for policy-safe manual LinkedIn references
 - `GET /v1/review-queue` and `POST /v1/applications/{application_id}/decision`
 
@@ -75,10 +94,8 @@ boundaries.
 
 ## Current boundaries
 
-No authenticated ATS submission adapter, external account, or automatic submission is enabled.
-Greenhouse supports live public read-only extraction plus durable, non-submitting review-form
-preparation; the browser execution contract and Chromium behavior are fixture-verified, while a live
-external fill is not claimed. HeadHunter support is public and read-only. LinkedIn is reference/manual-import only
-because job seeker scraping and unauthorized automation are prohibited. Semantic memory, production
-ATS selector mappings, multi-user ownership authorization, and the broader analytics schema remain
-subsequent increments. No external credentials are required for the current controlled workflow.
+Real submission is disabled by default and requires both a feature flag and an explicit confirmation
+from the dashboard. LinkedIn automation can trigger platform restrictions; use it only with an
+account whose risk you accept. Selectors are fixture-tested but may need maintenance when either site
+changes its markup. CAPTCHA, SMS, 2FA, legal declarations, and unknown required questions always stop
+for human action.

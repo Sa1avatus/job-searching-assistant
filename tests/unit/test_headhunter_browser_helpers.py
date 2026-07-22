@@ -1,4 +1,4 @@
-from adapters.job_boards.headhunter_browser import resolve_known_area_ids, _vacancy_id_from_href
+from adapters.job_boards.headhunter_browser import _vacancy_id_from_href, resolve_known_area_ids
 
 
 def test_resolve_known_area_ids_empty_means_anywhere() -> None:

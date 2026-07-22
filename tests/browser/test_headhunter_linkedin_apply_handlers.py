@@ -108,9 +108,7 @@ def test_headhunter_apply_waits_for_user_without_captured_session(tmp_path: Path
         session_factory = _session_factory()
         application_id = _seed_application(session_factory, adapter_name="headhunter")
         handler = HeadHunterApplyHandler(
-            Settings(
-                _env_file=None, artifact_directory=tmp_path, enable_headhunter_apply=True
-            ),
+            Settings(_env_file=None, artifact_directory=tmp_path, enable_headhunter_apply=True),
             session_factory,
             _store(tmp_path),
         )
@@ -138,9 +136,7 @@ def test_headhunter_apply_rejects_wrong_adapter_vacancy(tmp_path: Path) -> None:
         session_factory = _session_factory()
         application_id = _seed_application(session_factory, adapter_name="greenhouse")
         handler = HeadHunterApplyHandler(
-            Settings(
-                _env_file=None, artifact_directory=tmp_path, enable_headhunter_apply=True
-            ),
+            Settings(_env_file=None, artifact_directory=tmp_path, enable_headhunter_apply=True),
             session_factory,
             _store(tmp_path),
         )
@@ -164,9 +160,7 @@ def test_headhunter_apply_rejects_unexpected_payload(tmp_path: Path) -> None:
     async def run_handler() -> None:
         session_factory = _session_factory()
         handler = HeadHunterApplyHandler(
-            Settings(
-                _env_file=None, artifact_directory=tmp_path, enable_headhunter_apply=True
-            ),
+            Settings(_env_file=None, artifact_directory=tmp_path, enable_headhunter_apply=True),
             session_factory,
             _store(tmp_path),
         )

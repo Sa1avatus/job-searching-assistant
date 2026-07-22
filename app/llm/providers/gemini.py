@@ -93,7 +93,9 @@ class GeminiProvider(ModelProvider):
         text = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
         if not text:
             logger.warning("gemini_empty_content", finish_reason=finish_reason, payload=payload)
-            raise GeminiResponseError(f"Gemini returned empty content (finishReason={finish_reason})")
+            raise GeminiResponseError(
+                f"Gemini returned empty content (finishReason={finish_reason})"
+            )
         if text.startswith("```"):
             text = text.strip("`")
             text = text[4:] if text.lower().startswith("json") else text

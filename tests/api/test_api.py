@@ -24,6 +24,17 @@ def test_review_interface_has_security_boundary_and_no_embedded_remote_assets() 
     assert "https://" not in response.text
 
 
+def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    assert "discover-headhunter-vacancies" in response.text
+    assert "discover-linkedin-vacancies" in response.text
+    assert "apply-headhunter" in response.text
+    assert "apply-linkedin" in response.text
+    assert "source-linkedin" in response.text
+
+
 def test_assessment_returns_grounded_gap() -> None:
     response = client.post(
         "/v1/assessments",
@@ -112,14 +123,11 @@ def test_connector_capabilities_expose_policy_boundaries() -> None:
 
     assert response.status_code == 200
     connectors = {item["name"]: item for item in response.json()}
-    assert connectors["headhunter"]["vacancy_extraction"] == "official_https_json_api"
+    assert connectors["headhunter"]["vacancy_extraction"] == "browser_dom_automation"
     # Real submission is opt-in browser automation, off by default (APP_ENABLE_*_APPLY=false),
     # using a session the user captured by hand — see docs/known-limitations.md.
     assert connectors["linkedin-reference"]["submission_supported"] is True
-    assert (
-        "No LinkedIn network requests or scraping; only native Easy Apply DOM automation"
-        in connectors["linkedin-reference"]["known_limitations"]
-    )
+    assert "no job-seeker API" in " ".join(connectors["linkedin-reference"]["known_limitations"])
     assert any(
         "LinkedIn's User Agreement prohibits this kind of automation" in limitation
         for limitation in connectors["linkedin-reference"]["known_limitations"]

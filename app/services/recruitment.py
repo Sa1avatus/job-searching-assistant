@@ -387,7 +387,11 @@ class RecruitmentService:
                 reason=f"human explicitly confirmed a real {site_key} application submission",
                 worker="api",
                 attempt_number=task.attempt_number,
-                evidence=[f"application:{application_id}", "submission:pending", f"site:{site_key}"],
+                evidence=[
+                    f"application:{application_id}",
+                    "submission:pending",
+                    f"site:{site_key}",
+                ],
             )
         )
         self._session.commit()

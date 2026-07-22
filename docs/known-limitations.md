@@ -69,5 +69,5 @@
   an external action; recovery starts a new context from cookies/localStorage.
 - Resume text extraction (`app/domain/resume_text.py`) handles PDF and DOCX; scanned/image-only
   PDFs will yield little or no extractable text and are rejected rather than silently proceeding.
-- The personal dashboard (`/dashboard`) currently drives hh.ru discovery end-to-end in one click;
-  the LinkedIn discovery endpoint exists but is not yet wired into the dashboard UI.
+- The personal dashboard (`/dashboard`) drives both hh.ru and LinkedIn discovery. LinkedIn search
+  still requires an explicitly enabled connector and a previously captured signed-in session.

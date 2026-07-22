@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Literal
 
@@ -13,13 +14,13 @@ from adapters.job_boards.greenhouse_api import GreenhouseJobReference
 from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter
 from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
 from app.browser.engine import PlaywrightEngine
+from app.browser.selector_library import SelectorLibrary
 from app.browser.session_service import BrowserSessionNotFound, BrowserSessionService
 from app.browser.session_store import EncryptedBrowserStateStore, InvalidBrowserState
-from app.browser.selector_library import SelectorLibrary
 from app.config import Settings
 from app.domain.failures import FailureCategory
 from app.domain.models import TaskState
-from app.storage.tables import ApplicationRow, CvFileRow, UserRow, VacancyRow
+from app.storage.tables import ApplicationRow, CvFileRow, VacancyRow
 from app.storage.task_repository import ClaimedTask
 from app.workers.dispatcher import ExecutionOutcome, HumanActionRequest, TaskHandler
 
@@ -320,17 +321,14 @@ def _persist_browser_session(
     last_url: str,
 ) -> None:
     """Best-effort refresh of the stored session after a successful run (cookies rotate)."""
-    with session_factory() as session:
-        try:
-            BrowserSessionService(session, store).save(
-                user_id=user_id,
-                site_key=site_key,
-                adapter_name=adapter_name,
-                state=state,
-                last_url=last_url,
-            )
-        except (BrowserSessionNotFound, InvalidBrowserState):
-            pass
+    with session_factory() as session, suppress(BrowserSessionNotFound, InvalidBrowserState):
+        BrowserSessionService(session, store).save(
+            user_id=user_id,
+            site_key=site_key,
+            adapter_name=adapter_name,
+            state=state,
+            last_url=last_url,
+        )
 
 
 _REAUTH_INSTRUCTIONS = (
@@ -373,7 +371,8 @@ class HeadHunterApplyHandler:
         if not self._settings.enable_headhunter_apply:
             return ExecutionOutcome(
                 TaskState.FAILED,
-                "hh.ru browser apply is disabled; set APP_ENABLE_HEADHUNTER_APPLY=true to enable it",
+                "hh.ru browser apply is disabled; set "
+                "APP_ENABLE_HEADHUNTER_APPLY=true to enable it",
             )
         if claimed_task.application_id is None:
             return ExecutionOutcome(TaskState.FAILED, "hh.ru apply task has no application id")
@@ -502,7 +501,8 @@ class LinkedInApplyHandler:
         if not self._settings.enable_linkedin_apply:
             return ExecutionOutcome(
                 TaskState.FAILED,
-                "LinkedIn browser apply is disabled; set APP_ENABLE_LINKEDIN_APPLY=true to enable it",
+                "LinkedIn browser apply is disabled; set "
+                "APP_ENABLE_LINKEDIN_APPLY=true to enable it",
             )
         if claimed_task.application_id is None:
             return ExecutionOutcome(TaskState.FAILED, "LinkedIn apply task has no application id")
@@ -603,7 +603,7 @@ class ApplicationBrowserTaskHandler:
 
     def __init__(
         self,
-        greenhouse_handler: "GreenhouseBrowserReviewHandler",
+        greenhouse_handler: GreenhouseBrowserReviewHandler,
         headhunter_handler: HeadHunterApplyHandler,
         linkedin_handler: LinkedInApplyHandler,
     ) -> None:

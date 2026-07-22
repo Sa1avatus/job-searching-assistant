@@ -79,16 +79,16 @@ ADAPTER_CAPABILITIES: tuple[AdapterCapabilities, ...] = (
     ),
     AdapterCapabilities(
         name="headhunter",
-        vacancy_extraction="official_https_json_api",
-        authentication_requirement="optional_oauth_for_read; user_captured_browser_session_for_apply",
-        form_discovery="resume_and_cover_letter_requirements_from_api",
+        vacancy_extraction="browser_dom_automation",
+        authentication_requirement="none_for_public_search; user_captured_session_for_apply",
+        form_discovery="browser_dom_resume_and_cover_letter_requirements",
         file_upload_behavior="review_only_local_cv_selection",
         validation_detection="typed_api_schema_and_test_flag",
         submission_detection="browser_automation_opt_in",
         confirmation_extraction="dom_confirmation_banner_screenshot",
         submission_supported=True,
         known_limitations=(
-            "Anonymous API access may be CAPTCHA-limited",
+            "Public browser search may be CAPTCHA-limited",
             "Site terms prohibit automated page parsing and structured collection",
             "Real submission requires APP_ENABLE_HEADHUNTER_APPLY=true and a session captured "
             "via scripts/browser_login_capture.py; automation never types a password",
@@ -102,7 +102,7 @@ ADAPTER_CAPABILITIES: tuple[AdapterCapabilities, ...] = (
     ),
     AdapterCapabilities(
         name="linkedin-reference",
-        vacancy_extraction="manual_user_supplied_metadata",
+        vacancy_extraction="browser_dom_automation_with_manual_reference_fallback",
         authentication_requirement=(
             "approved_partner_oauth_required_for_network_api; "
             "user_captured_browser_session_for_easy_apply"
@@ -114,7 +114,7 @@ ADAPTER_CAPABILITIES: tuple[AdapterCapabilities, ...] = (
         confirmation_extraction="dom_confirmation_banner_screenshot",
         submission_supported=True,
         known_limitations=(
-            "No LinkedIn network requests or scraping; only native Easy Apply DOM automation",
+            "Search and extraction use the signed-in browser DOM; no job-seeker API is used",
             "Partner API integration requires written approval and test credentials",
             "Real submission requires APP_ENABLE_LINKEDIN_APPLY=true and a session captured via "
             "scripts/browser_login_capture.py; automation never types a password",

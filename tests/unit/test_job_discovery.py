@@ -154,7 +154,10 @@ def test_discover_passes_explicit_search_text_over_facts() -> None:
         adapter = _FakeAdapter([])
         with session_factory() as session:
             await JobDiscoveryService(session).discover_headhunter_vacancies(
-                user_id, headhunter_adapter=adapter, locations=["Москва"], search_text="data engineer"
+                user_id,
+                headhunter_adapter=adapter,
+                locations=["Москва"],
+                search_text="data engineer",
             )
         assert adapter.search_calls == [("data engineer", ["Москва"])]
 

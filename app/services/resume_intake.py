@@ -33,7 +33,8 @@ def _build_prompt(resume_text: str) -> str:
         f"Resume text:\n{resume_text[:_MAX_RESUME_CHARS]}\n\n"
         "Respond with a single JSON object matching exactly this shape:\n"
         "{\n"
-        '  "skills": ["<short skill name>", ...],  // technologies, tools, languages actually named\n'
+        '  "skills": ["<short skill name>", ...],  // technologies, tools, '
+        "languages actually named\n"
         '  "experience_summary": "<2-4 sentence factual summary of the candidate work history>",\n'
         '  "search_keywords": "<3-8 words a job search engine would use to find matching roles>",\n'
         '  "years_of_experience": <number or null if not determinable>\n'
