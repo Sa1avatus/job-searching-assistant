@@ -23,6 +23,7 @@ if sys.platform == "win32":
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
+from pydantic import SecretStr
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -157,8 +158,18 @@ async def headhunter_http_client() -> AsyncIterator[httpx.AsyncClient]:
         yield client
 
 
+def _configured_secret(secret: SecretStr | None) -> str | None:
+    if secret is None:
+        return None
+    value = secret.get_secret_value().strip()
+    return value or None
+
+
 def llm_is_configured(settings: Settings) -> bool:
-    return settings.anthropic_api_key is not None or settings.gemini_api_key is not None
+    return bool(
+        _configured_secret(settings.anthropic_api_key)
+        or _configured_secret(settings.gemini_api_key)
+    )
 
 
 def build_model_providers(
@@ -171,19 +182,21 @@ def build_model_providers(
     fallback for free.
     """
     providers: list[ModelProvider] = []
-    if settings.anthropic_api_key is not None:
+    anthropic_api_key = _configured_secret(settings.anthropic_api_key)
+    gemini_api_key = _configured_secret(settings.gemini_api_key)
+    if anthropic_api_key is not None:
         providers.append(
             AnthropicMessagesProvider(
                 http_client,
-                api_key=settings.anthropic_api_key.get_secret_value(),
+                api_key=anthropic_api_key,
                 model=settings.anthropic_model,
             )
         )
-    if settings.gemini_api_key is not None:
+    if gemini_api_key is not None:
         providers.append(
             GeminiProvider(
                 http_client,
-                api_key=settings.gemini_api_key.get_secret_value(),
+                api_key=gemini_api_key,
                 model=settings.gemini_model,
             )
         )
@@ -473,6 +486,7 @@ async def extract_profile_from_cv(
     cv_file_id: str,
     session: Annotated[Session, Depends(session_scope)],
     router: Annotated[ModelRouter, Depends(model_router)],
+    storage: Annotated[DocumentStorage, Depends(document_storage)],
 ) -> ExtractedProfileResponse:
     """Draft skills/summary/search keywords from an uploaded resume. Writes nothing yet.
 
@@ -492,7 +506,7 @@ async def extract_profile_from_cv(
     if cv_file is None or cv_file.user_id != user_id:
         raise HTTPException(status_code=404, detail="CV file not found for this user")
     try:
-        content = Path(cv_file.storage_path).read_bytes()
+        content = storage.resolve(cv_file.storage_path).read_bytes()
         extension = Path(cv_file.original_filename).suffix
         resume_text = extract_resume_text(content, extension=extension)
     except (OSError, UnreadableResumeError) as error:

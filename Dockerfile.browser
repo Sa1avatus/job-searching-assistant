@@ -13,6 +13,5 @@ COPY migrations ./migrations
 COPY fixtures ./fixtures
 COPY scripts ./scripts
 COPY alembic.ini ./
-RUN pip install --no-deps .
 
 CMD ["python", "-m", "app.workers.browser_worker"]

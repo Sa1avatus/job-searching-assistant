@@ -20,6 +20,7 @@ from app.browser.session_store import EncryptedBrowserStateStore, InvalidBrowser
 from app.config import Settings
 from app.domain.failures import FailureCategory
 from app.domain.models import TaskState
+from app.storage.documents import DocumentStorage
 from app.storage.tables import ApplicationRow, CvFileRow, VacancyRow
 from app.storage.task_repository import ClaimedTask
 from app.workers.dispatcher import ExecutionOutcome, HumanActionRequest, TaskHandler
@@ -132,7 +133,10 @@ class GreenhouseBrowserReviewHandler:
         self._settings = settings
         self._session_factory = session_factory
         self._adapter_factory = adapter_factory
-        self._document_directory = (settings.artifact_directory / "documents").resolve()
+        self._document_storage = DocumentStorage(
+            settings.artifact_directory / "documents",
+            max_document_bytes=settings.max_document_bytes,
+        )
 
     async def handle(self, claimed_task: ClaimedTask) -> ExecutionOutcome:
         try:
@@ -235,8 +239,8 @@ class GreenhouseBrowserReviewHandler:
                 cv_file = session.get(CvFileRow, application.selected_cv_file_id)
                 if cv_file is None or cv_file.user_id != application.user_id:
                     raise LookupError("Selected CV is unavailable")
-                cv_path = Path(cv_file.storage_path).resolve()
-                if not cv_path.is_relative_to(self._document_directory) or not cv_path.is_file():
+                cv_path = self._document_storage.resolve(cv_file.storage_path)
+                if not cv_path.is_file():
                     raise RuntimeError("Selected CV path is outside managed document storage")
             for field in vacancy.application_fields:
                 field_id = str(field.get("field_id") or "").strip()

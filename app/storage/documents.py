@@ -6,7 +6,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 class InvalidDocumentError(ValueError):
@@ -72,11 +72,19 @@ class DocumentStorage:
             size_bytes=len(content),
         )
 
-    def delete(self, storage_path: Path) -> None:
-        resolved_path = storage_path.resolve()
+    def resolve(self, storage_path: str | Path) -> Path:
+        """Resolve a DB path written by either Windows or the Docker container."""
+        normalized = str(storage_path).replace("\\", "/")
+        filename = PurePosixPath(normalized).name
+        if not filename or filename in {".", ".."}:
+            raise InvalidDocumentError("Document path is invalid")
+        resolved_path = (self._root_directory / filename).resolve()
         if not resolved_path.is_relative_to(self._root_directory):
             raise InvalidDocumentError("Document path is outside the storage root")
-        resolved_path.unlink(missing_ok=True)
+        return resolved_path
+
+    def delete(self, storage_path: str | Path) -> None:
+        self.resolve(storage_path).unlink(missing_ok=True)
 
     @staticmethod
     def _is_docx(content: bytes) -> bool:

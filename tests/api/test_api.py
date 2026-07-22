@@ -1,6 +1,7 @@
+import httpx
 from fastapi.testclient import TestClient
 
-from app.api.main import app, required_api_scope
+from app.api.main import app, build_model_providers, llm_is_configured, required_api_scope
 from app.config import Settings, get_settings
 
 client = TestClient(app)
@@ -116,6 +117,14 @@ def test_blank_api_key_does_not_enable_authentication_bypass() -> None:
     assert required_api_scope("POST", "/v1/applications/application-1/retry") == "review:write"
     assert required_api_scope("POST", "/v1/applications/application-1/resume") == "review:write"
     assert required_api_scope("GET", "/v1/evidence/artifact-1") == "review:read"
+
+
+def test_blank_anthropic_key_falls_through_to_configured_gemini() -> None:
+    settings = Settings(anthropic_api_key="", gemini_api_key="gemini-test-key")
+
+    assert llm_is_configured(settings) is True
+    providers = build_model_providers(httpx.AsyncClient(), settings)
+    assert [provider.name for provider in providers] == ["gemini"]
 
 
 def test_connector_capabilities_expose_policy_boundaries() -> None:

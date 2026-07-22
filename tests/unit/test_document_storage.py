@@ -45,3 +45,17 @@ def test_document_storage_rejects_spoofed_and_oversized_files(tmp_path: Path) ->
         storage.save("resume.pdf", "application/pdf", b"not a pdf")
     with pytest.raises(InvalidDocumentError):
         storage.save("resume.pdf", "application/pdf", b"%PDF-" + b"x" * 20)
+
+
+def test_document_storage_rebases_container_and_windows_paths(tmp_path: Path) -> None:
+    storage = DocumentStorage(tmp_path / "documents", max_document_bytes=1024)
+    saved = storage.save("resume.pdf", "application/pdf", b"%PDF-1.7\nfixture")
+
+    assert (
+        storage.resolve(f"/app/.artifacts/documents/{saved.storage_path.name}")
+        == saved.storage_path
+    )
+    assert (
+        storage.resolve(f"C:\\project\\.artifacts\\documents\\{saved.storage_path.name}")
+        == saved.storage_path
+    )
