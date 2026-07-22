@@ -97,6 +97,85 @@ class RecruitmentService:
             raise DuplicateEntityError("This CV file was already uploaded") from error
         return cv_file
 
+    def list_cv_files(self, user_id: str) -> list[CvFileRow]:
+        self._require_user(user_id)
+        return list(
+            self._session.scalars(
+                select(CvFileRow)
+                .where(CvFileRow.user_id == user_id)
+                .order_by(CvFileRow.created_at.desc(), CvFileRow.id.desc())
+            )
+        )
+
+    def get_cv_file(self, user_id: str, cv_file_id: str) -> CvFileRow:
+        cv_file = self._session.get(CvFileRow, cv_file_id)
+        if cv_file is None or cv_file.user_id != user_id:
+            raise EntityNotFoundError("CV file not found for this user")
+        return cv_file
+
+    def active_cv_file(self, user_id: str, cv_file_id: str | None = None) -> CvFileRow | None:
+        user = self._require_user(user_id)
+        selected_cv_file_id = cv_file_id or user.active_cv_file_id
+        if selected_cv_file_id is None:
+            return None
+        return self.get_cv_file(user_id, selected_cv_file_id)
+
+    def set_active_cv_file(self, user_id: str, cv_file_id: str) -> CvFileRow:
+        user = self._require_user(user_id)
+        cv_file = self.get_cv_file(user_id, cv_file_id)
+        user.active_cv_file_id = cv_file.id
+        self._session.commit()
+        return cv_file
+
+    def save_cv_profile(
+        self,
+        user_id: str,
+        cv_file_id: str,
+        *,
+        skills: list[str],
+        experience_summary: str,
+        search_keywords: str,
+        years_of_experience: float | None,
+    ) -> CvFileRow:
+        user = self._require_user(user_id)
+        cv_file = self.get_cv_file(user_id, cv_file_id)
+        cv_file.skills = list(dict.fromkeys(skill.strip() for skill in skills if skill.strip()))
+        cv_file.experience_summary = experience_summary.strip()
+        cv_file.search_keywords = search_keywords.strip()
+        cv_file.years_of_experience = years_of_experience
+        cv_file.analyzed_at = datetime.now(UTC)
+        user.active_cv_file_id = cv_file.id
+        self._session.commit()
+        return cv_file
+
+    def verified_profile_facts(
+        self, user_id: str, cv_file_id: str | None = None
+    ) -> list[ProfileFact]:
+        user = self._require_user(user_id)
+        cv_file = self.active_cv_file(user_id, cv_file_id)
+        excluded_resume_categories = (
+            {"skill", "experience_summary"}
+            if cv_file is not None and cv_file.analyzed_at is not None
+            else set()
+        )
+        facts = [
+            ProfileFact(fact.category, fact.name, fact.value, fact.is_verified)
+            for fact in user.facts
+            if fact.is_verified and fact.category not in excluded_resume_categories
+        ]
+        if cv_file is not None and cv_file.analyzed_at is not None:
+            facts.extend(ProfileFact("skill", skill, "", True) for skill in cv_file.skills)
+            if cv_file.experience_summary:
+                facts.append(
+                    ProfileFact(
+                        "experience_summary",
+                        "experience_summary",
+                        cv_file.experience_summary,
+                        True,
+                    )
+                )
+        return facts
+
     def create_vacancy(
         self,
         *,
@@ -136,7 +215,7 @@ class RecruitmentService:
     def prepare_application(
         self, user_id: str, vacancy_id: str, cv_file_id: str | None = None
     ) -> ApplicationRow:
-        user = self._require_user(user_id)
+        self._require_user(user_id)
         vacancy_row = self._session.get(VacancyRow, vacancy_id)
         if vacancy_row is None:
             raise EntityNotFoundError("Vacancy not found")
@@ -146,6 +225,7 @@ class RecruitmentService:
                 raise EntityNotFoundError("CV file not found")
             if cv_file.user_id != user_id:
                 raise EntityNotFoundError("CV file not found for this user")
+        profile_facts = self.verified_profile_facts(user_id, cv_file_id)
         assessment = assess_vacancy(
             Vacancy(
                 source_url=vacancy_row.source_url,
@@ -154,10 +234,7 @@ class RecruitmentService:
                 required_skills=frozenset(vacancy_row.required_skills),
                 preferred_skills=frozenset(vacancy_row.preferred_skills),
             ),
-            [
-                ProfileFact(fact.category, fact.name, fact.value, fact.is_verified)
-                for fact in user.facts
-            ],
+            profile_facts,
         )
         warnings = [
             f"Missing required skill: {skill}" for skill in assessment.missing_required_skills
@@ -175,13 +252,7 @@ class RecruitmentService:
             warnings=warnings,
         )
         questions = self._application_questions(vacancy_row.application_fields)
-        prepared_answers = prepare_answers(
-            questions,
-            [
-                ProfileFact(fact.category, fact.name, fact.value, fact.is_verified)
-                for fact in user.facts
-            ],
-        )
+        prepared_answers = prepare_answers(questions, profile_facts)
         question_by_id = {question.field_id: question for question in questions}
         for answer in prepared_answers:
             question = question_by_id[answer.field_id]

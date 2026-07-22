@@ -133,6 +133,7 @@
       <div class="row">
         <div><label>Ключ доступа к приложению</label><input id="api-key" type="password" autocomplete="off" placeholder="обычно пусто для локального запуска"></div>
         <div><label>User ID</label><input id="user-id" placeholder="ещё не создан"></div>
+        <div style="flex:0"><button id="load-user" type="button">Загрузить профиль</button></div>
         <div style="flex:0"><button id="create-user" type="button">Создать пользователя</button></div>
       </div>
     </section>
@@ -181,16 +182,23 @@
 
     <section class="step" data-panel="resume">
       <h2>Резюме</h2>
-      <div class="hint">PDF, DOCX, DOC, TXT, RTF, ODT, HTML или Markdown. Мы извлечём текст и попросим выбранную модель выделить навыки и суммировать опыт.</div>
+      <div class="hint">Можно хранить несколько резюме. Навыки, ключевые слова и сводка опыта сохраняются отдельно для каждого файла. Выбранное резюме используется для поиска, оценки и сопроводительных писем.</div>
       <div class="row">
-        <div><input id="resume-file" type="file" accept=".pdf,.docx,.doc,.txt,.rtf,.odt,.html,.htm,.md"></div>
-        <div style="flex:0"><button id="upload-resume" type="button" class="primary">Загрузить и проанализировать</button></div>
+        <div><input id="resume-file" type="file" multiple accept=".pdf,.docx,.doc,.txt,.rtf,.odt,.html,.htm,.md"></div>
+        <div style="flex:0"><button id="upload-resume" type="button" class="primary">Загрузить файлы</button></div>
       </div>
+      <div class="row" style="margin-top:16px;">
+        <div><label for="resume-selector">Мои резюме</label><select id="resume-selector"></select></div>
+        <div style="flex:0"><label>&nbsp;</label><button id="analyze-resume" type="button">Проанализировать выбранное</button></div>
+      </div>
+      <div id="resume-state" class="hint"></div>
       <div id="draft-block" style="display:none; margin-top:16px;">
         <label>Найденные навыки (снимите галочку, если что-то лишнее)</label>
         <div id="skills-chips" class="chips"></div>
         <label style="margin-top:14px;">Краткое summary опыта</label>
         <textarea id="summary-text"></textarea>
+        <label style="margin-top:14px;">Суммарный опыт, лет</label>
+        <input id="experience-years" type="number" min="0" max="80" step="0.5">
         <label style="margin-top:14px;">Ключевые слова для поиска</label>
         <input id="keywords-text">
         <div class="row" style="margin-top:14px;">
@@ -206,6 +214,8 @@
         <div><input id="locations" placeholder="везде"></div>
         <div style="flex:0"><label>&nbsp;</label><label class="chip"><input id="anywhere" type="checkbox" checked> Везде</label></div>
       </div>
+      <label for="search-resume-selector" style="margin-top:14px;">Резюме для этого поиска</label>
+      <select id="search-resume-selector"></select>
     </section>
 
     <section class="step" data-panel="search">
@@ -406,11 +416,84 @@
         localStorage.setItem('dashboardUserId', user.id);
         await loadBrowserSessionStatuses();
         await loadSavedVacancies();
+        await loadCvFiles();
         showStatus(`Пользователь создан: ${user.id}`);
       } catch (error) { showError(error); }
     });
 
-    let lastCvFileId = null;
+    let cvFiles = [];
+
+    function renderSkills(skills) {
+      const chips = document.querySelector('#skills-chips'); chips.replaceChildren();
+      skills.forEach(skill => {
+        const chip = element('label', undefined, 'chip');
+        const checkbox = element('input'); checkbox.type = 'checkbox'; checkbox.checked = true; checkbox.value = skill;
+        chip.append(checkbox, document.createTextNode(skill));
+        chips.append(chip);
+      });
+    }
+
+    function renderResumeProfile(cvFile) {
+      const draftBlock = document.querySelector('#draft-block');
+      if (!cvFile) {
+        draftBlock.style.display = 'none';
+        document.querySelector('#resume-state').textContent = 'Загрузите хотя бы одно резюме.';
+        return;
+      }
+      renderSkills(cvFile.skills || []);
+      document.querySelector('#summary-text').value = cvFile.experience_summary || '';
+      document.querySelector('#keywords-text').value = cvFile.search_keywords || '';
+      document.querySelector('#experience-years').value = cvFile.years_of_experience ?? '';
+      draftBlock.style.display = 'block';
+      document.querySelector('#resume-state').textContent = cvFile.analyzed_at
+        ? `Активно: ${cvFile.original_filename}. Анализ сохранён, навыков: ${cvFile.skills.length}.`
+        : `${cvFile.original_filename}: анализ ещё не сохранён.`;
+    }
+
+    function renderCvFileSelectors(preferredCvFileId = null) {
+      const resumeSelector = document.querySelector('#resume-selector');
+      const searchSelector = document.querySelector('#search-resume-selector');
+      const activeCvFile = cvFiles.find(cvFile => cvFile.is_active);
+      const selectedCvFileId = preferredCvFileId || activeCvFile?.id || cvFiles[0]?.id || '';
+      resumeSelector.replaceChildren();
+      searchSelector.replaceChildren();
+      if (!cvFiles.length) {
+        resumeSelector.append(new Option('Нет загруженных резюме', ''));
+        searchSelector.append(new Option('Сначала загрузите и проанализируйте резюме', ''));
+        renderResumeProfile(null);
+        return;
+      }
+      cvFiles.forEach(cvFile => {
+        const suffix = `${cvFile.is_active ? ' — активно' : ''}${cvFile.analyzed_at ? '' : ' — не проанализировано'}`;
+        resumeSelector.append(new Option(`${cvFile.original_filename}${suffix}`, cvFile.id));
+        if (cvFile.analyzed_at) {
+          searchSelector.append(new Option(`${cvFile.original_filename}${cvFile.is_active ? ' — активно' : ''}`, cvFile.id));
+        }
+      });
+      resumeSelector.value = selectedCvFileId;
+      if ([...searchSelector.options].some(option => option.value === selectedCvFileId)) {
+        searchSelector.value = selectedCvFileId;
+      }
+      renderResumeProfile(cvFiles.find(cvFile => cvFile.id === selectedCvFileId));
+    }
+
+    async function loadCvFiles(preferredCvFileId = null) {
+      const userId = userIdInput.value.trim();
+      if (!userId) { cvFiles = []; renderCvFileSelectors(); return []; }
+      cvFiles = await asJson(await fetch(`/v1/users/${userId}/cv-files`, {headers: headers(false)}));
+      renderCvFileSelectors(preferredCvFileId);
+      return cvFiles;
+    }
+
+    async function selectCvFile(cvFileId) {
+      const userId = userIdInput.value.trim();
+      if (!cvFileId) return;
+      await asJson(await fetch(`/v1/users/${userId}/active-cv-file`, {
+        method: 'PUT', headers: headers(true), body: JSON.stringify({cv_file_id: cvFileId})
+      }));
+      cvFiles = cvFiles.map(cvFile => ({...cvFile, is_active: cvFile.id === cvFileId}));
+      renderCvFileSelectors(cvFileId);
+    }
 
     async function loadSavedLlmPreference() {
       const userId = userIdInput.value.trim();
@@ -464,27 +547,37 @@
         sessionStorage.setItem('dashboardApiKey', keyInput.value);
         const userId = userIdInput.value.trim();
         if (!userId) throw new Error('Сначала создайте или укажите User ID');
-        const file = document.querySelector('#resume-file').files[0];
-        if (!file) throw new Error('Выберите файл резюме');
-        showStatus('Загружаем резюме…');
-        const form = new FormData(); form.append('file', file);
-        const cvFile = await asJson(await fetch(`/v1/users/${userId}/cv-files`, {
-          method: 'POST', headers: headers(false), body: form
-        }));
-        lastCvFileId = cvFile.id;
+        const files = [...document.querySelector('#resume-file').files];
+        if (!files.length) throw new Error('Выберите хотя бы один файл резюме');
+        showStatus(`Загружаем резюме: ${files.length}…`);
+        let lastUploadedCvFile = null;
+        for (const file of files) {
+          const form = new FormData(); form.append('file', file);
+          lastUploadedCvFile = await asJson(await fetch(`/v1/users/${userId}/cv-files`, {
+            method: 'POST', headers: headers(false), body: form
+          }));
+        }
+        await loadCvFiles(lastUploadedCvFile.id);
+        await selectCvFile(lastUploadedCvFile.id);
+        document.querySelector('#resume-file').value = '';
+        showStatus(`Загружено резюме: ${files.length}. Выберите файл и запустите анализ.`);
+      } catch (error) { showError(error); }
+    });
+
+    document.querySelector('#analyze-resume').addEventListener('click', async () => {
+      try {
+        const userId = userIdInput.value.trim();
+        const cvFileId = document.querySelector('#resume-selector').value;
+        if (!cvFileId) throw new Error('Выберите загруженное резюме');
+        await selectCvFile(cvFileId);
         showStatus('Анализируем резюме (это может занять до минуты)…');
-        const draft = await asJson(await fetch(`/v1/users/${userId}/cv-files/${cvFile.id}/extract-profile`, {
+        const draft = await asJson(await fetch(`/v1/users/${userId}/cv-files/${cvFileId}/extract-profile`, {
           method: 'POST', headers: headers(false)
         }));
-        const chips = document.querySelector('#skills-chips'); chips.replaceChildren();
-        draft.skills.forEach(skill => {
-          const chip = element('label', undefined, 'chip');
-          const checkbox = element('input'); checkbox.type = 'checkbox'; checkbox.checked = true; checkbox.value = skill;
-          chip.append(checkbox, document.createTextNode(skill));
-          chips.append(chip);
-        });
+        renderSkills(draft.skills);
         document.querySelector('#summary-text').value = draft.experience_summary || '';
         document.querySelector('#keywords-text').value = draft.search_keywords || '';
+        document.querySelector('#experience-years').value = draft.years_of_experience ?? '';
         document.querySelector('#draft-block').style.display = 'block';
         showStatus(`Найдено навыков: ${draft.skills.length}. Проверьте список и подтвердите.`);
       } catch (error) { showError(error); }
@@ -493,14 +586,28 @@
     document.querySelector('#confirm-facts').addEventListener('click', async () => {
       try {
         const userId = userIdInput.value.trim();
+        const cvFileId = document.querySelector('#resume-selector').value;
+        if (!cvFileId) throw new Error('Выберите резюме');
         const skills = [...document.querySelectorAll('#skills-chips input:checked')].map(c => c.value);
         const experience_summary = document.querySelector('#summary-text').value;
+        const search_keywords = document.querySelector('#keywords-text').value.trim();
+        const yearsText = document.querySelector('#experience-years').value;
+        const years_of_experience = yearsText ? Number(yearsText) : null;
         showStatus('Сохраняем подтверждённые факты…');
-        await asJson(await fetch(`/v1/users/${userId}/confirm-profile-facts`, {
-          method: 'POST', headers: headers(true), body: JSON.stringify({skills, experience_summary})
+        await asJson(await fetch(`/v1/users/${userId}/cv-files/${cvFileId}/profile`, {
+          method: 'PUT', headers: headers(true),
+          body: JSON.stringify({skills, experience_summary, search_keywords, years_of_experience})
         }));
+        await loadCvFiles(cvFileId);
         showStatus(`Сохранено навыков: ${skills.length}. Теперь можно искать вакансии.`);
       } catch (error) { showError(error); }
+    });
+
+    document.querySelector('#resume-selector').addEventListener('change', event => {
+      selectCvFile(event.target.value).catch(showError);
+    });
+    document.querySelector('#search-resume-selector').addEventListener('change', event => {
+      selectCvFile(event.target.value).catch(showError);
     });
 
     document.querySelector('#anywhere').addEventListener('change', (event) => {
@@ -736,6 +843,8 @@
         const locations = anywhere ? [] : document.querySelector('#locations').value.split(',').map(s => s.trim()).filter(Boolean);
         showStatus('Ищем вакансии на выбранных источниках и готовим материалы…');
         const results = document.querySelector('#results'); results.replaceChildren();
+        const cvFileId = document.querySelector('#search-resume-selector').value;
+        if (!cvFileId) throw new Error('Выберите проанализированное резюме для поиска');
         const searchText = document.querySelector('#keywords-text').value.trim() || null;
         const sources = [];
         if (document.querySelector('#source-headhunter').checked) sources.push({source: 'headhunter', route: 'discover-headhunter-vacancies', requiresSession: true});
@@ -754,7 +863,7 @@
         const greenhouseBoards = document.querySelector('#greenhouse-boards').value
           .split(/[\n,]+/).map(value => value.trim()).filter(Boolean);
         const settled = await Promise.allSettled(sources.map(async ({source, route}) => {
-          const body = {locations, limit: 15, search_text: searchText};
+          const body = {locations, limit: 15, search_text: searchText, cv_file_id: cvFileId};
           if (source === 'greenhouse') body.board_urls = greenhouseBoards;
           const items = await asJson(await fetch(`/v1/users/${userId}/${route}`, {
             method: 'POST', headers: headers(true), body: JSON.stringify(body)
@@ -776,19 +885,24 @@
         showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
       } catch (error) { showError(error); }
     });
-    keyInput.addEventListener('change', () => sessionStorage.setItem('dashboardApiKey', keyInput.value));
-    userIdInput.addEventListener('change', () => {
+    async function loadUserWorkspace() {
       localStorage.setItem('dashboardUserId', userIdInput.value.trim());
       loadSavedLlmPreference();
-      loadBrowserSessionStatuses().catch(showError);
-      loadSavedVacancies(1).catch(showError);
-      loadCompanyBlacklist().catch(showError);
+      await Promise.all([
+        loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles()
+      ]);
+    }
+    keyInput.addEventListener('change', () => sessionStorage.setItem('dashboardApiKey', keyInput.value));
+    userIdInput.addEventListener('change', () => loadUserWorkspace().catch(showError));
+    document.querySelector('#load-user').addEventListener('click', () => {
+      loadUserWorkspace().then(() => showStatus('Профиль загружен.')).catch(showError);
     });
     activatePanel(localStorage.getItem('dashboardActivePanel') || 'vacancies');
     loadSavedLlmPreference();
     loadBrowserSessionStatuses().catch(showError);
     loadSavedVacancies().catch(showError);
     loadCompanyBlacklist().catch(showError);
+    loadCvFiles().catch(showError);
   </script>
 </body>
 </html>

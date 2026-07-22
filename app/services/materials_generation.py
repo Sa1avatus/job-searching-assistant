@@ -1,9 +1,9 @@
 """Draft application materials (cover letter, free-text screening answers) with an LLM.
 
 Hard safety rules, enforced in code (not just by prompting):
-- The prompt includes only the candidate's *verified* profile facts (``ProfileFactRow.is_verified``)
-  and the vacancy's own text. The model is instructed not to invent anything beyond that, but the
-  instruction alone is not trusted.
+- The prompt includes only the candidate's verified global facts plus facts extracted from the CV
+  selected on the application. The model is instructed not to invent anything beyond that, but
+  the instruction alone is not trusted.
 - Sensitive-category fields (work authorization, disability, background checks, ...) are never
   sent to the model and never overwritten by its output, even if the model tries to answer them
   anyway. See ``app/domain/policy.SENSITIVE_CATEGORIES``.
@@ -22,13 +22,13 @@ import re
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.domain.models import ProfileFact
 from app.domain.policy import SENSITIVE_CATEGORIES
 from app.llm.router import ModelRequest, ModelRouter, ModelTaskClass
-from app.services.recruitment import EntityNotFoundError
-from app.storage.tables import ApplicationRow, ProfileFactRow, VacancyRow
+from app.services.recruitment import EntityNotFoundError, RecruitmentService
+from app.storage.tables import ApplicationRow, VacancyRow
 
 
 class NoVerifiedFactsError(RuntimeError):
@@ -67,7 +67,7 @@ def _is_russian_text(text: str) -> bool:
 def _build_prompt(
     *,
     vacancy: VacancyRow,
-    facts: list[ProfileFactRow],
+    facts: list[ProfileFact],
     open_fields: list[tuple[str, str]],
     response_language: str,
 ) -> str:
@@ -111,13 +111,8 @@ class MaterialsGenerationService:
         if vacancy is None:
             raise EntityNotFoundError("Vacancy not found")
 
-        facts = list(
-            self._session.scalars(
-                select(ProfileFactRow).where(
-                    ProfileFactRow.user_id == application.user_id,
-                    ProfileFactRow.is_verified.is_(True),
-                )
-            )
+        facts = RecruitmentService(self._session).verified_profile_facts(
+            application.user_id, application.selected_cv_file_id
         )
         if not facts:
             raise NoVerifiedFactsError(

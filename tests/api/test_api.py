@@ -57,6 +57,10 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert "company-blacklist" in response.text
     assert "reject-vacancy" in response.text
     assert "match-meter" in response.text
+    assert 'id="resume-selector"' in response.text
+    assert 'id="search-resume-selector"' in response.text
+    assert "/active-cv-file" in response.text
+    assert "cv_file_id: cvFileId" in response.text
 
 
 def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:

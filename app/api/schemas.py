@@ -82,6 +82,16 @@ class CvFileResponse(BaseModel):
     content_type: str
     sha256: str
     size_bytes: int
+    skills: list[str]
+    experience_summary: str
+    search_keywords: str
+    years_of_experience: float | None
+    analyzed_at: datetime | None
+    is_active: bool = False
+
+
+class ActiveCvFileRequest(BaseModel):
+    cv_file_id: str
 
 
 class VacancyResponse(BaseModel):
@@ -247,6 +257,11 @@ class ConfirmProfileFactsRequest(BaseModel):
     experience_summary: str = Field(default="", max_length=2_000)
 
 
+class ConfirmResumeProfileRequest(ConfirmProfileFactsRequest):
+    search_keywords: str = Field(default="", max_length=500)
+    years_of_experience: float | None = Field(default=None, ge=0, le=80)
+
+
 class ConfirmedProfileFactResponse(BaseModel):
     id: str
     category: str
@@ -297,6 +312,7 @@ class DiscoverHeadHunterVacanciesRequest(BaseModel):
     )
     limit: int = Field(default=15, ge=1, le=50)
     search_text: str | None = Field(default=None, max_length=300)
+    cv_file_id: str | None = None
 
 
 class DiscoveryOutcomeResponse(BaseModel):
@@ -338,6 +354,7 @@ class DiscoverLinkedInVacanciesRequest(BaseModel):
     )
     limit: int = Field(default=15, ge=1, le=50)
     search_text: str | None = Field(default=None, max_length=300)
+    cv_file_id: str | None = None
 
 
 class DiscoverGreenhouseVacanciesRequest(BaseModel):
@@ -351,6 +368,7 @@ class DiscoverGreenhouseVacanciesRequest(BaseModel):
     locations: list[str] = Field(default_factory=list, max_length=20)
     limit: int = Field(default=15, ge=1, le=50)
     search_text: str | None = Field(default=None, max_length=300)
+    cv_file_id: str | None = None
 
 
 class CompanyBlacklistRequest(BaseModel):

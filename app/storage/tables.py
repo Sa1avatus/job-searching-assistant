@@ -7,6 +7,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -33,6 +34,9 @@ class UserRow(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     display_name: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    active_cv_file_id: Mapped[str | None] = mapped_column(
+        ForeignKey("cv_files.id", ondelete="SET NULL", use_alter=True), nullable=True, index=True
+    )
     facts: Mapped[list[ProfileFactRow]] = relationship(cascade="all, delete-orphan")
 
 
@@ -71,6 +75,11 @@ class CvFileRow(Base):
     content_type: Mapped[str] = mapped_column(String(150))
     sha256: Mapped[str] = mapped_column(String(64))
     size_bytes: Mapped[int] = mapped_column(Integer)
+    skills: Mapped[list[str]] = mapped_column(JSON, default=list)
+    experience_summary: Mapped[str] = mapped_column(Text, default="")
+    search_keywords: Mapped[str] = mapped_column(Text, default="")
+    years_of_experience: Mapped[float | None] = mapped_column(Float, nullable=True)
+    analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

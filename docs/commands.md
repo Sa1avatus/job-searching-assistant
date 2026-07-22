@@ -117,6 +117,11 @@ curl.exe -F "file=@C:\path\resume.pdf;type=application/pdf" http://localhost:800
 
 PDF, DOCX, DOC, TXT, RTF, ODT, HTML/HTM, and Markdown files are accepted. The default maximum size
 is 5 MiB; stored names are generated UUIDs and the original filename is retained only as metadata.
+Upload may be repeated for additional resume versions. List them with
+`GET /v1/users/{user_id}/cv-files`, save reviewed analysis with
+`PUT /v1/users/{user_id}/cv-files/{cv_file_id}/profile`, and choose the search default with
+`PUT /v1/users/{user_id}/active-cv-file`. The dashboard exposes all three operations without
+requiring command-line use.
 
 With Compose running, verify the complete upload-to-review path and cleanup:
 

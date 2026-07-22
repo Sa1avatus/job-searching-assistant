@@ -16,6 +16,7 @@ from app.services.job_discovery import (
 )
 from app.services.recruitment import RecruitmentService
 from app.storage.database import Base
+from app.storage.tables import ApplicationRow, CvFileRow
 
 
 class _FakeAdapter:
@@ -132,6 +133,55 @@ def test_discover_creates_vacancy_and_application() -> None:
         assert outcomes[0].status == "created"
         assert outcomes[0].title == "Backend Engineer"
         assert adapter.search_calls == [("Python", [])]
+
+    asyncio.run(run())
+
+
+def test_discover_uses_selected_resume_keywords_skills_and_file() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            recruitment = RecruitmentService(session)
+            user = recruitment.create_user("Multiple resumes")
+            cv_file = CvFileRow(
+                user_id=user.id,
+                original_filename="python.txt",
+                storage_path="python.txt",
+                content_type="text/plain",
+                sha256="a" * 64,
+                size_bytes=10,
+            )
+            session.add(cv_file)
+            session.commit()
+            recruitment.save_cv_profile(
+                user.id,
+                cv_file.id,
+                skills=["Python", "FastAPI"],
+                experience_summary="Python developer",
+                search_keywords="Python FastAPI",
+                years_of_experience=5,
+            )
+            adapter = _FakeAdapter(
+                [
+                    HeadHunterSearchHit(
+                        "1", "https://hh.ru/vacancy/1", "Backend Engineer", "Example Co"
+                    )
+                ]
+            )
+
+            outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
+                user.id,
+                headhunter_adapter=adapter,
+                locations=[],
+                limit=1,
+                cv_file_id=cv_file.id,
+            )
+            application = session.get(ApplicationRow, outcomes[0].application_id)
+
+            assert adapter.search_calls[0][0] == "Python FastAPI"
+            assert application is not None
+            assert application.selected_cv_file_id == cv_file.id
+            assert application.match_score > 0
 
     asyncio.run(run())
 

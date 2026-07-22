@@ -28,7 +28,7 @@ from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter, Hea
 from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter, LinkedInSearchHit
 from app.services.company_blacklist import CompanyBlacklistService
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError, RecruitmentService
-from app.storage.tables import ApplicationRow, UserRow, VacancyRow
+from app.storage.tables import ApplicationRow, CvFileRow, UserRow, VacancyRow
 
 
 class LinkedInSessionRequiredError(RuntimeError):
@@ -99,12 +99,14 @@ class JobDiscoveryService:
         locations: list[str],
         limit: int = _DEFAULT_LIMIT,
         search_text: str | None = None,
+        cv_file_id: str | None = None,
     ) -> list[DiscoveryOutcome]:
         recruitment = RecruitmentService(self._session)
         user = self._session.get(UserRow, user_id)
         if user is None:
             raise EntityNotFoundError("User not found")
-        text = (search_text or self._build_search_text(user_facts=user.facts)).strip()
+        cv_file = recruitment.active_cv_file(user_id, cv_file_id)
+        text = self._resolve_search_text(user, cv_file, search_text)
         if not text:
             raise NoSearchKeywordsError(
                 "No search keywords available; add verified skill facts or pass search_text"
@@ -130,7 +132,11 @@ class JobDiscoveryService:
         outcomes: list[DiscoveryOutcome] = []
         for hit in hits_by_url.values():
             outcome = await self._stage_one(
-                recruitment, headhunter_adapter, user_id, hit.source_url
+                recruitment,
+                headhunter_adapter,
+                user_id,
+                hit.source_url,
+                cv_file.id if cv_file else None,
             )
             if outcome is not None:
                 outcomes.append(outcome)
@@ -142,6 +148,7 @@ class JobDiscoveryService:
         headhunter_adapter: HeadHunterBrowserAdapter,
         user_id: str,
         source_url: str,
+        cv_file_id: str | None,
     ) -> DiscoveryOutcome | None:
         vacancy: VacancyRow | None = self._session.scalar(
             select(VacancyRow).where(VacancyRow.source_url == source_url)
@@ -193,7 +200,8 @@ class JobDiscoveryService:
         if existing_application is not None:
             if existing_application.status in {"rejected", "skipped"}:
                 return None
-            self._rescore_from_text(existing_application, vacancy)
+            existing_application.selected_cv_file_id = cv_file_id
+            self._rescore_from_text(existing_application, vacancy, cv_file_id)
             return DiscoveryOutcome(
                 application_id=existing_application.id,
                 vacancy_id=vacancy.id,
@@ -205,10 +213,10 @@ class JobDiscoveryService:
             )
 
         try:
-            application = recruitment.prepare_application(user_id, vacancy.id)
+            application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
         except (EntityNotFoundError, DuplicateEntityError):
             return None
-        self._rescore_from_text(application, vacancy)
+        self._rescore_from_text(application, vacancy, cv_file_id)
         return DiscoveryOutcome(
             application_id=application.id,
             vacancy_id=vacancy.id,
@@ -227,12 +235,14 @@ class JobDiscoveryService:
         locations: list[str],
         limit: int = _DEFAULT_LIMIT,
         search_text: str | None = None,
+        cv_file_id: str | None = None,
     ) -> list[DiscoveryOutcome]:
         recruitment = RecruitmentService(self._session)
         user = self._session.get(UserRow, user_id)
         if user is None:
             raise EntityNotFoundError("User not found")
-        text = (search_text or self._build_search_text(user_facts=user.facts)).strip()
+        cv_file = recruitment.active_cv_file(user_id, cv_file_id)
+        text = self._resolve_search_text(user, cv_file, search_text)
         if not text:
             raise NoSearchKeywordsError(
                 "No search keywords available; add verified skill facts or pass search_text"
@@ -261,7 +271,11 @@ class JobDiscoveryService:
         outcomes: list[DiscoveryOutcome] = []
         for hit in hits_by_url.values():
             outcome = await self._stage_linkedin(
-                recruitment, linkedin_adapter, user_id, hit.source_url
+                recruitment,
+                linkedin_adapter,
+                user_id,
+                hit.source_url,
+                cv_file.id if cv_file else None,
             )
             if outcome is not None:
                 outcomes.append(outcome)
@@ -273,6 +287,7 @@ class JobDiscoveryService:
         linkedin_adapter: LinkedInBrowserAdapter,
         user_id: str,
         source_url: str,
+        cv_file_id: str | None,
     ) -> DiscoveryOutcome | None:
         vacancy: VacancyRow | None = self._session.scalar(
             select(VacancyRow).where(VacancyRow.source_url == source_url)
@@ -315,7 +330,8 @@ class JobDiscoveryService:
         if existing_application is not None:
             if existing_application.status in {"rejected", "skipped"}:
                 return None
-            self._rescore_from_text(existing_application, vacancy)
+            existing_application.selected_cv_file_id = cv_file_id
+            self._rescore_from_text(existing_application, vacancy, cv_file_id)
             return DiscoveryOutcome(
                 application_id=existing_application.id,
                 vacancy_id=vacancy.id,
@@ -326,10 +342,10 @@ class JobDiscoveryService:
                 status="already_existed",
             )
         try:
-            application = recruitment.prepare_application(user_id, vacancy.id)
+            application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
         except (EntityNotFoundError, DuplicateEntityError):
             return None
-        self._rescore_from_text(application, vacancy)
+        self._rescore_from_text(application, vacancy, cv_file_id)
         return DiscoveryOutcome(
             application_id=application.id,
             vacancy_id=vacancy.id,
@@ -349,12 +365,14 @@ class JobDiscoveryService:
         locations: list[str],
         limit: int = _DEFAULT_LIMIT,
         search_text: str | None = None,
+        cv_file_id: str | None = None,
     ) -> list[DiscoveryOutcome]:
         recruitment = RecruitmentService(self._session)
         user = self._session.get(UserRow, user_id)
         if user is None:
             raise EntityNotFoundError("User not found")
-        text = (search_text or self._build_search_text(user_facts=user.facts)).strip()
+        cv_file = recruitment.active_cv_file(user_id, cv_file_id)
+        text = self._resolve_search_text(user, cv_file, search_text)
         queries = build_search_queries(text)
         if not queries:
             raise NoSearchKeywordsError(
@@ -399,7 +417,11 @@ class JobDiscoveryService:
         outcomes: list[DiscoveryOutcome] = []
         for hit in hits_by_url.values():
             outcome = await self._stage_greenhouse(
-                recruitment, greenhouse_adapter, user_id, hit.source_url
+                recruitment,
+                greenhouse_adapter,
+                user_id,
+                hit.source_url,
+                cv_file.id if cv_file else None,
             )
             if outcome is not None:
                 outcomes.append(outcome)
@@ -411,6 +433,7 @@ class JobDiscoveryService:
         greenhouse_adapter: GreenhouseJobBoardApi,
         user_id: str,
         source_url: str,
+        cv_file_id: str | None,
     ) -> DiscoveryOutcome | None:
         vacancy = self._session.scalar(
             select(VacancyRow).where(VacancyRow.source_url == source_url)
@@ -462,7 +485,8 @@ class JobDiscoveryService:
         if existing_application is not None:
             if existing_application.status in {"rejected", "skipped"}:
                 return None
-            self._rescore_from_text(existing_application, vacancy)
+            existing_application.selected_cv_file_id = cv_file_id
+            self._rescore_from_text(existing_application, vacancy, cv_file_id)
             return DiscoveryOutcome(
                 application_id=existing_application.id,
                 vacancy_id=vacancy.id,
@@ -473,10 +497,10 @@ class JobDiscoveryService:
                 status="already_existed",
             )
         try:
-            application = recruitment.prepare_application(user_id, vacancy.id)
+            application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
         except (EntityNotFoundError, DuplicateEntityError):
             return None
-        self._rescore_from_text(application, vacancy)
+        self._rescore_from_text(application, vacancy, cv_file_id)
         return DiscoveryOutcome(
             application_id=application.id,
             vacancy_id=vacancy.id,
@@ -504,16 +528,25 @@ class JobDiscoveryService:
             board_urls.append(reference.board_url)
         return board_urls
 
-    def _rescore_from_text(self, application: ApplicationRow, vacancy: VacancyRow) -> None:
+    def _rescore_from_text(
+        self, application: ApplicationRow, vacancy: VacancyRow, cv_file_id: str | None
+    ) -> None:
         user = self._session.get(UserRow, application.user_id)
         if user is None:
             return
-        skill_names = [
-            fact.name.strip()
-            for fact in user.facts
-            if fact.category == "skill" and fact.is_verified and fact.name.strip()
-        ]
+        cv_file = RecruitmentService(self._session).active_cv_file(user.id, cv_file_id)
+        skill_names = (
+            list(cv_file.skills)
+            if cv_file is not None
+            else [
+                fact.name.strip()
+                for fact in user.facts
+                if fact.category == "skill" and fact.is_verified and fact.name.strip()
+            ]
+        )
         if not skill_names:
+            application.match_score = 0
+            self._session.commit()
             return
         title = vacancy.title.casefold()
         description = (vacancy.description_text or "").casefold()
@@ -522,15 +555,21 @@ class JobDiscoveryService:
             for skill in skill_names
             if skill.casefold() in title or skill.casefold() in description
         ]
-        if not matched_skills:
-            return
         coverage_score = 85 * len(matched_skills) / len(skill_names)
         title_bonus = 15 if any(skill.casefold() in title for skill in matched_skills) else 0
-        application.match_score = max(
-            application.match_score,
-            min(100, round(coverage_score + title_bonus)),
-        )
+        application.match_score = min(100, round(coverage_score + title_bonus))
         self._session.commit()
+
+    def _resolve_search_text(
+        self, user: UserRow, cv_file: CvFileRow | None, search_text: str | None
+    ) -> str:
+        if cv_file is not None and cv_file.analyzed_at is None:
+            raise NoSearchKeywordsError("Analyze and confirm the selected CV before searching")
+        if search_text and search_text.strip():
+            return search_text.strip()
+        if cv_file is not None:
+            return (cv_file.search_keywords or " ".join(cv_file.skills[:8])).strip()
+        return self._build_search_text(user_facts=user.facts).strip()
 
     @staticmethod
     def _build_search_text(*, user_facts: list) -> str:  # type: ignore[type-arg]

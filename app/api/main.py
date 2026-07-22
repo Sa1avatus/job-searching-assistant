@@ -34,6 +34,7 @@ from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter
 from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
 from adapters.job_boards.linkedin_reference import LinkedInJobReference
 from app.api.schemas import (
+    ActiveCvFileRequest,
     ApplicationMaterialsResponse,
     ApplicationMaterialsUpdateRequest,
     ApplicationResponse,
@@ -49,6 +50,7 @@ from app.api.schemas import (
     CompanyBlacklistResponse,
     ConfirmedProfileFactResponse,
     ConfirmProfileFactsRequest,
+    ConfirmResumeProfileRequest,
     ConnectorCapabilityResponse,
     CvFileResponse,
     DiscoverGreenhouseVacanciesRequest,
@@ -155,6 +157,23 @@ def serialize_discovery_outcomes(
     outcomes: list[DiscoveryOutcome],
 ) -> list[DiscoveryOutcomeResponse]:
     return [DiscoveryOutcomeResponse(**asdict(outcome)) for outcome in outcomes]
+
+
+def serialize_cv_file(cv_file: CvFileRow, *, active_cv_file_id: str | None) -> CvFileResponse:
+    return CvFileResponse(
+        id=cv_file.id,
+        user_id=cv_file.user_id,
+        original_filename=cv_file.original_filename,
+        content_type=cv_file.content_type,
+        sha256=cv_file.sha256,
+        size_bytes=cv_file.size_bytes,
+        skills=cv_file.skills,
+        experience_summary=cv_file.experience_summary,
+        search_keywords=cv_file.search_keywords,
+        years_of_experience=cv_file.years_of_experience,
+        analyzed_at=cv_file.analyzed_at,
+        is_active=cv_file.id == active_cv_file_id,
+    )
 
 
 def required_api_scope(method: str, path: str) -> str:
@@ -813,7 +832,37 @@ async def upload_cv_file(
         # add_cv_file() returned a pre-existing record for identical bytes (idempotent re-upload)
         # rather than the one we just wrote to disk — remove the now-orphaned duplicate file.
         saved_document.storage_path.unlink(missing_ok=True)
-    return CvFileResponse.model_validate(cv_file, from_attributes=True)
+    user = session.get(UserRow, user_id)
+    return serialize_cv_file(
+        cv_file, active_cv_file_id=user.active_cv_file_id if user is not None else None
+    )
+
+
+@app.get("/v1/users/{user_id}/cv-files", response_model=list[CvFileResponse])
+def list_cv_files(
+    user_id: str, session: Annotated[Session, Depends(session_scope)]
+) -> list[CvFileResponse]:
+    service = RecruitmentService(session)
+    try:
+        cv_files = service.list_cv_files(user_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    user = session.get(UserRow, user_id)
+    active_cv_file_id = user.active_cv_file_id if user is not None else None
+    return [serialize_cv_file(cv_file, active_cv_file_id=active_cv_file_id) for cv_file in cv_files]
+
+
+@app.put("/v1/users/{user_id}/active-cv-file", response_model=CvFileResponse)
+def select_active_cv_file(
+    user_id: str,
+    request: ActiveCvFileRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> CvFileResponse:
+    try:
+        cv_file = RecruitmentService(session).set_active_cv_file(user_id, request.cv_file_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return serialize_cv_file(cv_file, active_cv_file_id=cv_file.id)
 
 
 @app.post(
@@ -830,8 +879,8 @@ async def extract_profile_from_cv(
     """Draft skills/summary/search keywords from an uploaded resume. Writes nothing yet.
 
     The result is a draft for the person to review and edit; call
-    ``POST /v1/users/{user_id}/confirm-profile-facts`` to actually save any of it as verified
-    profile facts. Requires APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY to be set.
+    ``PUT /v1/users/{user_id}/cv-files/{cv_file_id}/profile`` to save it on this resume.
+    Requires a configured per-user or environment LLM provider.
     """
     settings = get_settings()
     try:
@@ -864,6 +913,31 @@ async def extract_profile_from_cv(
         search_keywords=draft.search_keywords,
         years_of_experience=draft.years_of_experience,
     )
+
+
+@app.put(
+    "/v1/users/{user_id}/cv-files/{cv_file_id}/profile",
+    response_model=CvFileResponse,
+)
+def confirm_resume_profile(
+    user_id: str,
+    cv_file_id: str,
+    request: ConfirmResumeProfileRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> CvFileResponse:
+    """Persist reviewed skills and search data on one CV and select it for later searches."""
+    try:
+        cv_file = RecruitmentService(session).save_cv_profile(
+            user_id,
+            cv_file_id,
+            skills=request.skills,
+            experience_summary=request.experience_summary,
+            search_keywords=request.search_keywords,
+            years_of_experience=request.years_of_experience,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return serialize_cv_file(cv_file, active_cv_file_id=cv_file.id)
 
 
 @app.post(
@@ -946,6 +1020,7 @@ async def discover_headhunter_vacancies(
                 locations=request.locations,
                 limit=request.limit,
                 search_text=request.search_text,
+                cv_file_id=request.cv_file_id,
             )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -1012,6 +1087,7 @@ async def discover_linkedin_vacancies(
                 locations=request.locations,
                 limit=request.limit,
                 search_text=request.search_text,
+                cv_file_id=request.cv_file_id,
             )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -1052,6 +1128,7 @@ async def discover_greenhouse_vacancies(
             locations=request.locations,
             limit=request.limit,
             search_text=request.search_text,
+            cv_file_id=request.cv_file_id,
         )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error

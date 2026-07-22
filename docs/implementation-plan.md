@@ -118,6 +118,10 @@ fixture. Docker Compose health checks will be run when Docker is available.
   the adapter was repaired using canonical job links and document metadata, and one live LinkedIn
   job was then extracted and staged successfully. The live catalog showed 148 visible vacancies in
   descending score order; 141 tests, Ruff, and strict mypy passed before final UI verification.
+- 2026-07-22: Added migration `0014` and the multi-resume dashboard flow. Skills, search keywords,
+  experience summary, and years of experience are persisted per CV; the selected CV now drives
+  discovery queries, matching, application selection, and generated materials. Existing single-CV
+  data is migrated to the newest uploaded resume.
 
 ## Final result
 

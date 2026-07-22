@@ -44,7 +44,11 @@ With the supplied Docker configuration, the personal dashboard is available at
 `http://127.0.0.1:8000/dashboard`; the detailed review queue is available at
 `http://127.0.0.1:8000/review`. Set `APP_HTTP_PORT` in `.env` to choose another host port.
 The dashboard uses separate menu sections for saved vacancies, search, the company blacklist,
-resume, browser sessions, the LLM, and local access. **Saved vacancies** lists the selected user's
+resumes, browser sessions, the LLM, and local access. Multiple resume files can be uploaded at
+once. Each resume keeps its own reviewed skills, experience summary, years of experience, and
+search keywords in PostgreSQL. Selecting a resume makes it active for discovery, matching,
+screening-answer grounding, cover-letter generation, and application file selection. **Saved
+vacancies** lists the selected user's
 active applications with server-side text/source/status/location/score filters and 20-item
 pagination, ordered by match score. Rejected/skipped vacancies and blacklisted companies are hidden
 from the default view and from later discovery runs.
@@ -84,7 +88,9 @@ and Markdown. Scanned/image-only documents still require OCR before upload.
 - `POST /v1/users` and `POST /v1/users/{user_id}/facts`
 - `GET /v1/users/{user_id}/vacancies` for filtered, paginated saved vacancies
 - `GET/POST/DELETE /v1/users/{user_id}/company-blacklist` for company exclusions
-- `POST /v1/users/{user_id}/cv-files` for validated resume uploads
+- `GET/POST /v1/users/{user_id}/cv-files` for listing and validated resume uploads
+- `PUT /v1/users/{user_id}/cv-files/{cv_file_id}/profile` for per-resume reviewed analysis
+- `PUT /v1/users/{user_id}/active-cv-file` for choosing the resume used by later searches
 - `POST /v1/llm/models` and `GET/PUT /v1/users/{user_id}/llm-preference` for user LLM setup
 - `GET /v1/users/{user_id}/browser-sessions` plus `POST` to its per-site `start`, `confirm`, and
   `cancel` routes for dashboard-driven hh.ru/LinkedIn sign-in
