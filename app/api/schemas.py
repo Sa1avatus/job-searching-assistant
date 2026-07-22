@@ -275,6 +275,19 @@ class LlmPreferenceResponse(BaseModel):
     api_key_configured: bool = True
 
 
+class BrowserSessionStatusResponse(BaseModel):
+    site_key: Literal["headhunter", "linkedin"]
+    is_authorized: bool
+    is_waiting_for_login: bool
+    last_url: str | None = None
+    updated_at: str | None = None
+
+
+class BrowserAuthorizationResponse(BaseModel):
+    site_key: Literal["headhunter", "linkedin"]
+    state: Literal["waiting_for_login", "authorized", "cancelled"]
+
+
 class DiscoverHeadHunterVacanciesRequest(BaseModel):
     locations: list[str] = Field(
         default_factory=list,

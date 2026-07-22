@@ -15,6 +15,9 @@
 - Persistent Playwright cookies/localStorage are stored outside the database using Fernet
   authenticated encryption. `APP_BROWSER_STATE_ENCRYPTION_KEY` is never written by the application;
   a wrong key marks the saved state corrupted.
+- Dashboard sign-in opens a visible browser only in a local non-production runtime. Credentials,
+  verification codes, and CAPTCHA responses are entered directly into the site; the application
+  persists only the resulting encrypted Playwright storage state after explicit confirmation.
 - Browser-state reads, replacement, retention, and user deletion are root-confined. PostgreSQL stores
   only a relative encrypted-file path and nonsensitive lifecycle metadata.
 - Uploaded resumes use an extension/MIME allowlist, validate signatures or archive structure where

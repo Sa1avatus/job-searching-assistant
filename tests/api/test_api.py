@@ -36,6 +36,10 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert "source-linkedin" in response.text
     assert "/v1/llm/models" in response.text
     assert "llm-preference" in response.text
+    assert "browser-sessions" in response.text
+    assert "headhunter-login" in response.text
+    assert "linkedin-login" in response.text
+    assert "Я вошёл — сохранить" in response.text
     assert ".doc,.txt,.rtf,.odt,.html,.htm,.md" in response.text
 
 

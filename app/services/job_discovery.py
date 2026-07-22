@@ -25,7 +25,7 @@ from app.storage.tables import ApplicationRow, UserRow, VacancyRow
 
 
 class LinkedInSessionRequiredError(RuntimeError):
-    """LinkedIn search needs a captured session; run scripts/browser_login_capture.py linkedin."""
+    """LinkedIn search needs a signed-in browser session."""
 
 
 _DEFAULT_LIMIT = 15
@@ -188,7 +188,7 @@ class JobDiscoveryService:
             hits = await linkedin_adapter.search(text=text, location_names=locations, limit=limit)
         except LoginRequired as error:
             raise LinkedInSessionRequiredError(
-                "No usable LinkedIn session; run scripts/browser_login_capture.py linkedin"
+                "Сессия LinkedIn истекла. Авторизуйтесь заново в личном кабинете"
             ) from error
         except (CaptchaChallenge, ApplyBlocked):
             return []

@@ -40,9 +40,11 @@ from app.api.schemas import (
     AssessmentRequest,
     AssessmentResponse,
     BrowserApplySubmitRequest,
+    BrowserAuthorizationResponse,
     BrowserHandoffRequest,
     BrowserHandoffResponse,
     BrowserReviewRequest,
+    BrowserSessionStatusResponse,
     ConfirmedProfileFactResponse,
     ConfirmProfileFactsRequest,
     ConnectorCapabilityResponse,
@@ -78,6 +80,7 @@ from app.api.schemas import (
 )
 from app.browser.engine import PlaywrightEngine
 from app.browser.selector_library import SelectorLibrary
+from app.browser.session_service import BrowserSessionService
 from app.browser.session_store import InvalidBrowserState, delete_browser_state_file
 from app.config import Settings, get_settings
 from app.domain.models import ProfileFact, Vacancy
@@ -95,6 +98,11 @@ from app.llm.providers.gemini import GeminiProvider
 from app.llm.router import ModelProvider, ModelRouter, NoModelAvailableError
 from app.observability.logging import configure_logging
 from app.observability.metrics import metrics
+from app.services.browser_authorization import (
+    BrowserAuthorizationError,
+    BrowserAuthorizationManager,
+    BrowserSiteKey,
+)
 from app.services.browser_handoff import create_browser_handoff
 from app.services.job_discovery import (
     JobDiscoveryService,
@@ -116,8 +124,10 @@ from app.storage.documents import DocumentStorage, InvalidDocumentError
 from app.storage.evidence_artifacts import EvidenceArtifactStorage, InvalidEvidenceArtifact
 from app.storage.tables import (
     ApplicationRow,
+    BrowserSessionRow,
     CvFileRow,
     LlmPreferenceRow,
+    UserRow,
     WorkerHeartbeatRow,
     WorkflowTaskRow,
 )
@@ -128,6 +138,7 @@ configure_logging()
 app = FastAPI(title="Job Searching Assistant", version="0.1.0")
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
+BROWSER_AUTHORIZATION_MANAGER = BrowserAuthorizationManager()
 
 
 def required_api_scope(method: str, path: str) -> str:
@@ -507,6 +518,129 @@ def update_llm_preference(
     return LlmPreferenceResponse(provider=row.provider, model=row.model)  # type: ignore[arg-type]
 
 
+@app.get(
+    "/v1/users/{user_id}/browser-sessions",
+    response_model=list[BrowserSessionStatusResponse],
+)
+def get_browser_session_statuses(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[BrowserSessionStatusResponse]:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        store = create_session_store(get_settings())
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    statuses: list[BrowserSessionStatusResponse] = []
+    for site_key in ("headhunter", "linkedin"):
+        row = session.scalar(
+            select(BrowserSessionRow).where(
+                BrowserSessionRow.user_id == user_id,
+                BrowserSessionRow.site_key == site_key,
+            )
+        )
+        is_authorized = False
+        if row is not None and row.status in {"available", "active"}:
+            try:
+                store.load(row.encrypted_state_path)
+                is_authorized = True
+            except InvalidBrowserState:
+                is_authorized = False
+        statuses.append(
+            BrowserSessionStatusResponse(
+                site_key=site_key,
+                is_authorized=is_authorized,
+                is_waiting_for_login=BROWSER_AUTHORIZATION_MANAGER.is_waiting(
+                    user_id=user_id, site_key=site_key
+                ),
+                last_url=row.last_url if row is not None else None,
+                updated_at=row.updated_at.isoformat() if row is not None else None,
+            )
+        )
+    return statuses
+
+
+@app.post(
+    "/v1/users/{user_id}/browser-sessions/{site_key}/start",
+    response_model=BrowserAuthorizationResponse,
+)
+async def start_browser_authorization(
+    user_id: str,
+    site_key: BrowserSiteKey,
+    session: Annotated[Session, Depends(session_scope)],
+) -> BrowserAuthorizationResponse:
+    settings = get_settings()
+    if settings.environment == "production":
+        raise HTTPException(
+            status_code=403,
+            detail="Вход через видимое окно браузера доступен только в локальной установке",
+        )
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        await BROWSER_AUTHORIZATION_MANAGER.start(
+            user_id=user_id,
+            site_key=site_key,
+            timeout_ms=settings.browser_timeout_ms,
+            artifact_directory=settings.artifact_directory,
+        )
+    except BrowserAuthorizationError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail="Не удалось открыть окно входа. Проверьте локальную установку Chromium",
+        ) from error
+    return BrowserAuthorizationResponse(site_key=site_key, state="waiting_for_login")
+
+
+@app.post(
+    "/v1/users/{user_id}/browser-sessions/{site_key}/confirm",
+    response_model=BrowserAuthorizationResponse,
+)
+async def confirm_browser_authorization(
+    user_id: str,
+    site_key: BrowserSiteKey,
+    session: Annotated[Session, Depends(session_scope)],
+) -> BrowserAuthorizationResponse:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        state, last_url = await BROWSER_AUTHORIZATION_MANAGER.confirm(
+            user_id=user_id, site_key=site_key
+        )
+        store = create_session_store(get_settings())
+        BrowserSessionService(session, store).save(
+            user_id=user_id,
+            site_key=site_key,
+            adapter_name=site_key,
+            state=state,
+            last_url=last_url,
+        )
+    except BrowserAuthorizationError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (InvalidBrowserState, RuntimeError) as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return BrowserAuthorizationResponse(site_key=site_key, state="authorized")
+
+
+@app.post(
+    "/v1/users/{user_id}/browser-sessions/{site_key}/cancel",
+    response_model=BrowserAuthorizationResponse,
+)
+async def cancel_browser_authorization(
+    user_id: str,
+    site_key: BrowserSiteKey,
+    session: Annotated[Session, Depends(session_scope)],
+) -> BrowserAuthorizationResponse:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    await BROWSER_AUTHORIZATION_MANAGER.cancel(user_id=user_id, site_key=site_key)
+    return BrowserAuthorizationResponse(site_key=site_key, state="cancelled")
+
+
 @app.post(
     "/v1/users/{user_id}/facts",
     response_model=ProfileFactResponse,
@@ -670,23 +804,41 @@ async def discover_headhunter_vacancies(
     request: DiscoverHeadHunterVacanciesRequest,
     session: Annotated[Session, Depends(session_scope)],
     http_client: Annotated[httpx.AsyncClient, Depends(headhunter_http_client)],
-    adapter: Annotated[HeadHunterBrowserAdapter, Depends(headhunter_browser_adapter)],
 ) -> list[DiscoveryOutcomeResponse]:
     """Search hh.ru by the candidate's verified skills and stage results as awaiting_review.
 
-    Uses a real (headless) browser against hh.ru's public search/vacancy pages rather than
-    api.hh.ru, whose anonymous access is CAPTCHA-limited in practice. Only creates
-    vacancies/applications for human review — never schedules a real submission.
+    Uses a real browser and the user's encrypted hh.ru session rather than the unavailable
+    job-seeker API. Only creates vacancies/applications for human review.
     """
     settings = get_settings()
-    try:
-        outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
-            user_id,
-            headhunter_adapter=adapter,
-            locations=request.locations,
-            limit=request.limit,
-            search_text=request.search_text,
+    store = create_session_store(settings)
+    state = _restore_browser_session(
+        SessionFactory, store, user_id=user_id, site_key="headhunter"
+    )
+    if state is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Авторизуйтесь на hh.ru в разделе «Сессии сайтов» личного кабинета",
         )
+    task_artifact_directory = (
+        settings.artifact_directory / "browser-worker" / f"hh-discover-{user_id}"
+    )
+    try:
+        async with PlaywrightEngine(
+            headless=settings.browser_headless,
+            timeout_ms=settings.browser_timeout_ms,
+            artifact_directory=task_artifact_directory,
+            storage_state=state,
+            selector_library=SelectorLibrary(settings.artifact_directory),
+        ) as browser_engine:
+            adapter = HeadHunterBrowserAdapter(browser_engine)
+            outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
+                user_id,
+                headhunter_adapter=adapter,
+                locations=request.locations,
+                limit=request.limit,
+                search_text=request.search_text,
+            )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except NoSearchKeywordsError as error:
@@ -718,8 +870,7 @@ async def discover_linkedin_vacancies(
     """Search LinkedIn's job search page (native Easy Apply jobs only) via browser automation.
 
     Requires APP_ENABLE_LINKEDIN_APPLY=true (the same explicit-risk opt-in used for real
-    submission) and a session captured via ``scripts/browser_login_capture.py linkedin`` — an
-    anonymous/un-authed LinkedIn job search hits an auth wall almost immediately. Only creates
+    submission) and a session saved from the personal dashboard. Only creates
     vacancies/applications for human review — never schedules a real submission.
     """
     settings = get_settings()
@@ -733,11 +884,7 @@ async def discover_linkedin_vacancies(
     if state is None:
         raise HTTPException(
             status_code=409,
-            detail=(
-                "No usable LinkedIn session; run "
-                "`python scripts/browser_login_capture.py linkedin --user-id "
-                f"{user_id}` first"
-            ),
+            detail="Авторизуйтесь в LinkedIn в разделе «Сессии сайтов» личного кабинета",
         )
     task_artifact_directory = (
         settings.artifact_directory / "browser-worker" / f"li-discover-{user_id}"

@@ -21,6 +21,7 @@
     button { background: #1d294d; color: #fff; cursor: pointer; font-weight: 700; }
     button:hover { border-color: #8da2fb; }
     button:disabled { opacity: .5; cursor: wait; }
+    [hidden] { display: none !important; }
     button.primary { background: #124d3b; border-color: #24765e; }
     button.accept { background: #124d3b; border-color: #24765e; }
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
@@ -44,6 +45,11 @@
     .empty { border: 1px dashed #344166; border-radius: 18px; padding: 40px; text-align: center; color: #aab5d6; }
     .badge { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #223056; color: #aab5d6; }
     .task-state { margin-top: 8px; font-size: 13px; color: #aab5d6; }
+    .session-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+    .session-card { border: 1px solid #303b60; border-radius: 14px; padding: 16px; background: #101831; }
+    .session-card h3 { margin: 0 0 5px; font-size: 17px; }
+    .session-status { color: #f5b942; font-weight: 700; }
+    .session-status.authorized { color: #6ee7b7; }
   </style>
 </head>
 <body>
@@ -80,7 +86,34 @@
     </section>
 
     <section class="step">
-      <h2>2. Резюме</h2>
+      <h2>2. Сессии сайтов</h2>
+      <div class="hint">Вход выполняется вручную в отдельном окне Chromium. Приложение не получает пароль, код подтверждения или CAPTCHA — сохраняются только зашифрованные cookies и состояние сайта.</div>
+      <div id="browser-sessions" class="session-grid">
+        <article class="session-card" data-site="headhunter">
+          <h3>hh.ru</h3>
+          <div id="headhunter-session-status" class="session-status">Проверяем…</div>
+          <div id="headhunter-session-details" class="task-state"></div>
+          <div class="actions">
+            <button id="headhunter-login" type="button">Войти в hh.ru</button>
+            <button id="headhunter-confirm" type="button" class="primary" hidden>Я вошёл — сохранить</button>
+            <button id="headhunter-cancel" type="button" hidden>Отмена</button>
+          </div>
+        </article>
+        <article class="session-card" data-site="linkedin">
+          <h3>LinkedIn</h3>
+          <div id="linkedin-session-status" class="session-status">Проверяем…</div>
+          <div id="linkedin-session-details" class="task-state"></div>
+          <div class="actions">
+            <button id="linkedin-login" type="button">Войти в LinkedIn</button>
+            <button id="linkedin-confirm" type="button" class="primary" hidden>Я вошёл — сохранить</button>
+            <button id="linkedin-cancel" type="button" hidden>Отмена</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="step">
+      <h2>3. Резюме</h2>
       <div class="hint">PDF, DOCX, DOC, TXT, RTF, ODT, HTML или Markdown. Мы извлечём текст и попросим выбранную модель выделить навыки и суммировать опыт.</div>
       <div class="row">
         <div><input id="resume-file" type="file" accept=".pdf,.docx,.doc,.txt,.rtf,.odt,.html,.htm,.md"></div>
@@ -100,7 +133,7 @@
     </section>
 
     <section class="step">
-      <h2>3. Локации</h2>
+      <h2>4. Локации</h2>
       <div class="hint">Через запятую, например: Москва, Санкт-Петербург. Оставьте пустым для поиска везде.</div>
       <div class="row">
         <div><input id="locations" placeholder="везде"></div>
@@ -109,8 +142,8 @@
     </section>
 
     <section class="step">
-      <h2>4. Поиск</h2>
-      <div class="hint">Ищем через управляемый браузер, а не API. Для LinkedIn сначала сохраните свою сессию командой из README.</div>
+      <h2>5. Поиск</h2>
+      <div class="hint">Ищем через управляемый браузер, а не API. Перед поиском авторизуйтесь на выбранных сайтах в разделе выше.</div>
       <div class="chips" style="margin-bottom:14px;">
         <label class="chip"><input id="source-headhunter" type="checkbox" checked> hh.ru</label>
         <label class="chip"><input id="source-linkedin" type="checkbox" checked> LinkedIn</label>
@@ -147,6 +180,114 @@
       return response.json();
     }
 
+    const browserSiteLabels = {headhunter: 'hh.ru', linkedin: 'LinkedIn'};
+    let browserSessionStatuses = {};
+
+    function renderBrowserSessionStatus(session) {
+      browserSessionStatuses[session.site_key] = session;
+      const site = session.site_key;
+      const status = document.querySelector(`#${site}-session-status`);
+      const details = document.querySelector(`#${site}-session-details`);
+      const loginButton = document.querySelector(`#${site}-login`);
+      const confirmButton = document.querySelector(`#${site}-confirm`);
+      const cancelButton = document.querySelector(`#${site}-cancel`);
+      status.classList.toggle('authorized', session.is_authorized);
+      if (session.is_waiting_for_login) {
+        status.textContent = 'Ожидаем вход';
+        details.textContent = 'Завершите вход в открытом окне, затем сохраните сессию.';
+        loginButton.hidden = true;
+        confirmButton.hidden = false;
+        cancelButton.hidden = false;
+      } else if (session.is_authorized) {
+        status.textContent = 'Авторизовано';
+        details.textContent = session.updated_at
+          ? `Сессия сохранена ${new Date(session.updated_at).toLocaleString('ru-RU')}. Если сайт попросит войти снова, повторите авторизацию.`
+          : 'Зашифрованная сессия сохранена.';
+        loginButton.textContent = `Войти заново в ${browserSiteLabels[site]}`;
+        loginButton.hidden = false;
+        confirmButton.hidden = true;
+        cancelButton.hidden = true;
+      } else {
+        status.textContent = 'Не авторизовано';
+        details.textContent = 'Нажмите кнопку входа — откроется отдельное окно сайта.';
+        loginButton.textContent = `Войти в ${browserSiteLabels[site]}`;
+        loginButton.hidden = false;
+        confirmButton.hidden = true;
+        cancelButton.hidden = true;
+      }
+    }
+
+    function renderBrowserSessionsWithoutUser() {
+      browserSessionStatuses = {};
+      ['headhunter', 'linkedin'].forEach(site => renderBrowserSessionStatus({
+        site_key: site, is_authorized: false, is_waiting_for_login: false
+      }));
+      document.querySelectorAll('.session-card .session-status').forEach(node => {
+        node.textContent = 'Сначала создайте пользователя';
+      });
+    }
+
+    async function loadBrowserSessionStatuses() {
+      const userId = userIdInput.value.trim();
+      if (!userId) {
+        renderBrowserSessionsWithoutUser();
+        return [];
+      }
+      const sessions = await asJson(await fetch(`/v1/users/${userId}/browser-sessions`, {
+        headers: headers(false)
+      }));
+      sessions.forEach(renderBrowserSessionStatus);
+      return sessions;
+    }
+
+    ['headhunter', 'linkedin'].forEach(site => {
+      document.querySelector(`#${site}-login`).addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        try {
+          const userId = userIdInput.value.trim();
+          if (!userId) throw new Error('Сначала создайте или укажите User ID');
+          button.disabled = true;
+          showStatus(`Открываем окно входа ${browserSiteLabels[site]}…`);
+          await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${site}/start`, {
+            method: 'POST', headers: headers(false)
+          }));
+          renderBrowserSessionStatus({
+            site_key: site,
+            is_authorized: Boolean(browserSessionStatuses[site]?.is_authorized),
+            is_waiting_for_login: true
+          });
+          showStatus(`Войдите в ${browserSiteLabels[site]} в открывшемся окне, затем нажмите «Я вошёл — сохранить».`);
+        } catch (error) { showError(error); }
+        finally { button.disabled = false; }
+      });
+
+      document.querySelector(`#${site}-confirm`).addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        try {
+          const userId = userIdInput.value.trim();
+          button.disabled = true;
+          showStatus(`Проверяем вход и сохраняем сессию ${browserSiteLabels[site]}…`);
+          await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${site}/confirm`, {
+            method: 'POST', headers: headers(false)
+          }));
+          await loadBrowserSessionStatuses();
+          showStatus(`${browserSiteLabels[site]}: авторизация сохранена.`);
+        } catch (error) { showError(error); }
+        finally { button.disabled = false; }
+      });
+
+      document.querySelector(`#${site}-cancel`).addEventListener('click', async () => {
+        try {
+          const userId = userIdInput.value.trim();
+          await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${site}/cancel`, {
+            method: 'POST', headers: headers(false)
+          }));
+          await loadBrowserSessionStatuses();
+          showStatus(`Вход в ${browserSiteLabels[site]} отменён.`);
+        } catch (error) { showError(error); }
+      });
+    });
+
     document.querySelector('#create-user').addEventListener('click', async () => {
       try {
         keyInput.dispatchEvent(new Event('change'));
@@ -156,6 +297,7 @@
         }));
         userIdInput.value = user.id;
         localStorage.setItem('dashboardUserId', user.id);
+        await loadBrowserSessionStatuses();
         showStatus(`Пользователь создан: ${user.id}`);
       } catch (error) { showError(error); }
     });
@@ -318,6 +460,14 @@
         if (document.querySelector('#source-headhunter').checked) sources.push(['headhunter', 'discover-headhunter-vacancies']);
         if (document.querySelector('#source-linkedin').checked) sources.push(['linkedin', 'discover-linkedin-vacancies']);
         if (!sources.length) throw new Error('Выберите хотя бы один сайт для поиска');
+        await loadBrowserSessionStatuses();
+        const missingSessions = sources
+          .map(([source]) => source)
+          .filter(source => !browserSessionStatuses[source]?.is_authorized);
+        if (missingSessions.length) {
+          document.querySelector('#browser-sessions').scrollIntoView({behavior: 'smooth', block: 'center'});
+          throw new Error(`Сначала авторизуйтесь: ${missingSessions.map(source => browserSiteLabels[source]).join(', ')}`);
+        }
         const settled = await Promise.allSettled(sources.map(async ([source, route]) => {
           const items = await asJson(await fetch(`/v1/users/${userId}/${route}`, {
             method: 'POST', headers: headers(true), body: JSON.stringify({locations, limit: 15, search_text: searchText})
@@ -337,7 +487,14 @@
         showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
       } catch (error) { showError(error); }
     });
+    keyInput.addEventListener('change', () => sessionStorage.setItem('dashboardApiKey', keyInput.value));
+    userIdInput.addEventListener('change', () => {
+      localStorage.setItem('dashboardUserId', userIdInput.value.trim());
+      loadSavedLlmPreference();
+      loadBrowserSessionStatuses().catch(showError);
+    });
     loadSavedLlmPreference();
+    loadBrowserSessionStatuses().catch(showError);
   </script>
 </body>
 </html>

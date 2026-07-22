@@ -54,15 +54,11 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 Set `APP_ENABLE_LINKEDIN_APPLY=true` to enable LinkedIn browser search and Easy Apply. Set
 `APP_ENABLE_HEADHUNTER_APPLY=true` only if the final hh.ru submission button should be enabled.
-After creating a user in the dashboard, capture signed-in sessions in visible browser windows:
-
-```powershell
-python scripts/browser_login_capture.py headhunter --user-id <user-id>
-python scripts/browser_login_capture.py linkedin --user-id <user-id>
-```
-
-The script never asks for a password or verification code. You enter them directly on the site.
-CAPTCHA and verification checkpoints are never bypassed automatically.
+After creating a user, use the **Site sessions** cards in `/dashboard`: click the sign-in button,
+complete sign-in in the visible Chromium window, then click **I signed in — save**. The dashboard
+shows whether an encrypted session exists for both hh.ru and LinkedIn. The application never asks
+for a password or verification code; you enter them directly on the site. CAPTCHA and verification
+checkpoints are never bypassed automatically.
 
 ### Choose an LLM in the dashboard
 
@@ -83,6 +79,8 @@ and Markdown. Scanned/image-only documents still require OCR before upload.
 - `POST /v1/users` and `POST /v1/users/{user_id}/facts`
 - `POST /v1/users/{user_id}/cv-files` for validated resume uploads
 - `POST /v1/llm/models` and `GET/PUT /v1/users/{user_id}/llm-preference` for user LLM setup
+- `GET /v1/users/{user_id}/browser-sessions` plus `POST` to its per-site `start`, `confirm`, and
+  `cancel` routes for dashboard-driven hh.ru/LinkedIn sign-in
 - `DELETE /v1/users/{user_id}` for profile/application/task deletion
 - `POST /v1/vacancies` and `POST /v1/applications/prepare`
 - `GET /v1/applications/{application_id}/task` for durable dispatch evidence
