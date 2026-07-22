@@ -5,7 +5,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from adapters.job_boards.browser_apply_common import CaptchaChallenge
+from adapters.job_boards.greenhouse_api import ExtractedGreenhouseJob, GreenhouseSearchHit
 from adapters.job_boards.headhunter_browser import ExtractedHeadHunterVacancy, HeadHunterSearchHit
+from adapters.job_boards.linkedin_browser import ExtractedLinkedInVacancy, LinkedInSearchHit
 from app.domain.forms import FormField, FormFieldType
 from app.services.job_discovery import (
     JobDiscoveryService,
@@ -42,6 +44,58 @@ class _FakeAdapter:
                 FormField("resume", "Резюме", FormFieldType.FILE, True, semantic_category="resume"),
             ),
             requires_sensitive_review=False,
+        )
+
+
+class _FakeLinkedInAdapter:
+    async def search(
+        self, *, text: str, location_names: list[str], limit: int
+    ) -> list[LinkedInSearchHit]:
+        return [
+            LinkedInSearchHit(
+                job_id="2",
+                source_url="https://www.linkedin.com/jobs/view/2",
+                title="Backend Engineer",
+                company="Example Co",
+            )
+        ][:limit]
+
+    async def extract_vacancy(self, url: str) -> ExtractedLinkedInVacancy:
+        return ExtractedLinkedInVacancy(
+            source_url=url,
+            title="Backend Engineer",
+            company="Example Co",
+            location="Remote",
+            description_text="Python services",
+            has_easy_apply=False,
+        )
+
+
+class _FakeGreenhouseAdapter:
+    async def list_jobs(self, board_url: str) -> tuple[GreenhouseSearchHit, ...]:
+        return (
+            GreenhouseSearchHit(
+                source_url="https://boards.greenhouse.io/example/jobs/3",
+                title="Python Engineer",
+                company="Green Example",
+                location="Remote",
+                description_text="Build Python services",
+            ),
+        )
+
+    async def extract_job(self, url: str) -> ExtractedGreenhouseJob:
+        return ExtractedGreenhouseJob(
+            source_url=url,
+            job_id=3,
+            title="Python Engineer",
+            company="Green Example",
+            location="Remote",
+            description_text="Build Python services",
+            language="en",
+            application_deadline=None,
+            form_fields=(),
+            requires_sensitive_review=False,
+            evidence_api_url="https://boards-api.greenhouse.io/v1/boards/example/jobs/3",
         )
 
 
@@ -182,3 +236,50 @@ def test_build_search_queries_combines_phrases_and_words_without_duplicates() ->
         "Engineer",
         "FastAPI",
     ]
+
+
+def test_linkedin_discovery_keeps_jobs_without_easy_apply() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            service = RecruitmentService(session)
+            user = service.create_user("Candidate")
+            service.add_profile_fact(
+                user.id, category="skill", name="Python", value="", is_verified=True
+            )
+            user_id = user.id
+        with session_factory() as session:
+            outcomes = await JobDiscoveryService(session).discover_linkedin_vacancies(
+                user_id,
+                linkedin_adapter=_FakeLinkedInAdapter(),  # type: ignore[arg-type]
+                locations=[],
+            )
+
+        assert len(outcomes) == 1
+        assert outcomes[0].source_url == "https://www.linkedin.com/jobs/view/2"
+
+    asyncio.run(run())
+
+
+def test_greenhouse_discovery_searches_supplied_board() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            service = RecruitmentService(session)
+            user = service.create_user("Candidate")
+            service.add_profile_fact(
+                user.id, category="skill", name="Python", value="", is_verified=True
+            )
+            user_id = user.id
+        with session_factory() as session:
+            outcomes = await JobDiscoveryService(session).discover_greenhouse_vacancies(
+                user_id,
+                greenhouse_adapter=_FakeGreenhouseAdapter(),  # type: ignore[arg-type]
+                board_urls=["https://boards.greenhouse.io/example"],
+                locations=[],
+            )
+
+        assert len(outcomes) == 1
+        assert outcomes[0].company == "Green Example"
+
+    asyncio.run(run())

@@ -43,9 +43,11 @@ docker compose --profile browser up --build -d
 With the supplied Docker configuration, the personal dashboard is available at
 `http://127.0.0.1:8000/dashboard`; the detailed review queue is available at
 `http://127.0.0.1:8000/review`. Set `APP_HTTP_PORT` in `.env` to choose another host port.
-The dashboard uses separate menu sections for saved vacancies, search, resume, browser sessions,
-the LLM, and local access. **Saved vacancies** lists every application belonging to the selected
-user with server-side text/source/status/location/score filters and 20-item pagination.
+The dashboard uses separate menu sections for saved vacancies, search, the company blacklist,
+resume, browser sessions, the LLM, and local access. **Saved vacancies** lists the selected user's
+active applications with server-side text/source/status/location/score filters and 20-item
+pagination, ordered by match score. Rejected/skipped vacancies and blacklisted companies are hidden
+from the default view and from later discovery runs.
 
 ### Enable browser search and submission
 
@@ -81,6 +83,7 @@ and Markdown. Scanned/image-only documents still require OCR before upload.
 - `POST /v1/assessments`
 - `POST /v1/users` and `POST /v1/users/{user_id}/facts`
 - `GET /v1/users/{user_id}/vacancies` for filtered, paginated saved vacancies
+- `GET/POST/DELETE /v1/users/{user_id}/company-blacklist` for company exclusions
 - `POST /v1/users/{user_id}/cv-files` for validated resume uploads
 - `POST /v1/llm/models` and `GET/PUT /v1/users/{user_id}/llm-preference` for user LLM setup
 - `GET /v1/users/{user_id}/browser-sessions` plus `POST` to its per-site `start`, `confirm`, and
@@ -91,17 +94,21 @@ and Markdown. Scanned/image-only documents still require OCR before upload.
 - `PATCH /v1/applications/{application_id}/materials` for user-reviewed cover letters and answers
 - `POST /v1/applications/{application_id}/retry` for an audited retry of recoverable tasks
 - `POST /v1/applications/{application_id}/resume` for an active human-action checkpoint
+- `POST /v1/applications/{application_id}/reject-vacancy` to hide a saved vacancy permanently
 - `POST /v1/applications/{application_id}/prepare-browser-review` for validated, non-submitting
   Greenhouse form preparation in the isolated Chromium worker
 - `GET /v1/evidence/{artifact_id}` for root-confined, no-store screenshot evidence
 - `POST /v1/vacancies/import-greenhouse` for strict public read-only extraction
 - `POST /v1/vacancies/import-headhunter` for browser-based hh.ru extraction
 - `POST /v1/vacancies/import-linkedin-reference` for policy-safe manual LinkedIn references
+- `POST /v1/users/{user_id}/discover-greenhouse-vacancies` for known/supplied company boards
 - `GET /v1/review-queue` and `POST /v1/applications/{application_id}/decision`
 
 Browser discovery expands a multi-word search into a bounded set of queries: the complete phrase,
 comma/semicolon-separated phrases, and individual words. Results are deduplicated by source URL
 before extraction, which improves recall without allowing an unbounded number of site requests.
+LinkedIn vacancies without Easy Apply remain visible for manual continuation. Cover-letter drafts
+follow the detected vacancy language, including a validated Russian-language path.
 
 The review interface displays answer provenance, missing facts, legal declarations, and active
 human-action instructions. Draft edits are stored separately from verified profile facts and never

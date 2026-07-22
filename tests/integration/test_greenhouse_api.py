@@ -5,6 +5,7 @@ from pathlib import Path
 import httpx
 
 from adapters.job_boards.greenhouse_api import (
+    GreenhouseBoardReference,
     GreenhouseJobBoardApi,
     GreenhouseJobPayload,
     GreenhouseJobReference,
@@ -78,3 +79,50 @@ def test_greenhouse_payload_normalizes_nullable_api_collections() -> None:
 
     assert payload.questions == []
     assert payload.compliance == []
+
+
+def test_greenhouse_api_lists_jobs_from_company_board() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url).startswith(
+            "https://boards-api.greenhouse.io/v1/boards/example/jobs"
+        )
+        assert request.url.params["content"] == "true"
+        return httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {
+                        "id": 12,
+                        "title": "Python Engineer",
+                        "company_name": "Example",
+                        "location": {"name": "Remote"},
+                        "content": "<p>Build Python services.</p>",
+                        "absolute_url": "https://boards.greenhouse.io/example/jobs/12",
+                    }
+                ]
+            },
+        )
+
+    async def run_test() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            jobs = await GreenhouseJobBoardApi(client).list_jobs(
+                "https://boards.greenhouse.io/example"
+            )
+        assert jobs[0].company == "Example"
+        assert jobs[0].source_url == "https://boards.greenhouse.io/example/jobs/12"
+
+    asyncio.run(run_test())
+
+
+def test_greenhouse_board_reference_rejects_unsafe_urls() -> None:
+    for url in (
+        "http://boards.greenhouse.io/example",
+        "https://boards.greenhouse.io.example.test/example",
+        "https://boards.greenhouse.io:8443/example",
+        "https://user:secret@boards.greenhouse.io/example",
+    ):
+        try:
+            GreenhouseBoardReference.from_url(url)
+        except ValueError:
+            continue
+        raise AssertionError(f"Unsafe Greenhouse board accepted: {url}")

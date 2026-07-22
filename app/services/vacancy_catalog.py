@@ -6,8 +6,8 @@ from datetime import datetime
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.services.recruitment import EntityNotFoundError
-from app.storage.tables import ApplicationRow, UserRow, VacancyRow
+from app.services.recruitment import DuplicateEntityError, EntityNotFoundError
+from app.storage.tables import ApplicationRow, CompanyBlacklistRow, UserRow, VacancyRow
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +55,16 @@ class VacancyCatalogService:
         statement = (
             select(ApplicationRow, VacancyRow)
             .join(VacancyRow, VacancyRow.id == ApplicationRow.vacancy_id)
-            .where(ApplicationRow.user_id == user_id)
+            .where(
+                ApplicationRow.user_id == user_id,
+                ~select(CompanyBlacklistRow.id)
+                .where(
+                    CompanyBlacklistRow.user_id == user_id,
+                    CompanyBlacklistRow.normalized_company
+                    == func.lower(func.trim(VacancyRow.company)),
+                )
+                .exists(),
+            )
         )
         statement = self._apply_filters(
             statement,
@@ -70,7 +79,11 @@ class VacancyCatalogService:
         total_pages = max(1, (total + page_size - 1) // page_size)
         effective_page = min(page, total_pages)
         rows = self._session.execute(
-            statement.order_by(ApplicationRow.created_at.desc(), ApplicationRow.id)
+            statement.order_by(
+                ApplicationRow.match_score.desc(),
+                ApplicationRow.created_at.desc(),
+                ApplicationRow.id,
+            )
             .offset((effective_page - 1) * page_size)
             .limit(page_size)
         ).all()
@@ -97,6 +110,18 @@ class VacancyCatalogService:
             total_pages=total_pages,
         )
 
+    def reject_saved_vacancy(self, application_id: str) -> ApplicationRow:
+        application = self._session.get(ApplicationRow, application_id)
+        if application is None:
+            raise EntityNotFoundError("Application not found")
+        if application.status in {"submitted", "interview"}:
+            raise DuplicateEntityError(
+                "Submitted or interview-stage applications cannot be rejected as vacancies"
+            )
+        application.status = "rejected"
+        self._session.commit()
+        return application
+
     @staticmethod
     def _apply_filters(
         statement: Select[tuple[ApplicationRow, VacancyRow]],
@@ -120,7 +145,9 @@ class VacancyCatalogService:
             )
         if location.strip():
             statement = statement.where(VacancyRow.location.ilike(f"%{location.strip()}%"))
-        if status != "all":
+        if status == "all":
+            statement = statement.where(ApplicationRow.status.not_in(("rejected", "skipped")))
+        else:
             statement = statement.where(ApplicationRow.status == status)
         if min_match_score:
             statement = statement.where(ApplicationRow.match_score >= min_match_score)
@@ -128,6 +155,8 @@ class VacancyCatalogService:
             statement = statement.where(VacancyRow.source_url.ilike("%hh.ru/%"))
         elif source == "linkedin":
             statement = statement.where(VacancyRow.source_url.ilike("%linkedin.com/%"))
+        elif source == "greenhouse":
+            statement = statement.where(VacancyRow.adapter_name == "greenhouse")
         elif source == "registry":
             statement = statement.where(VacancyRow.adapter_name == "google-registry")
         elif source == "other":
@@ -135,6 +164,7 @@ class VacancyCatalogService:
                 ~VacancyRow.source_url.ilike("%hh.ru/%"),
                 ~VacancyRow.source_url.ilike("%linkedin.com/%"),
                 VacancyRow.adapter_name != "google-registry",
+                VacancyRow.adapter_name != "greenhouse",
             )
         return statement
 
@@ -145,6 +175,8 @@ class VacancyCatalogService:
             return "headhunter"
         if "linkedin.com/" in source_url:
             return "linkedin"
+        if vacancy.adapter_name == "greenhouse":
+            return "greenhouse"
         if vacancy.adapter_name == "google-registry":
             return "registry"
         return "other"

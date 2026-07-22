@@ -14,11 +14,16 @@ It converts the URL to the documented public Job Board API endpoint and performs
 ```text
 GET https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}
     ?questions=true&pay_transparency=true
+
+GET https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs?content=true
 ```
 
 The implementation validates the hostname, board token, and numeric job ID before constructing the
 API URL. It extracts normalized vacancy text, location, deadline, application fields, options, and
 compliance signals. Compliance, demographic, or GDPR data always sets the human-review boundary.
+The dashboard can also search explicitly entered company-board URLs, or reuse board tokens from
+previously saved Greenhouse vacancies. Greenhouse has no global cross-company board search, so an
+initial board URL is required when the database does not contain one yet.
 
 For review-mode browser preparation, `GreenhouseAdapter.prepare_review` validates the exact host,
 discovers accessible fields, rejects answers for unknown field IDs, validates required values and
@@ -78,8 +83,8 @@ explicit, informed opt-in — LinkedIn's terms prohibit this and it actively det
 - `LinkedInBrowserAdapter.extract_vacancy(url)` — reads a job posting's detail pane (title,
   company, location, description, whether it has a native Easy Apply control).
 - `LinkedInBrowserAdapter.apply(...)` — completes the native multi-step Easy Apply modal only.
-  Jobs that redirect to an external company site are skipped (`ApplyBlocked`), both by `apply()`
-  and by the job-discovery staging step, rather than following an unknown third-party form.
+  Jobs that redirect to an external company site remain saved and visible with their source link,
+  but `apply()` reports `ApplyBlocked` instead of following an unknown third-party form.
 - CAPTCHA/verification checkpoints (`CaptchaChallenge`) and expired sessions (`LoginRequired`)
   both stop at a screenshot checkpoint for the human — never solved/refreshed automatically.
 
@@ -87,6 +92,7 @@ The older `adapters/job_boards/linkedin_reference.py` (manual metadata entry, no
 still exists and is still the only path if you'd rather not enable LinkedIn browser automation —
 `POST /v1/vacancies/import-linkedin-reference` is unaffected by any of the above.
 
-Selectors have not been exercised against the live site from the development sandbox (no network
-egress there) — verify locally before unattended use, and expect to maintain them more often than
-hh.ru's; LinkedIn changes its DOM more frequently.
+The current LinkedIn search and extraction fallbacks were exercised against the live July 2026
+interface. They use canonical `/jobs/view/` links and document-title metadata because the current
+UI randomizes CSS class names. LinkedIn changes its DOM frequently, so captured failure evidence
+still needs to be inspected after future redesigns.

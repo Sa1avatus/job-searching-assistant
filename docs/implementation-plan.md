@@ -111,6 +111,13 @@ fixture. Docker Compose health checks will be run when Docker is available.
   user vacancies across 11 pages; LinkedIn filtering returned 81 records and browser UI checks
   confirmed pagination, filtering, status labels, and an error-free console. The Windows server
   launcher now pins imports to this project root instead of a previously installed package copy.
+- 2026-07-22: Added migration `0013` and per-user company blacklists, permanent vacancy rejection,
+  default hiding of rejected/skipped applications, match-score ordering, accessible red-to-green
+  score meters, and Russian cover-letter language enforcement. Greenhouse board discovery was
+  live-verified with two staged jobs. LinkedIn's July 2026 randomized-class interface was captured,
+  the adapter was repaired using canonical job links and document metadata, and one live LinkedIn
+  job was then extracted and staged successfully. The live catalog showed 148 visible vacancies in
+  descending score order; 141 tests, Ruff, and strict mypy passed before final UI verification.
 
 ## Final result
 

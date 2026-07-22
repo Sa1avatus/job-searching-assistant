@@ -49,6 +49,17 @@ class LlmPreferenceRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class CompanyBlacklistRow(Base):
+    __tablename__ = "company_blacklist"
+    __table_args__ = (UniqueConstraint("user_id", "normalized_company"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    company: Mapped[str] = mapped_column(String(300))
+    normalized_company: Mapped[str] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class CvFileRow(Base):
     __tablename__ = "cv_files"
     __table_args__ = (UniqueConstraint("user_id", "sha256"),)

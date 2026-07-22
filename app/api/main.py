@@ -45,10 +45,13 @@ from app.api.schemas import (
     BrowserHandoffResponse,
     BrowserReviewRequest,
     BrowserSessionStatusResponse,
+    CompanyBlacklistRequest,
+    CompanyBlacklistResponse,
     ConfirmedProfileFactResponse,
     ConfirmProfileFactsRequest,
     ConnectorCapabilityResponse,
     CvFileResponse,
+    DiscoverGreenhouseVacanciesRequest,
     DiscoverHeadHunterVacanciesRequest,
     DiscoverLinkedInVacanciesRequest,
     DiscoveryOutcomeResponse,
@@ -106,14 +109,17 @@ from app.services.browser_authorization import (
     BrowserSiteKey,
 )
 from app.services.browser_handoff import create_browser_handoff
+from app.services.company_blacklist import CompanyBlacklistService
 from app.services.job_discovery import (
     DiscoveryOutcome,
+    GreenhouseDiscoveryError,
     JobDiscoveryService,
     LinkedInSessionRequiredError,
     NoSearchKeywordsError,
 )
 from app.services.materials_generation import (
     MaterialsGenerationService,
+    MaterialsLanguageMismatchError,
     NoVerifiedFactsError,
 )
 from app.services.recruitment import (
@@ -172,6 +178,7 @@ def required_api_scope(method: str, path: str) -> str:
         return "applications:submit_real"
     if path.startswith("/v1/applications/") and (
         path.endswith("/decision")
+        or path.endswith("/reject-vacancy")
         or path.endswith("/retry")
         or path.endswith("/materials")
         or path.endswith("/generate-materials")
@@ -394,7 +401,7 @@ def list_saved_vacancies(
     page: int = 1,
     page_size: int = 20,
 ) -> SavedVacancyPageResponse:
-    if source not in {"all", "headhunter", "linkedin", "registry", "other"}:
+    if source not in {"all", "headhunter", "linkedin", "greenhouse", "registry", "other"}:
         raise HTTPException(status_code=422, detail="Unsupported vacancy source")
     if not 0 <= min_match_score <= 100 or page < 1 or not 1 <= page_size <= 100:
         raise HTTPException(status_code=422, detail="Invalid vacancy pagination or score filter")
@@ -418,6 +425,58 @@ def list_saved_vacancies(
         page_size=vacancy_page.page_size,
         total_pages=vacancy_page.total_pages,
     )
+
+
+@app.get(
+    "/v1/users/{user_id}/company-blacklist",
+    response_model=list[CompanyBlacklistResponse],
+)
+def list_company_blacklist(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[CompanyBlacklistResponse]:
+    try:
+        entries = CompanyBlacklistService(session).list_entries(user_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return [
+        CompanyBlacklistResponse.model_validate(entry, from_attributes=True) for entry in entries
+    ]
+
+
+@app.post(
+    "/v1/users/{user_id}/company-blacklist",
+    response_model=CompanyBlacklistResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_company_blacklist(
+    user_id: str,
+    request: CompanyBlacklistRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> CompanyBlacklistResponse:
+    try:
+        entry = CompanyBlacklistService(session).add(user_id, request.company)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (DuplicateEntityError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return CompanyBlacklistResponse.model_validate(entry, from_attributes=True)
+
+
+@app.delete(
+    "/v1/users/{user_id}/company-blacklist/{entry_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_company_blacklist(
+    user_id: str,
+    entry_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> Response:
+    try:
+        CompanyBlacklistService(session).remove(user_id, entry_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/v1/evidence/{artifact_id}", response_class=FileResponse)
@@ -863,9 +922,7 @@ async def discover_headhunter_vacancies(
     """
     settings = get_settings()
     store = create_session_store(settings)
-    state = _restore_browser_session(
-        SessionFactory, store, user_id=user_id, site_key="headhunter"
-    )
+    state = _restore_browser_session(SessionFactory, store, user_id=user_id, site_key="headhunter")
     if state is None:
         raise HTTPException(
             status_code=409,
@@ -972,6 +1029,47 @@ async def discover_linkedin_vacancies(
             try:
                 await materials_service.draft_materials(outcome.application_id)
             except Exception:  # noqa: BLE001 - a drafting failure must not fail the whole search
+                continue
+    return serialize_discovery_outcomes(outcomes)
+
+
+@app.post(
+    "/v1/users/{user_id}/discover-greenhouse-vacancies",
+    response_model=list[DiscoveryOutcomeResponse],
+)
+async def discover_greenhouse_vacancies(
+    user_id: str,
+    request: DiscoverGreenhouseVacanciesRequest,
+    session: Annotated[Session, Depends(session_scope)],
+    http_client: Annotated[httpx.AsyncClient, Depends(greenhouse_http_client)],
+) -> list[DiscoveryOutcomeResponse]:
+    """Search known or explicitly supplied Greenhouse company boards through their public API."""
+    try:
+        outcomes = await JobDiscoveryService(session).discover_greenhouse_vacancies(
+            user_id,
+            greenhouse_adapter=GreenhouseJobBoardApi(http_client),
+            board_urls=[str(board_url) for board_url in request.board_urls],
+            locations=request.locations,
+            limit=request.limit,
+            search_text=request.search_text,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except NoSearchKeywordsError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except GreenhouseDiscoveryError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    settings = get_settings()
+    providers = build_user_model_providers(http_client, session, user_id, settings)
+    if providers:
+        materials_service = MaterialsGenerationService(session, ModelRouter(providers))
+        for outcome in outcomes:
+            if outcome.status != "created":
+                continue
+            try:
+                await materials_service.draft_materials(outcome.application_id)
+            except Exception:  # noqa: BLE001 - drafting failure must not discard the vacancy
                 continue
     return serialize_discovery_outcomes(outcomes)
 
@@ -1337,6 +1435,23 @@ def decide_application(
     return ApplicationResponse.model_validate(application, from_attributes=True)
 
 
+@app.post(
+    "/v1/applications/{application_id}/reject-vacancy",
+    response_model=ApplicationResponse,
+)
+def reject_saved_vacancy(
+    application_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationResponse:
+    try:
+        application = VacancyCatalogService(session).reject_saved_vacancy(application_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DuplicateEntityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return ApplicationResponse.model_validate(application, from_attributes=True)
+
+
 @app.post("/v1/applications/{application_id}/retry", response_model=WorkflowTaskResponse)
 def retry_application_task(
     application_id: str,
@@ -1450,6 +1565,8 @@ async def generate_application_materials(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except NoVerifiedFactsError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except MaterialsLanguageMismatchError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
     except NoModelAvailableError as error:
         raise HTTPException(
             status_code=502, detail=f"Materials drafting failed: {error}"

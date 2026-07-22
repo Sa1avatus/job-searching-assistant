@@ -42,7 +42,9 @@
     .topline { display: flex; gap: 16px; justify-content: space-between; align-items: start; }
     h3 { margin: 2px 0 4px; font-size: 20px; }
     .company, .meta { color: #aab5d6; }
-    .score { min-width: 58px; height: 58px; border: 1px solid #5065a8; border-radius: 50%; display: grid; place-items: center; font-size: 18px; font-weight: 800; }
+    .match-meter { min-width: 128px; color: hsl(calc(var(--match) * 1.2), 76%, 62%); font-weight: 800; text-align: right; }
+    .match-meter__track { height: 9px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: #27304d; }
+    .match-meter__fill { width: calc(var(--match) * 1%); height: 100%; border-radius: inherit; background: hsl(calc(var(--match) * 1.2), 72%, 46%); transition: width .2s ease; }
     .cover-letter { margin-top: 14px; }
     .cover-letter textarea { min-height: 120px; }
     .actions { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 14px; }
@@ -62,6 +64,9 @@
     .vacancy-card .actions { align-items: center; justify-content: space-between; }
     .pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 18px; }
     .filter-actions { display: flex; gap: 8px; margin-top: 12px; }
+    .danger { background: #541f2b; border-color: #8d3447; }
+    .blacklist-list { display: grid; gap: 10px; margin-top: 18px; }
+    .blacklist-entry { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid #303b60; border-radius: 12px; background: #101831; }
     @media (max-width: 850px) {
       main.dashboard-shell { grid-template-columns: 1fr; }
       .sidebar { position: static; display: flex; overflow-x: auto; }
@@ -80,6 +85,7 @@
     <nav class="sidebar" aria-label="Разделы личного кабинета">
       <button class="menu-button active" type="button" data-menu="vacancies">Все вакансии</button>
       <button class="menu-button" type="button" data-menu="search">Поиск</button>
+      <button class="menu-button" type="button" data-menu="blacklist">Чёрный список</button>
       <button class="menu-button" type="button" data-menu="resume">Резюме</button>
       <button class="menu-button" type="button" data-menu="sessions">Сессии сайтов</button>
       <button class="menu-button" type="button" data-menu="model">Модель</button>
@@ -93,7 +99,7 @@
       <div class="hint">Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.</div>
       <div class="vacancy-filters">
         <div><label for="vacancy-query">Текст</label><input id="vacancy-query" placeholder="должность, компания или описание"></div>
-        <div><label for="vacancy-source">Источник</label><select id="vacancy-source"><option value="all">Все</option><option value="headhunter">hh.ru</option><option value="linkedin">LinkedIn</option><option value="registry">Реестр</option><option value="other">Другие</option></select></div>
+        <div><label for="vacancy-source">Источник</label><select id="vacancy-source"><option value="all">Все</option><option value="headhunter">hh.ru</option><option value="linkedin">LinkedIn</option><option value="greenhouse">Greenhouse</option><option value="registry">Реестр</option><option value="other">Другие</option></select></div>
         <div><label for="vacancy-status">Статус</label><select id="vacancy-status"><option value="all">Все</option><option value="saved">Сохранена</option><option value="awaiting_review">Ожидает решения</option><option value="approved">Принята</option><option value="rejected">Отклонена</option><option value="skipped">Пропущена</option><option value="submitted">Отправлена</option><option value="interview">Собеседование</option></select></div>
         <div><label for="vacancy-location">Локация</label><input id="vacancy-location" placeholder="например, Москва"></div>
         <div><label for="vacancy-score">Соответствие от</label><input id="vacancy-score" type="number" min="0" max="100" value="0"></div>
@@ -109,6 +115,16 @@
         <span id="vacancy-page">Страница 1</span>
         <button id="vacancy-next" type="button">Вперёд →</button>
       </div>
+    </section>
+
+    <section class="step" data-panel="blacklist">
+      <h2>Чёрный список компаний</h2>
+      <div class="hint">Вакансии этих компаний не появляются в каталоге и не добавляются повторно при новом поиске. Удаление компании из списка снова разрешает её вакансии.</div>
+      <div class="row">
+        <div><label for="blacklist-company">Компания</label><input id="blacklist-company" placeholder="Название компании"></div>
+        <div style="flex:0"><button id="add-blacklist-company" type="button" class="danger">Добавить</button></div>
+      </div>
+      <div id="blacklist-list" class="blacklist-list"></div>
     </section>
 
     <section class="step" data-panel="access">
@@ -194,11 +210,14 @@
 
     <section class="step" data-panel="search">
       <h2>Поиск</h2>
-      <div class="hint">Ищем через управляемый браузер, а не API. Перед поиском авторизуйтесь на выбранных сайтах в разделе выше.</div>
+      <div class="hint">hh.ru и LinkedIn ищутся через управляемый браузер с вашими сессиями. Greenhouse использует официальный публичный read-only интерфейс досок компаний и не требует входа.</div>
       <div class="chips" style="margin-bottom:14px;">
         <label class="chip"><input id="source-headhunter" type="checkbox" checked> hh.ru</label>
         <label class="chip"><input id="source-linkedin" type="checkbox" checked> LinkedIn</label>
+        <label class="chip"><input id="source-greenhouse" type="checkbox" checked> Greenhouse</label>
       </div>
+      <label for="greenhouse-boards">Доски Greenhouse</label>
+      <textarea id="greenhouse-boards" placeholder="По одной ссылке на строку, например https://boards.greenhouse.io/company. Если оставить пустым, используются Greenhouse-доски из уже сохранённых вакансий."></textarea>
       <button id="search" type="button" class="primary">Найти вакансии</button>
     </section>
 
@@ -248,8 +267,25 @@
       button.addEventListener('click', () => {
         activatePanel(button.dataset.menu);
         if (button.dataset.menu === 'vacancies') loadSavedVacancies().catch(showError);
+        if (button.dataset.menu === 'blacklist') loadCompanyBlacklist().catch(showError);
       });
     });
+
+    function createMatchMeter(matchScore) {
+      const score = Math.max(0, Math.min(100, Number(matchScore) || 0));
+      const meter = element('div', undefined, 'match-meter');
+      meter.style.setProperty('--match', String(score));
+      meter.setAttribute('role', 'progressbar');
+      meter.setAttribute('aria-label', 'Степень соответствия');
+      meter.setAttribute('aria-valuemin', '0');
+      meter.setAttribute('aria-valuemax', '100');
+      meter.setAttribute('aria-valuenow', String(score));
+      meter.append(element('div', `${score}% подходит`));
+      const track = element('div', undefined, 'match-meter__track');
+      track.append(element('div', undefined, 'match-meter__fill'));
+      meter.append(track);
+      return meter;
+    }
 
     const browserSiteLabels = {headhunter: 'hh.ru', linkedin: 'LinkedIn'};
     let browserSessionStatuses = {};
@@ -477,11 +513,11 @@
       const top = element('div', undefined, 'topline');
       const title = element('div');
       title.append(element('div', item.company, 'company'), element('h3', item.title));
-      top.append(title, element('div', `${item.match_score}%`, 'score'));
+      top.append(title, createMatchMeter(item.match_score));
       card.append(top);
       if (item.status === 'already_existed') card.append(element('span', 'уже был в списке ранее', 'badge'));
       const meta = element('div', undefined, 'meta');
-      const sourceLabel = item.source === 'linkedin' ? 'LinkedIn' : 'hh.ru';
+      const sourceLabel = vacancySourceLabels[item.source] || item.source;
       const link = element('a', `Открыть вакансию на ${sourceLabel}`); link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
       card.append(meta);
       const coverBlock = element('div', undefined, 'cover-letter');
@@ -491,8 +527,16 @@
       card.append(coverBlock);
       const taskState = element('div', '', 'task-state'); taskState.id = `state-${item.application_id}`;
       const actions = element('div', undefined, 'actions');
-      const accept = element('button', 'Принять и откликнуться', 'accept'); accept.type = 'button';
+      const accept = element(
+        'button',
+        item.source === 'greenhouse' ? 'Открыть для рассмотрения' : 'Принять и откликнуться',
+        'accept'
+      ); accept.type = 'button';
       accept.addEventListener('click', async () => {
+        if (item.source === 'greenhouse') {
+          window.location.href = `/review?application_id=${encodeURIComponent(item.application_id)}`;
+          return;
+        }
         accept.disabled = true;
         try {
           taskState.textContent = 'Сохраняем письмо и ставим отклик в очередь…';
@@ -510,7 +554,11 @@
           taskState.textContent = `Не удалось отправить автоматически: ${error.message}. Откройте вакансию по ссылке и откликнитесь вручную.`;
         } finally { accept.disabled = false; }
       });
-      actions.append(accept, link);
+      const reject = element('button', 'Отклонить', 'danger'); reject.type = 'button';
+      reject.addEventListener('click', () => rejectVacancy(item.application_id, card).catch(showError));
+      const blacklist = element('button', 'Компания в чёрный список'); blacklist.type = 'button';
+      blacklist.addEventListener('click', () => blacklistCompany(item.company, true).catch(showError));
+      actions.append(accept, reject, blacklist, link);
       card.append(actions, taskState);
       // Load current materials (cover letter) for this application.
       fetch(`/v1/applications/${item.application_id}/materials`, {headers: headers(false)})
@@ -520,7 +568,8 @@
     }
 
     const vacancySourceLabels = {
-      headhunter: 'hh.ru', linkedin: 'LinkedIn', registry: 'Импортированный реестр', other: 'Другой источник'
+      headhunter: 'hh.ru', linkedin: 'LinkedIn', greenhouse: 'Greenhouse',
+      registry: 'Импортированный реестр', other: 'Другой источник'
     };
     const vacancyStatusLabels = {
       saved: 'Сохранена', awaiting_review: 'Ожидает решения', approved: 'Принята',
@@ -542,17 +591,88 @@
         new Date(item.created_at).toLocaleDateString('ru-RU')
       ];
       title.append(element('div', metadata.join(' · '), 'meta'));
-      top.append(title, element('div', `${item.match_score}%`, 'score'));
+      top.append(title, createMatchMeter(item.match_score));
       const actions = element('div', undefined, 'actions');
       const link = element('a', 'Открыть вакансию');
       link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
       const applicationLink = element('a', 'Материалы и решение');
       applicationLink.href = `/review?application_id=${encodeURIComponent(item.application_id)}`;
       applicationLink.className = 'link-btn';
-      actions.append(applicationLink, link);
+      const reject = element('button', 'Отклонить', 'danger'); reject.type = 'button';
+      reject.addEventListener('click', () => rejectVacancy(item.application_id, card).catch(showError));
+      const blacklist = element('button', 'Компания в чёрный список'); blacklist.type = 'button';
+      blacklist.addEventListener('click', () => blacklistCompany(item.company, true).catch(showError));
+      if (!['submitted', 'interview'].includes(item.status)) actions.append(reject);
+      actions.append(blacklist, applicationLink, link);
       card.append(top, actions);
       return card;
     }
+
+    async function rejectVacancy(applicationId, card) {
+      await asJson(await fetch(`/v1/applications/${applicationId}/reject-vacancy`, {
+        method: 'POST', headers: headers(false)
+      }));
+      card.remove();
+      showStatus('Вакансия отклонена и больше не будет показана в общем списке.');
+      await loadSavedVacancies(1);
+    }
+
+    async function blacklistCompany(company, askForConfirmation = false) {
+      if (askForConfirmation && !confirm(`Добавить компанию «${company}» в чёрный список?`)) return;
+      const userId = userIdInput.value.trim();
+      if (!userId) throw new Error('Сначала создайте или укажите User ID');
+      await asJson(await fetch(`/v1/users/${userId}/company-blacklist`, {
+        method: 'POST', headers: headers(true), body: JSON.stringify({company})
+      }));
+      showStatus(`Компания «${company}» добавлена в чёрный список.`);
+      await Promise.all([loadCompanyBlacklist(), loadSavedVacancies(1)]);
+    }
+
+    async function loadCompanyBlacklist() {
+      const userId = userIdInput.value.trim();
+      const list = document.querySelector('#blacklist-list');
+      if (!userId) {
+        list.replaceChildren(element('div', 'Укажите User ID в разделе «Доступ».', 'empty'));
+        return;
+      }
+      const entries = await asJson(await fetch(`/v1/users/${userId}/company-blacklist`, {
+        headers: headers(false)
+      }));
+      list.replaceChildren();
+      if (!entries.length) {
+        list.append(element('div', 'Чёрный список пуст.', 'empty'));
+        return;
+      }
+      entries.forEach(entry => {
+        const row = element('div', undefined, 'blacklist-entry');
+        row.append(element('strong', entry.company));
+        const remove = element('button', 'Убрать из списка'); remove.type = 'button';
+        remove.addEventListener('click', async () => {
+          try {
+            const response = await fetch(`/v1/users/${userId}/company-blacklist/${entry.id}`, {
+              method: 'DELETE', headers: headers(false)
+            });
+            if (!response.ok) {
+              const payload = await response.json().catch(() => ({}));
+              throw new Error(payload.detail || `Request failed (${response.status})`);
+            }
+            showStatus(`Компания «${entry.company}» удалена из чёрного списка.`);
+            await Promise.all([loadCompanyBlacklist(), loadSavedVacancies(1)]);
+          } catch (error) { showError(error); }
+        });
+        row.append(remove); list.append(row);
+      });
+    }
+
+    document.querySelector('#add-blacklist-company').addEventListener('click', async () => {
+      try {
+        const input = document.querySelector('#blacklist-company');
+        const company = input.value.trim();
+        if (!company) throw new Error('Введите название компании');
+        await blacklistCompany(company);
+        input.value = '';
+      } catch (error) { showError(error); }
+    });
 
     async function loadSavedVacancies(requestedPage = vacancyPage) {
       const userId = userIdInput.value.trim();
@@ -614,37 +734,43 @@
         if (!userId) throw new Error('Сначала создайте или укажите User ID');
         const anywhere = document.querySelector('#anywhere').checked;
         const locations = anywhere ? [] : document.querySelector('#locations').value.split(',').map(s => s.trim()).filter(Boolean);
-        showStatus('Ищем вакансии на hh.ru и готовим отклики…');
+        showStatus('Ищем вакансии на выбранных источниках и готовим материалы…');
         const results = document.querySelector('#results'); results.replaceChildren();
         const searchText = document.querySelector('#keywords-text').value.trim() || null;
         const sources = [];
-        if (document.querySelector('#source-headhunter').checked) sources.push(['headhunter', 'discover-headhunter-vacancies']);
-        if (document.querySelector('#source-linkedin').checked) sources.push(['linkedin', 'discover-linkedin-vacancies']);
+        if (document.querySelector('#source-headhunter').checked) sources.push({source: 'headhunter', route: 'discover-headhunter-vacancies', requiresSession: true});
+        if (document.querySelector('#source-linkedin').checked) sources.push({source: 'linkedin', route: 'discover-linkedin-vacancies', requiresSession: true});
+        if (document.querySelector('#source-greenhouse').checked) sources.push({source: 'greenhouse', route: 'discover-greenhouse-vacancies', requiresSession: false});
         if (!sources.length) throw new Error('Выберите хотя бы один сайт для поиска');
         await loadBrowserSessionStatuses();
         const missingSessions = sources
-          .map(([source]) => source)
-          .filter(source => !browserSessionStatuses[source]?.is_authorized);
+          .filter(source => source.requiresSession && !browserSessionStatuses[source.source]?.is_authorized)
+          .map(source => source.source);
         if (missingSessions.length) {
           activatePanel('sessions');
           document.querySelector('#browser-sessions').scrollIntoView({behavior: 'smooth', block: 'center'});
           throw new Error(`Сначала авторизуйтесь: ${missingSessions.map(source => browserSiteLabels[source]).join(', ')}`);
         }
-        const settled = await Promise.allSettled(sources.map(async ([source, route]) => {
+        const greenhouseBoards = document.querySelector('#greenhouse-boards').value
+          .split(/[\n,]+/).map(value => value.trim()).filter(Boolean);
+        const settled = await Promise.allSettled(sources.map(async ({source, route}) => {
+          const body = {locations, limit: 15, search_text: searchText};
+          if (source === 'greenhouse') body.board_urls = greenhouseBoards;
           const items = await asJson(await fetch(`/v1/users/${userId}/${route}`, {
-            method: 'POST', headers: headers(true), body: JSON.stringify({locations, limit: 15, search_text: searchText})
+            method: 'POST', headers: headers(true), body: JSON.stringify(body)
           }));
           return items.map(item => ({...item, source}));
         }));
         const outcomes = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []);
         const failures = settled
-          .map((result, index) => result.status === 'rejected' ? `${sources[index][0]}: ${result.reason.message}` : null)
+          .map((result, index) => result.status === 'rejected' ? `${vacancySourceLabels[sources[index].source]}: ${result.reason.message}` : null)
           .filter(Boolean);
         if (!outcomes.length) {
           results.append(element('div', failures.length ? 'Поиск не выполнен: проверьте настройку браузерных сессий.' : 'Ничего не найдено. Попробуйте другие ключевые слова или локации.', 'empty'));
           showStatus(failures.length ? failures.join('; ') : '0 результатов');
           return;
         }
+        outcomes.sort((left, right) => right.match_score - left.match_score);
         outcomes.forEach(item => results.append(renderResult(item)));
         loadSavedVacancies(1).catch(() => {});
         showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
@@ -656,11 +782,13 @@
       loadSavedLlmPreference();
       loadBrowserSessionStatuses().catch(showError);
       loadSavedVacancies(1).catch(showError);
+      loadCompanyBlacklist().catch(showError);
     });
     activatePanel(localStorage.getItem('dashboardActivePanel') || 'vacancies');
     loadSavedLlmPreference();
     loadBrowserSessionStatuses().catch(showError);
     loadSavedVacancies().catch(showError);
+    loadCompanyBlacklist().catch(showError);
   </script>
 </body>
 </html>

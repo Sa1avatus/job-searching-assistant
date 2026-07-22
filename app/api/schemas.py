@@ -318,7 +318,7 @@ class SavedVacancyResponse(BaseModel):
     location: str
     match_score: int
     status: str
-    source: Literal["headhunter", "linkedin", "registry", "other"]
+    source: Literal["headhunter", "linkedin", "greenhouse", "registry", "other"]
     created_at: datetime
 
 
@@ -338,3 +338,27 @@ class DiscoverLinkedInVacanciesRequest(BaseModel):
     )
     limit: int = Field(default=15, ge=1, le=50)
     search_text: str | None = Field(default=None, max_length=300)
+
+
+class DiscoverGreenhouseVacanciesRequest(BaseModel):
+    board_urls: list[HttpUrl] = Field(
+        default_factory=list,
+        description=(
+            "Greenhouse company boards. Empty uses boards from previously saved Greenhouse jobs."
+        ),
+        max_length=20,
+    )
+    locations: list[str] = Field(default_factory=list, max_length=20)
+    limit: int = Field(default=15, ge=1, le=50)
+    search_text: str | None = Field(default=None, max_length=300)
+
+
+class CompanyBlacklistRequest(BaseModel):
+    company: str = Field(min_length=1, max_length=300)
+
+
+class CompanyBlacklistResponse(BaseModel):
+    id: str
+    user_id: str
+    company: str
+    created_at: datetime

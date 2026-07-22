@@ -2,6 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.services.company_blacklist import CompanyBlacklistService
 from app.services.recruitment import RecruitmentService
 from app.services.vacancy_catalog import VacancyCatalogService
 from app.storage.database import Base
@@ -56,6 +57,40 @@ def test_catalog_filters_user_vacancies_and_paginates() -> None:
     assert first_page.total == 2
     assert first_page.total_pages == 2
     assert len(first_page.items) == 1
+    assert first_page.items[0].match_score == 80
     assert filtered.total == 1
     assert filtered.items[0].title == "Python Engineer"
     assert filtered.items[0].source == "headhunter"
+
+
+def test_catalog_hides_rejected_and_blacklisted_companies() -> None:
+    session_factory = _session_factory()
+    with session_factory() as session:
+        recruitment = RecruitmentService(session)
+        user = recruitment.create_user("Candidate")
+        visible_vacancy = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/visible",
+            title="Visible",
+            company="Visible Co",
+            required_skills=[],
+            preferred_skills=[],
+        )
+        blocked_vacancy = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/blocked",
+            title="Blocked",
+            company="Blocked Co",
+            required_skills=[],
+            preferred_skills=[],
+        )
+        visible_application = recruitment.prepare_application(user.id, visible_vacancy.id)
+        recruitment.prepare_application(user.id, blocked_vacancy.id)
+        CompanyBlacklistService(session).add(user.id, "Blocked Co")
+
+        VacancyCatalogService(session).reject_saved_vacancy(visible_application.id)
+        visible_page = VacancyCatalogService(session).list_saved_vacancies(user.id)
+        rejected_page = VacancyCatalogService(session).list_saved_vacancies(
+            user.id, status="rejected"
+        )
+
+    assert visible_page.total == 0
+    assert [item.company for item in rejected_page.items] == ["Visible Co"]

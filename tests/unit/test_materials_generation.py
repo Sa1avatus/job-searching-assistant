@@ -32,7 +32,13 @@ def _session_factory():
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def _seed_application(session_factory, *, with_verified_fact: bool = True):
+def _seed_application(
+    session_factory,
+    *,
+    with_verified_fact: bool = True,
+    title: str = "Backend Engineer",
+    description_text: str = "Build things.",
+):
     with session_factory() as session:
         service = RecruitmentService(session)
         user = service.create_user("Candidate")
@@ -42,11 +48,11 @@ def _seed_application(session_factory, *, with_verified_fact: bool = True):
             )
         vacancy = service.create_vacancy(
             source_url="https://example.test/vacancy/1",
-            title="Backend Engineer",
+            title=title,
             company="Example Co",
             required_skills=["Python"],
             preferred_skills=[],
-            description_text="Build things.",
+            description_text=description_text,
             application_fields=[
                 {
                     "field_id": "why_interested",
@@ -172,5 +178,32 @@ def test_draft_materials_requires_verified_facts() -> None:
             except NoVerifiedFactsError:
                 return
         raise AssertionError("expected NoVerifiedFactsError")
+
+    asyncio.run(run())
+
+
+def test_draft_materials_uses_russian_for_russian_vacancy() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(
+            session_factory,
+            title="Python-разработчик",
+            description_text="Разработка внутренних сервисов и автоматизация процессов.",
+        )
+        router = _FakeRouter(
+            MaterialsDraft(
+                cover_letter_text=(
+                    "Здравствуйте! Мой опыт разработки на Python соответствует этой позиции."
+                )
+            )
+        )
+        with session_factory() as session:
+            result = await MaterialsGenerationService(session, router).draft_materials(
+                application_id
+            )
+
+        assert "Здравствуйте" in result.cover_letter_text
+        assert router.last_request is not None
+        assert "entirely in Russian" in router.last_request.prompt
 
     asyncio.run(run())

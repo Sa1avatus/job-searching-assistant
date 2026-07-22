@@ -38,6 +38,7 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert response.status_code == 200
     assert "discover-headhunter-vacancies" in response.text
     assert "discover-linkedin-vacancies" in response.text
+    assert "discover-greenhouse-vacancies" in response.text
     assert "apply-headhunter" in response.text
     assert "apply-linkedin" in response.text
     assert "source-linkedin" in response.text
@@ -50,8 +51,12 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert ".doc,.txt,.rtf,.odt,.html,.htm,.md" in response.text
     assert "Все сохранённые вакансии" in response.text
     assert "/vacancies?" in response.text
-    assert "data-menu=\"sessions\"" in response.text
+    assert 'data-menu="sessions"' in response.text
     assert "vacancy-previous" in response.text
+    assert "source-greenhouse" in response.text
+    assert "company-blacklist" in response.text
+    assert "reject-vacancy" in response.text
+    assert "match-meter" in response.text
 
 
 def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:

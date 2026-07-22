@@ -19,8 +19,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChallenge, LoginRequired
+from adapters.job_boards.greenhouse_api import (
+    GreenhouseBoardReference,
+    GreenhouseJobBoardApi,
+    GreenhouseSearchHit,
+)
 from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter, HeadHunterSearchHit
 from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter, LinkedInSearchHit
+from app.services.company_blacklist import CompanyBlacklistService
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError, RecruitmentService
 from app.storage.tables import ApplicationRow, UserRow, VacancyRow
 
@@ -36,6 +42,10 @@ _MAX_SEARCH_QUERIES = 8
 
 class NoSearchKeywordsError(RuntimeError):
     """The candidate has no verified skills/keywords to search with."""
+
+
+class GreenhouseDiscoveryError(RuntimeError):
+    """No configured Greenhouse board could be searched."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,9 +66,7 @@ def build_search_queries(search_text: str) -> list[str]:
         return []
 
     phrases = [
-        " ".join(phrase.split())
-        for phrase in re.split(r"[,;|\n]+", search_text)
-        if phrase.strip()
+        " ".join(phrase.split()) for phrase in re.split(r"[,;|\n]+", search_text) if phrase.strip()
     ]
     candidates = [normalized_text, *phrases]
     for phrase in phrases:
@@ -126,7 +134,7 @@ class JobDiscoveryService:
             )
             if outcome is not None:
                 outcomes.append(outcome)
-        return outcomes
+        return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
 
     async def _stage_one(
         self,
@@ -174,6 +182,8 @@ class JobDiscoveryService:
                     return None
         if vacancy is None:
             return None
+        if CompanyBlacklistService(self._session).contains(user_id, vacancy.company):
+            return None
 
         existing_application = self._session.scalar(
             select(ApplicationRow).where(
@@ -181,6 +191,9 @@ class JobDiscoveryService:
             )
         )
         if existing_application is not None:
+            if existing_application.status in {"rejected", "skipped"}:
+                return None
+            self._rescore_from_text(existing_application, vacancy)
             return DiscoveryOutcome(
                 application_id=existing_application.id,
                 vacancy_id=vacancy.id,
@@ -195,6 +208,7 @@ class JobDiscoveryService:
             application = recruitment.prepare_application(user_id, vacancy.id)
         except (EntityNotFoundError, DuplicateEntityError):
             return None
+        self._rescore_from_text(application, vacancy)
         return DiscoveryOutcome(
             application_id=application.id,
             vacancy_id=vacancy.id,
@@ -251,7 +265,7 @@ class JobDiscoveryService:
             )
             if outcome is not None:
                 outcomes.append(outcome)
-        return outcomes
+        return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
 
     async def _stage_linkedin(
         self,
@@ -267,11 +281,6 @@ class JobDiscoveryService:
             try:
                 extracted = await linkedin_adapter.extract_vacancy(source_url)
             except Exception:  # noqa: BLE001 - a single unreadable search hit should not abort the run
-                return None
-            if not extracted.has_easy_apply:
-                # Real submission is only supported for native Easy Apply jobs (see
-                # linkedin_browser.py); still stage it so the person can apply manually via the
-                # link, but skip it here to avoid cluttering results with unsupported jobs.
                 return None
             try:
                 vacancy = recruitment.create_vacancy(
@@ -295,6 +304,8 @@ class JobDiscoveryService:
                     return None
         if vacancy is None:
             return None
+        if CompanyBlacklistService(self._session).contains(user_id, vacancy.company):
+            return None
 
         existing_application = self._session.scalar(
             select(ApplicationRow).where(
@@ -302,6 +313,9 @@ class JobDiscoveryService:
             )
         )
         if existing_application is not None:
+            if existing_application.status in {"rejected", "skipped"}:
+                return None
+            self._rescore_from_text(existing_application, vacancy)
             return DiscoveryOutcome(
                 application_id=existing_application.id,
                 vacancy_id=vacancy.id,
@@ -315,6 +329,7 @@ class JobDiscoveryService:
             application = recruitment.prepare_application(user_id, vacancy.id)
         except (EntityNotFoundError, DuplicateEntityError):
             return None
+        self._rescore_from_text(application, vacancy)
         return DiscoveryOutcome(
             application_id=application.id,
             vacancy_id=vacancy.id,
@@ -324,6 +339,198 @@ class JobDiscoveryService:
             match_score=application.match_score,
             status="created",
         )
+
+    async def discover_greenhouse_vacancies(
+        self,
+        user_id: str,
+        *,
+        greenhouse_adapter: GreenhouseJobBoardApi,
+        board_urls: list[str],
+        locations: list[str],
+        limit: int = _DEFAULT_LIMIT,
+        search_text: str | None = None,
+    ) -> list[DiscoveryOutcome]:
+        recruitment = RecruitmentService(self._session)
+        user = self._session.get(UserRow, user_id)
+        if user is None:
+            raise EntityNotFoundError("User not found")
+        text = (search_text or self._build_search_text(user_facts=user.facts)).strip()
+        queries = build_search_queries(text)
+        if not queries:
+            raise NoSearchKeywordsError(
+                "No search keywords available; add verified skill facts or pass search_text"
+            )
+        if not board_urls:
+            board_urls = self.known_greenhouse_board_urls()
+        if not board_urls:
+            raise GreenhouseDiscoveryError(
+                "Добавьте хотя бы одну ссылку на доску Greenhouse в настройках поиска"
+            )
+
+        limit = min(max(limit, 1), _MAX_LIMIT)
+        normalized_queries = [query.casefold() for query in queries]
+        normalized_locations = [location.casefold() for location in locations if location.strip()]
+        hits_by_url: dict[str, GreenhouseSearchHit] = {}
+        failed_boards = 0
+        for board_url in dict.fromkeys(board_urls):
+            try:
+                board_hits = await greenhouse_adapter.list_jobs(board_url)
+            except Exception:  # noqa: BLE001 - continue with other explicitly configured boards
+                failed_boards += 1
+                continue
+            for hit in board_hits:
+                searchable_text = " ".join(
+                    (hit.title, hit.company, hit.location, hit.description_text)
+                ).casefold()
+                if not any(query in searchable_text for query in normalized_queries):
+                    continue
+                if normalized_locations and not any(
+                    location in hit.location.casefold() for location in normalized_locations
+                ):
+                    continue
+                hits_by_url.setdefault(hit.source_url, hit)
+                if len(hits_by_url) == limit:
+                    break
+            if len(hits_by_url) == limit:
+                break
+        if failed_boards == len(set(board_urls)):
+            raise GreenhouseDiscoveryError("Не удалось прочитать указанные доски Greenhouse")
+
+        outcomes: list[DiscoveryOutcome] = []
+        for hit in hits_by_url.values():
+            outcome = await self._stage_greenhouse(
+                recruitment, greenhouse_adapter, user_id, hit.source_url
+            )
+            if outcome is not None:
+                outcomes.append(outcome)
+        return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
+
+    async def _stage_greenhouse(
+        self,
+        recruitment: RecruitmentService,
+        greenhouse_adapter: GreenhouseJobBoardApi,
+        user_id: str,
+        source_url: str,
+    ) -> DiscoveryOutcome | None:
+        vacancy = self._session.scalar(
+            select(VacancyRow).where(VacancyRow.source_url == source_url)
+        )
+        if vacancy is None:
+            try:
+                extracted = await greenhouse_adapter.extract_job(source_url)
+            except Exception:  # noqa: BLE001 - one removed job must not abort the board search
+                return None
+            if CompanyBlacklistService(self._session).contains(user_id, extracted.company):
+                return None
+            try:
+                vacancy = recruitment.create_vacancy(
+                    source_url=extracted.source_url,
+                    title=extracted.title,
+                    company=extracted.company,
+                    required_skills=[],
+                    preferred_skills=[],
+                    location=extracted.location,
+                    description_text=extracted.description_text,
+                    adapter_name="greenhouse",
+                    source_evidence_url=extracted.evidence_api_url,
+                    application_fields=[
+                        {
+                            "field_id": field.field_id,
+                            "label": field.label,
+                            "field_type": field.field_type.value,
+                            "is_required": field.is_required,
+                            "semantic_category": field.semantic_category,
+                        }
+                        for field in extracted.form_fields
+                    ],
+                    requires_sensitive_review=extracted.requires_sensitive_review,
+                )
+            except DuplicateEntityError:
+                vacancy = self._session.scalar(
+                    select(VacancyRow).where(VacancyRow.source_url == source_url)
+                )
+        if vacancy is None or CompanyBlacklistService(self._session).contains(
+            user_id, vacancy.company
+        ):
+            return None
+        existing_application = self._session.scalar(
+            select(ApplicationRow).where(
+                ApplicationRow.user_id == user_id,
+                ApplicationRow.vacancy_id == vacancy.id,
+            )
+        )
+        if existing_application is not None:
+            if existing_application.status in {"rejected", "skipped"}:
+                return None
+            self._rescore_from_text(existing_application, vacancy)
+            return DiscoveryOutcome(
+                application_id=existing_application.id,
+                vacancy_id=vacancy.id,
+                title=vacancy.title,
+                company=vacancy.company,
+                source_url=vacancy.source_url,
+                match_score=existing_application.match_score,
+                status="already_existed",
+            )
+        try:
+            application = recruitment.prepare_application(user_id, vacancy.id)
+        except (EntityNotFoundError, DuplicateEntityError):
+            return None
+        self._rescore_from_text(application, vacancy)
+        return DiscoveryOutcome(
+            application_id=application.id,
+            vacancy_id=vacancy.id,
+            title=vacancy.title,
+            company=vacancy.company,
+            source_url=vacancy.source_url,
+            match_score=application.match_score,
+            status="created",
+        )
+
+    def known_greenhouse_board_urls(self) -> list[str]:
+        board_urls: list[str] = []
+        seen_tokens: set[str] = set()
+        source_urls = self._session.scalars(
+            select(VacancyRow.source_url).where(VacancyRow.adapter_name == "greenhouse")
+        )
+        for source_url in source_urls:
+            try:
+                reference = GreenhouseBoardReference.from_url(source_url)
+            except ValueError:
+                continue
+            if reference.board_token in seen_tokens:
+                continue
+            seen_tokens.add(reference.board_token)
+            board_urls.append(reference.board_url)
+        return board_urls
+
+    def _rescore_from_text(self, application: ApplicationRow, vacancy: VacancyRow) -> None:
+        user = self._session.get(UserRow, application.user_id)
+        if user is None:
+            return
+        skill_names = [
+            fact.name.strip()
+            for fact in user.facts
+            if fact.category == "skill" and fact.is_verified and fact.name.strip()
+        ]
+        if not skill_names:
+            return
+        title = vacancy.title.casefold()
+        description = (vacancy.description_text or "").casefold()
+        matched_skills = [
+            skill
+            for skill in skill_names
+            if skill.casefold() in title or skill.casefold() in description
+        ]
+        if not matched_skills:
+            return
+        coverage_score = 85 * len(matched_skills) / len(skill_names)
+        title_bonus = 15 if any(skill.casefold() in title for skill in matched_skills) else 0
+        application.match_score = max(
+            application.match_score,
+            min(100, round(coverage_score + title_bonus)),
+        )
+        self._session.commit()
 
     @staticmethod
     def _build_search_text(*, user_facts: list) -> str:  # type: ignore[type-arg]

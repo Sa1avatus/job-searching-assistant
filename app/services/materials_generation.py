@@ -18,6 +18,7 @@ Hard safety rules, enforced in code (not just by prompting):
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
@@ -34,6 +35,10 @@ class NoVerifiedFactsError(RuntimeError):
     """The candidate has no verified profile facts to draft from."""
 
 
+class MaterialsLanguageMismatchError(RuntimeError):
+    """The model ignored the required vacancy language twice."""
+
+
 class MaterialsDraft(BaseModel):
     cover_letter_text: str = Field(max_length=20_000)
     screening_answers: dict[str, str] = Field(default_factory=dict)
@@ -46,19 +51,39 @@ class GeneratedMaterials:
     skipped_sensitive_field_ids: tuple[str, ...]
 
 
+def detect_vacancy_language(vacancy: VacancyRow) -> str:
+    vacancy_text = f"{vacancy.title}\n{vacancy.description_text or ''}"
+    cyrillic_count = len(re.findall(r"[А-Яа-яЁё]", vacancy_text))
+    latin_count = len(re.findall(r"[A-Za-z]", vacancy_text))
+    if cyrillic_count >= 10 or (cyrillic_count >= 3 and cyrillic_count >= latin_count / 3):
+        return "ru"
+    return "en"
+
+
+def _is_russian_text(text: str) -> bool:
+    return len(re.findall(r"[А-Яа-яЁё]", text)) >= 10
+
+
 def _build_prompt(
     *,
     vacancy: VacancyRow,
     facts: list[ProfileFactRow],
     open_fields: list[tuple[str, str]],
+    response_language: str,
 ) -> str:
     fact_lines = "\n".join(f"- [{fact.category}] {fact.name}: {fact.value}" for fact in facts)
     field_lines = "\n".join(f"- field_id={field_id!r}: {label}" for field_id, label in open_fields)
+    language_instruction = (
+        "Write the cover letter entirely in Russian because the vacancy is in Russian."
+        if response_language == "ru"
+        else "Write the cover letter in English because the vacancy is in English."
+    )
     return (
         "You are drafting job-application materials for a real candidate. Use ONLY the facts "
         "listed below. Do not invent employers, dates, numbers, skills, or achievements that are "
         "not present in this list. If a screening question cannot be answered from these facts, "
         "omit it from screening_answers entirely rather than guessing.\n\n"
+        f"Required response language: {language_instruction}\n\n"
         f"Vacancy title: {vacancy.title}\n"
         f"Company: {vacancy.company}\n"
         f"Vacancy description:\n{(vacancy.description_text or '')[:4000]}\n\n"
@@ -107,7 +132,13 @@ class MaterialsGenerationService:
             and answer.field_id != "resume"
         ]
 
-        prompt = _build_prompt(vacancy=vacancy, facts=facts, open_fields=open_fields)
+        response_language = detect_vacancy_language(vacancy)
+        prompt = _build_prompt(
+            vacancy=vacancy,
+            facts=facts,
+            open_fields=open_fields,
+            response_language=response_language,
+        )
         request = ModelRequest(
             task_name="draft_application_materials",
             task_class=ModelTaskClass.LOW_COST,
@@ -116,6 +147,22 @@ class MaterialsGenerationService:
             timeout_seconds=45,
         )
         draft = await self._router.route(request, MaterialsDraft)
+        if response_language == "ru" and not _is_russian_text(draft.cover_letter_text):
+            correction_request = ModelRequest(
+                task_name="correct_application_materials_language",
+                task_class=ModelTaskClass.LOW_COST,
+                prompt=(
+                    f"{prompt}\n\nIMPORTANT: The previous response used the wrong language. "
+                    "Return a newly written cover_letter_text entirely in Russian."
+                ),
+                max_cost_usd=0.05,
+                timeout_seconds=45,
+            )
+            draft = await self._router.route(correction_request, MaterialsDraft)
+            if not _is_russian_text(draft.cover_letter_text):
+                raise MaterialsLanguageMismatchError(
+                    "The model did not produce a Russian cover letter for a Russian vacancy"
+                )
 
         filled: list[str] = []
         skipped_sensitive: list[str] = []

@@ -21,6 +21,7 @@ LinkedIn changes its DOM more often than Greenhouse/hh.ru.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from urllib.parse import quote, urlparse
@@ -197,13 +198,29 @@ class LinkedInBrowserAdapter:
         await self._raise_if_challenge_url(page)
 
         cards = page.locator("[data-job-id]")
+        result_targets = page.locator('[data-job-id], a[href*="/jobs/view/"]')
+        try:
+            await result_targets.first.wait_for(state="attached", timeout=10_000)
+        except PlaywrightTimeoutError as error:
+            await capture_browser_failure(
+                page,
+                artifact_directory=self._browser_engine.artifact_directory,
+                action_name="search",
+                target="linkedin-results-not-found",
+                error=error,
+            )
+            return []
         count = min(await cards.count(), limit)
         hits: list[LinkedInSearchHit] = []
+        seen_job_ids: set[str] = set()
         for index in range(count):
             card = cards.nth(index)
-            job_id = await card.get_attribute("data-job-id")
-            if not job_id:
+            raw_job_id = await card.get_attribute("data-job-id")
+            job_id_match = re.search(r"(\d{5,})", raw_job_id or "")
+            if job_id_match is None:
                 continue
+            job_id = job_id_match.group(1)
+            seen_job_ids.add(job_id)
             title_locator = card.locator(".job-card-list__title, .job-card-container__link").first
             title = (
                 (await title_locator.inner_text()).strip()
@@ -224,6 +241,35 @@ class LinkedInBrowserAdapter:
                     company=company,
                 )
             )
+        if len(hits) < limit:
+            links = page.locator('a[href*="/jobs/view/"]')
+            link_count = await links.count()
+            for index in range(link_count):
+                link = links.nth(index)
+                href = await link.get_attribute("href")
+                job_id_match = re.search(r"/jobs/view/(?:[^/?#-]+-)*(\d{5,})", href or "")
+                if job_id_match is None or job_id_match.group(1) in seen_job_ids:
+                    continue
+                job_id = job_id_match.group(1)
+                seen_job_ids.add(job_id)
+                hits.append(
+                    LinkedInSearchHit(
+                        job_id=job_id,
+                        source_url=f"https://www.linkedin.com/jobs/view/{job_id}",
+                        title=(await link.inner_text()).strip(),
+                        company="",
+                    )
+                )
+                if len(hits) == limit:
+                    break
+        if not hits:
+            await capture_browser_failure(
+                page,
+                artifact_directory=self._browser_engine.artifact_directory,
+                action_name="search",
+                target="linkedin-result-identifiers-not-parsed",
+                error=RuntimeError("LinkedIn result elements did not expose parseable job ids"),
+            )
         return hits
 
     async def extract_vacancy(self, url: str) -> ExtractedLinkedInVacancy:
@@ -239,16 +285,28 @@ class LinkedInBrowserAdapter:
             raise RuntimeError("LinkedIn navigation left the trusted host")
 
         title_locator = page.locator(".job-details-jobs-unified-top-card__job-title, h1").first
-        if await title_locator.count() == 0:
+        document_title_parts = (await page.title()).rsplit(" | ", 2)
+        if await title_locator.count() > 0:
+            title = (await title_locator.inner_text()).strip()
+        elif len(document_title_parts) == 3 and document_title_parts[-1] == "LinkedIn":
+            title = document_title_parts[0].strip()
+        else:
+            await capture_browser_failure(
+                page,
+                artifact_directory=self._browser_engine.artifact_directory,
+                action_name="extract",
+                target="linkedin-job-title-not-found",
+                error=ApplyBlocked("LinkedIn job title was not found"),
+            )
             raise ApplyBlocked("This does not look like a live LinkedIn job posting page")
-        title = (await title_locator.inner_text()).strip()
         company_locator = page.locator(
-            ".job-details-jobs-unified-top-card__company-name, .jobs-unified-top-card__company-name"
+            ".job-details-jobs-unified-top-card__company-name, "
+            ".jobs-unified-top-card__company-name, a[href*='/company/']"
         ).first
         company = (
             (await company_locator.inner_text()).strip()
             if await company_locator.count() > 0
-            else ""
+            else (document_title_parts[1].strip() if len(document_title_parts) == 3 else "")
         )
         location_locator = page.locator(
             ".job-details-jobs-unified-top-card__primary-description-container"
@@ -259,11 +317,17 @@ class LinkedInBrowserAdapter:
             else ""
         )
         description_locator = page.locator(".jobs-description__content").first
+        if await description_locator.count() == 0:
+            description_locator = page.locator("#job-details, .jobs-box__html-content").first
         description_text = (
             (await description_locator.inner_text()).strip()
             if await description_locator.count() > 0
             else ""
         )
+        if not description_text:
+            main_content = page.locator("main").first
+            if await main_content.count() > 0:
+                description_text = (await main_content.inner_text()).strip()[:20_000]
         has_easy_apply = await page.get_by_role("button", name="Easy Apply").count() > 0
         return ExtractedLinkedInVacancy(
             source_url=url,

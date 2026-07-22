@@ -30,18 +30,21 @@
   almost immediately), so both search/extraction and apply require a session captured through the
   dashboard's visible sign-in window.
 - Only the native, in-page Easy Apply flow is automated. Jobs that redirect to an external
-  company site are skipped by both the apply step and job discovery (`ApplyBlocked`) rather than
-  following an unknown third-party form.
+  company site are still discovered and saved, but the apply step reports `ApplyBlocked` rather
+  than following an unknown third-party form.
 - No CAPTCHA solving, fingerprint spoofing, or proxy rotation is implemented or planned — a
   verification checkpoint always stops at a human review checkpoint with a screenshot.
 - `adapters/job_boards/linkedin_reference.py` (manual metadata entry, zero network calls) still
   exists as a lower-risk alternative for anyone who prefers not to enable LinkedIn automation;
   `POST /v1/vacancies/import-linkedin-reference` is unaffected by the above.
-- Selectors have not been exercised against the live site from the development sandbox. LinkedIn
-  changes its DOM more often than hh.ru or Greenhouse — expect to maintain them.
+- Search and extraction were exercised against the live July 2026 interface. LinkedIn changes its
+  DOM more often than hh.ru or Greenhouse, so the adapter stores screenshot/HTML evidence when it
+  can no longer parse result identifiers or a vacancy title.
 
 ## Greenhouse
 - Real public read-only adapter (`api.greenhouse.io`); no external submission is enabled.
+- Discovery searches explicitly entered company boards or board tokens recovered from saved
+  Greenhouse vacancies. Greenhouse does not provide a global cross-company vacancy search.
 - Browser preparation is connected end-to-end through the durable queue and review UI, but only
   controlled Chromium form filling and a live no-network boundary smoke are verified. A real
   external Greenhouse form has not been filled, and production subresource egress filtering is
@@ -62,6 +65,9 @@
 - Generated cover letters/answers land as `llm_generated` on a still-`awaiting_review`
   application and never auto-submit; a human can edit or clear them via
   `PATCH /v1/applications/{id}/materials` before any apply step.
+- Vacancy title and description are inspected before drafting. Russian-language vacancies require
+  a Russian cover letter; a wrong-language model response is retried once and rejected if it is
+  still not Russian.
 
 ## General
 - Human-action/CAPTCHA checkpoints and encrypted Playwright storage state are durable. The worker
@@ -70,8 +76,8 @@
 - Resume text extraction handles PDF, DOCX, DOC, TXT, RTF, ODT, HTML/HTM, and Markdown. Legacy DOC
   recovery is best-effort; scanned/image-only files still require OCR and are rejected when they
   yield too little usable text.
-- The personal dashboard (`/dashboard`) drives both hh.ru and LinkedIn discovery. LinkedIn search
-  still requires an explicitly enabled connector and a previously captured signed-in session.
+- The personal dashboard (`/dashboard`) drives hh.ru, LinkedIn, and Greenhouse discovery. LinkedIn
+  search still requires an explicitly enabled connector and a captured signed-in session.
 - Starting a visible sign-in browser from the dashboard is intentionally restricted to local,
   non-production installations. An unfinished sign-in window is held in API process memory and
   must be started again if that process restarts; already saved encrypted sessions remain durable.
