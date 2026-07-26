@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import re
 import time
+from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime
 from urllib.parse import quote, urlparse
 
 import structlog
@@ -27,6 +29,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChallenge, LoginRequired
 from app.browser.engine import BrowserActionResult, PlaywrightEngine
 from app.browser.evidence import capture_browser_failure
+from app.browser.publication_dates import parse_publication_datetime
 from app.domain.failures import FailureCategory
 from app.domain.forms import FormField, FormFieldType
 
@@ -37,6 +40,33 @@ _HOST_SUFFIX = "hh.ru"
 # hh.ru renders a captcha checkpoint page/iframe at these well-known markers when it flags
 # automated-looking activity (also used by the manual browser-handoff flow's own docs).
 _CAPTCHA_MARKERS = ("checkcaptcha", "captcha-page", "hh.ru/account/blocked")
+
+_COVER_LETTER_EDITABLE_SELECTORS: tuple[str, ...] = (
+    "textarea[data-qa='vacancy-response-popup-form-letter-input']",
+    "[data-qa='vacancy-response-popup-form-letter-input'] textarea",
+    "textarea[data-qa='vacancy-response-popup-letter-input']",
+    "textarea[data-qa='vacancy-response-letter-textarea']",
+    "textarea[data-qa='vacancy-response-letter-informer-textarea']",
+    "[data-qa='vacancy-response-letter-informer'] textarea",
+    "[role='dialog'] textarea",
+    "textarea[name='letter']",
+)
+_COVER_LETTER_INFORMER_SELECTOR = "[data-qa='vacancy-response-letter-informer']"
+_COVER_LETTER_REVEAL_SELECTORS: tuple[str, ...] = (
+    "[data-qa='add-cover-letter']",
+    "[data-qa='vacancy-response-popup-letter-button-add']",
+    "[data-qa='vacancy-response-popup-letter-add']",
+    "[data-qa='vacancy-response-letter-informer-addletter']",
+    "[data-qa='vacancy-response-letter-informer-attachletter']",
+    "[data-qa='vacancy-response-letter-informer-writebutton']",
+    "button:has-text('Добавить сопроводительное письмо')",
+    "button:has-text('Приложить сопроводительное письмо')",
+    "button:has-text('Написать сопроводительное')",
+)
+_COVER_LETTER_SAVE_SELECTOR = (
+    "[data-qa='vacancy-response-popup-letter-button-save'],"
+    "[role='dialog'] button:has-text('Сохранить')"
+)
 
 # hh.ru's `area` filter uses the same small set of numeric region ids as its (now avoided) public
 # API, but there is no network-free way to look up an arbitrary name, so only the common cases are
@@ -89,6 +119,7 @@ class ExtractedHeadHunterVacancy:
     required_skills: tuple[str, ...]
     form_fields: tuple[FormField, ...]
     requires_sensitive_review: bool
+    published_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,8 +169,17 @@ class HeadHunterBrowserAdapter:
 
         actions: list[BrowserActionResult] = []
         response_button = page.locator("[data-qa='vacancy-response-link-top']").first
-        already_applied_marker = page.locator("[data-qa='vacancy-response-link-top-disabled']")
-        if await already_applied_marker.count() > 0:
+        already_applied_marker = page.locator(
+            "[data-qa='vacancy-response-link-top-disabled'],"
+            "[data-qa='vacancy-response-alreadyresponded-applied-short']"
+        )
+        already_applied_text = page.get_by_text(
+            re.compile(r"^\s*(?:You applied|Вы откликнулись)(?:\s|$)", re.IGNORECASE)
+        )
+        if (
+            await already_applied_marker.count() > 0
+            or await already_applied_text.count() > 0
+        ):
             checkpoint = await self._browser_engine.capture_review_checkpoint(
                 page, target="already-applied"
             )
@@ -151,19 +191,51 @@ class HeadHunterBrowserAdapter:
         if not actions[-1].is_successful:
             raise ApplyBlocked("The response control was not found on this vacancy page")
 
+        await self._wait_for_response_form(page, response_button)
         await self._raise_if_captcha(page)
-        # hh.ru opens either an inline textarea on the page or a modal dialog depending on the
-        # vacancy/account state; try the modal cover-letter field first, then the inline one.
-        letter_field = page.locator(
-            "[data-qa='vacancy-response-popup-form-letter-input'],"
-            "[data-qa='vacancy-response-letter-informer']"
-        ).first
-        if cover_letter and await letter_field.count() > 0:
+        if cover_letter:
+            letter_field = await self._find_cover_letter_field(page)
+            if letter_field is None:
+                letter_field = await self._reveal_cover_letter_field(page, actions)
+            if letter_field is None:
+                await capture_browser_failure(
+                    page,
+                    artifact_directory=self._browser_engine.artifact_directory,
+                    action_name="locate",
+                    target="cover-letter-field-not-found",
+                    error=ApplyBlocked("No editable cover-letter field was found"),
+                )
+                raise ApplyBlocked(
+                    "A cover letter was requested but no editable cover-letter field was found"
+                )
             with_letter = await self._safe_fill(letter_field, cover_letter)
             actions.append(with_letter)
+            if not with_letter.is_successful:
+                raise ApplyBlocked("The cover letter field could not be filled")
+            try:
+                actual_value = await letter_field.input_value(timeout=10_000)
+            except Exception as error:  # noqa: BLE001 - converted to a safe apply failure
+                raise ApplyBlocked("The filled cover letter could not be verified") from error
+            if actual_value != cover_letter:
+                raise ApplyBlocked(
+                    "Cover letter field value does not match the requested text after fill"
+                )
+            save_letter_button = page.locator(_COVER_LETTER_SAVE_SELECTOR).first
+            if (
+                await save_letter_button.count() > 0
+                and await save_letter_button.is_visible()
+            ):
+                save_letter = await self._click(
+                    page, save_letter_button, "save-cover-letter", already_ok=False
+                )
+                actions.append(save_letter)
+                if not save_letter.is_successful:
+                    raise ApplyBlocked("The cover letter could not be saved in the response form")
 
         submit_button = page.locator(
-            "[data-qa='vacancy-response-submit-popup'],[data-qa='vacancy-response-submit-form']"
+            "[data-qa='vacancy-response-popup-submit'],"
+            "[data-qa='vacancy-response-submit-popup'],"
+            "[data-qa='vacancy-response-submit-form']"
         ).first
         actions.append(await self._click(page, submit_button, "submit-response", already_ok=False))
         if not actions[-1].is_successful:
@@ -173,13 +245,20 @@ class HeadHunterBrowserAdapter:
 
         await self._raise_if_captcha(page)
         confirmation = page.locator(
-            "[data-qa='vacancy-response-popup-form-done'],[data-qa='vacancy-response-sent']"
+            "[data-qa='vacancy-response-popup-form-done'],"
+            "[data-qa='vacancy-response-sent'],"
+            "[data-qa='vacancy-responded-success-title'],"
+            "[data-qa='vacancy-response-letter-informer-headresponsesuccess'],"
+            "[data-qa='vacancy-response-alreadyresponded-applied-short']"
         )
-        try:
-            await confirmation.first.wait_for(state="visible", timeout=10_000)
-            confirmed = True
-        except PlaywrightTimeoutError:
-            confirmed = False
+        confirmed = False
+        for _ in range(20):
+            if await self._has_visible_candidate(confirmation) or await self._has_visible_candidate(
+                already_applied_text
+            ):
+                confirmed = True
+                break
+            await page.wait_for_timeout(500)
         checkpoint = await self._browser_engine.capture_review_checkpoint(
             page, target="response-submitted" if confirmed else "response-status-unclear"
         )
@@ -187,6 +266,13 @@ class HeadHunterBrowserAdapter:
         if not confirmed:
             raise ApplyBlocked("Submission was not visibly confirmed; review the screenshot")
         return HeadHunterApplyResult(tuple(actions), False, page.url)
+
+    @staticmethod
+    async def _has_visible_candidate(locator: Locator) -> bool:
+        try:
+            return await locator.count() > 0 and await locator.first.is_visible()
+        except Exception:  # noqa: BLE001 - stale confirmation candidates are treated as absent
+            return False
 
     async def search(
         self, *, text: str, location_names: list[str] | None = None, limit: int = 15
@@ -292,6 +378,17 @@ class HeadHunterBrowserAdapter:
             if await description_locator.count() > 0
             else ""
         )
+        publication_locator = page.locator(
+            "time[data-qa='vacancy-creation-time'],[data-qa='vacancy-creation-time']"
+        ).first
+        publication_value = (
+            await publication_locator.get_attribute("datetime")
+            if await publication_locator.count() > 0
+            else None
+        )
+        if publication_value is None and await publication_locator.count() > 0:
+            publication_value = await publication_locator.inner_text()
+        published_at = parse_publication_datetime(publication_value)
         skill_locator = page.locator("[data-qa='skills-element']")
         required_skills: list[str] = []
         for index in range(await skill_locator.count()):
@@ -335,7 +432,61 @@ class HeadHunterBrowserAdapter:
             required_skills=tuple(required_skills),
             form_fields=tuple(fields),
             requires_sensitive_review=requires_sensitive_review,
+            published_at=published_at,
         )
+
+    async def _find_cover_letter_field(self, page: Page) -> Locator | None:
+        """Return the first known cover-letter control that is actually editable."""
+        selectors = (*_COVER_LETTER_EDITABLE_SELECTORS, _COVER_LETTER_INFORMER_SELECTOR)
+        for selector in selectors:
+            candidate = page.locator(selector).first
+            try:
+                if await candidate.count() > 0 and await candidate.is_editable():
+                    return candidate
+            except Exception:  # noqa: BLE001 - stale/non-form candidates are skipped
+                continue
+        return None
+
+    async def _reveal_cover_letter_field(
+        self, page: Page, actions: list[BrowserActionResult]
+    ) -> Locator | None:
+        """Open hh.ru's optional cover-letter editor when the textarea starts collapsed."""
+        for selector in _COVER_LETTER_REVEAL_SELECTORS:
+            reveal_button = page.locator(selector).first
+            try:
+                if await reveal_button.count() == 0 or not await reveal_button.is_visible():
+                    continue
+            except Exception:  # noqa: BLE001 - stale candidates are skipped
+                continue
+            reveal_action = await self._click(
+                page, reveal_button, "reveal-cover-letter", already_ok=False
+            )
+            actions.append(reveal_action)
+            if not reveal_action.is_successful:
+                continue
+            with suppress(Exception):
+                await page.wait_for_timeout(250)
+            letter_field = await self._find_cover_letter_field(page)
+            if letter_field is not None:
+                return letter_field
+        return None
+
+    async def _wait_for_response_form(self, page: Page, response_button: Locator) -> None:
+        """Wait until hh.ru finishes the async request started by the response button."""
+        loading_indicator = response_button.locator("[role='status']").first
+        try:
+            if await loading_indicator.count() > 0:
+                await loading_indicator.wait_for(state="hidden", timeout=20_000)
+            await page.wait_for_timeout(250)
+        except PlaywrightTimeoutError as error:
+            await capture_browser_failure(
+                page,
+                artifact_directory=self._browser_engine.artifact_directory,
+                action_name="wait",
+                target="response-form-loading",
+                error=error,
+            )
+            raise ApplyBlocked("hh.ru response form did not finish loading") from error
 
     async def _raise_if_logged_out(self, page: Page) -> None:
         login_link = page.locator("[data-qa='mainmenu_loginOrRegister'],a[href*='/account/login']")

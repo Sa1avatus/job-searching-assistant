@@ -1,9 +1,16 @@
 services:
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
     environment:
       APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
       APP_REDIS_URL: redis://redis:6379/0
+      APP_OPENSEARCH_URL: http://opensearch:9200
+      APP_MATCHING_V2_ENABLED: ${APP_MATCHING_V2_ENABLED:-false}
+      APP_MATCHING_V2_SHADOW_MODE: ${APP_MATCHING_V2_SHADOW_MODE:-true}
+      APP_MATCHING_V2_FALLBACK_ENABLED: ${APP_MATCHING_V2_FALLBACK_ENABLED:-true}
+      APP_MATCHING_MODEL_SERVICE_URL: ${APP_MATCHING_MODEL_SERVICE_URL:-http://matching-models:8090}
       APP_SUBMISSION_MODE: review
       APP_ARTIFACT_DIRECTORY: /app/.artifacts
       APP_MAX_DOCUMENT_BYTES: 5242880
@@ -14,9 +21,11 @@ services:
       APP_ENABLE_LINKEDIN_APPLY: ${APP_ENABLE_LINKEDIN_APPLY:-false}
       APP_ANTHROPIC_API_KEY: ${APP_ANTHROPIC_API_KEY:-}
       APP_GEMINI_API_KEY: ${APP_GEMINI_API_KEY:-}
-    command: ["sh", "-c", "alembic upgrade head && uvicorn app.api.main:app --host 0.0.0.0 --port 8000"]
+      DISPLAY: ":99"
+    command: ["sh", "scripts/start_api_with_browser_desktop.sh"]
     ports:
       - "127.0.0.1:${APP_HTTP_PORT:-8000}:8000"
+      - "127.0.0.1:7900:7900"
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,6 +77,14 @@ services:
     environment:
       APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
       APP_REDIS_URL: redis://redis:6379/0
+      APP_OPENSEARCH_URL: http://opensearch:9200
+      APP_MATCHING_V2_ENABLED: ${APP_MATCHING_V2_ENABLED:-false}
+      APP_MATCHING_V2_SHADOW_MODE: ${APP_MATCHING_V2_SHADOW_MODE:-true}
+      APP_MATCHING_V2_FALLBACK_ENABLED: ${APP_MATCHING_V2_FALLBACK_ENABLED:-true}
+      APP_MATCHING_MODEL_SERVICE_URL: ${APP_MATCHING_MODEL_SERVICE_URL:-http://matching-models:8090}
+      APP_BROWSER_STATE_ENCRYPTION_KEY: ${APP_BROWSER_STATE_ENCRYPTION_KEY:-}
+      APP_ANTHROPIC_API_KEY: ${APP_ANTHROPIC_API_KEY:-}
+      APP_GEMINI_API_KEY: ${APP_GEMINI_API_KEY:-}
       APP_WORKER_LEASE_SECONDS: 120
       APP_WORKER_POLL_SECONDS: 2
       APP_WORKER_RETRY_SECONDS: 30
@@ -77,6 +94,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      opensearch:
         condition: service_healthy
       api:
         condition: service_healthy
@@ -121,6 +140,54 @@ services:
     volumes:
       - recruitment-redis:/data
 
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    environment:
+      discovery.type: single-node
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "127.0.0.1:9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - recruitment-opensearch:/usr/share/opensearch/data
+
+  matching-models:
+    profiles: ["matching"]
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    environment:
+      EMBEDDING_MODEL_NAME: BAAI/bge-m3
+      EMBEDDING_MODEL_REVISION: main
+      RERANKER_MODEL_NAME: BAAI/bge-reranker-v2-m3
+      RERANKER_MODEL_REVISION: main
+      MODEL_DEVICE: cpu
+      MODEL_BATCH_SIZE: 8
+      HF_HOME: /models/huggingface
+    ports:
+      - "127.0.0.1:8090:8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 30
+      start_period: 300s
+    volumes:
+      - recruitment-model-cache:/models/huggingface
+
 volumes:
   recruitment-postgres:
   recruitment-redis:
+  recruitment-opensearch:
+  recruitment-model-cache:

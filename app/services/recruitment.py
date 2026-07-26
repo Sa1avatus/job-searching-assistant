@@ -190,6 +190,7 @@ class RecruitmentService:
         source_evidence_url: str | None = None,
         application_fields: list[dict[str, object]] | None = None,
         requires_sensitive_review: bool = False,
+        published_at: datetime | None = None,
     ) -> VacancyRow:
         vacancy = VacancyRow(
             source_url=source_url,
@@ -203,6 +204,7 @@ class RecruitmentService:
             source_evidence_url=source_evidence_url,
             application_fields=application_fields or [],
             requires_sensitive_review=requires_sensitive_review,
+            published_at=published_at,
         )
         self._session.add(vacancy)
         try:

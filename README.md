@@ -99,6 +99,10 @@ and Markdown. Scanned/image-only documents still require OCR before upload.
 - `GET /v1/applications/{application_id}/task` for durable dispatch evidence
 - `PATCH /v1/applications/{application_id}/materials` for user-reviewed cover letters and answers
 - `POST /v1/applications/{application_id}/retry` for an audited retry of recoverable tasks
+- `GET /v1/applications/{application_id}/match-details` for the versioned shadow score,
+  requirement evidence, component scores, blockers, and model provenance
+- `POST /v1/applications/{application_id}/recalculate-match` to enqueue an idempotent matching
+  calculation without holding the HTTP request open
 - `POST /v1/applications/{application_id}/resume` for an active human-action checkpoint
 - `POST /v1/applications/{application_id}/reject-vacancy` to hide a saved vacancy permanently
 - `POST /v1/applications/{application_id}/prepare-browser-review` for validated, non-submitting
@@ -131,3 +135,24 @@ from the dashboard. LinkedIn automation can trigger platform restrictions; use i
 account whose risk you accept. Selectors are fixture-tested but may need maintenance when either site
 changes its markup. CAPTCHA, SMS, 2FA, legal declarations, and unknown required questions always stop
 for human action.
+
+## Matching v2 development services
+
+PostgreSQL is the source of truth for requirements, candidate evidence, embedding metadata, and
+explainable match results. OpenSearch is a disposable derived index. The new calculation defaults
+to shadow mode and leaves the existing dashboard score unchanged:
+
+```powershell
+docker compose up -d --wait opensearch
+python -m scripts.opensearch_smoke
+```
+
+Keep `APP_MATCHING_V2_SHADOW_MODE=true` until backfill and evaluation are complete. Deleting the
+OpenSearch volume does not delete business data; the index is rebuilt from PostgreSQL.
+
+`APP_MATCHING_MODEL_SERVICE_URL` is an HTTP contract, not a requirement to run models on this
+machine. Point it at an approved hosted embedding/reranking service. The optional
+`matching-models` Compose profile is disabled by default and is not started by the normal stack.
+Enable `APP_MATCHING_V2_ENABLED=true` only after OpenSearch, the external model endpoint, and the
+dispatcher are healthy. Failed v2 runs retain the legacy score and expose `degraded` plus a
+fallback reason through `match-details`.

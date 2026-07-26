@@ -30,6 +30,7 @@ async def test_complete_parses_json_text_part() -> None:
         assert "key" not in request.url.params
         body = json.loads(request.content)
         assert body["contents"][0]["parts"][0]["text"] == "draft a letter"
+        assert body["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
         return httpx.Response(
             200,
             json={
@@ -48,6 +49,48 @@ async def test_complete_parses_json_text_part() -> None:
             ModelRequest("t", ModelTaskClass.LOW_COST, "draft a letter", max_cost_usd=1)
         )
     assert result == {"cover_letter_text": "Hello"}
+
+
+@pytest.mark.asyncio
+async def test_gemini_3_uses_thinking_level_and_retries_without_it_on_http_400() -> None:
+    request_bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(json.loads(request.content))
+        if len(request_bodies) == 1:
+            return httpx.Response(
+                400,
+                json={"error": {"status": "INVALID_ARGUMENT"}},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {"parts": [{"text": '{"skills": ["Python"]}'}]},
+                        "finishReason": "STOP",
+                    }
+                ]
+            },
+        )
+
+    async with _client(handler) as client:
+        provider = GeminiProvider(
+            client,
+            api_key="test-key",
+            model="gemini-3.5-flash-lite",
+        )
+        result = await provider.complete(
+            ModelRequest("extract", ModelTaskClass.LOW_COST, "resume", max_cost_usd=1)
+        )
+
+    first_config = request_bodies[0]["generationConfig"]
+    second_config = request_bodies[1]["generationConfig"]
+    assert isinstance(first_config, dict)
+    assert isinstance(second_config, dict)
+    assert first_config["thinkingConfig"] == {"thinkingLevel": "low"}
+    assert "thinkingConfig" not in second_config
+    assert result == {"skills": ["Python"]}
 
 
 @pytest.mark.asyncio

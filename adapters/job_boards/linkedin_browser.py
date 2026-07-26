@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from urllib.parse import quote, urlparse
 
 from playwright.async_api import Locator, Page
@@ -33,6 +34,7 @@ from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChalle
 from app.browser.engine import BrowserActionResult, PlaywrightEngine
 from app.browser.evidence import capture_browser_failure
 from app.browser.form_discovery import discover_form_fields
+from app.browser.publication_dates import parse_publication_datetime
 from app.domain.failures import FailureCategory
 
 _HOST_SUFFIX = "linkedin.com"
@@ -56,6 +58,7 @@ class ExtractedLinkedInVacancy:
     location: str
     description_text: str
     has_easy_apply: bool
+    published_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,6 +331,17 @@ class LinkedInBrowserAdapter:
             main_content = page.locator("main").first
             if await main_content.count() > 0:
                 description_text = (await main_content.inner_text()).strip()[:20_000]
+        publication_locator = page.locator(
+            "time[datetime],.jobs-unified-top-card__posted-date"
+        ).first
+        publication_value = (
+            await publication_locator.get_attribute("datetime")
+            if await publication_locator.count() > 0
+            else None
+        )
+        if publication_value is None and await publication_locator.count() > 0:
+            publication_value = await publication_locator.inner_text()
+        published_at = parse_publication_datetime(publication_value)
         has_easy_apply = await page.get_by_role("button", name="Easy Apply").count() > 0
         return ExtractedLinkedInVacancy(
             source_url=url,
@@ -336,6 +350,7 @@ class LinkedInBrowserAdapter:
             location=location,
             description_text=description_text,
             has_easy_apply=has_easy_apply,
+            published_at=published_at,
         )
 
     async def _raise_if_challenge_url(self, page: Page) -> None:

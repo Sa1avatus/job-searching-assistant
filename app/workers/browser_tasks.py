@@ -335,6 +335,18 @@ def _persist_browser_session(
         )
 
 
+def _mark_application_submitted(
+    session_factory: sessionmaker[Session], application_id: str
+) -> None:
+    """Persist a confirmed external submission before returning a completed outcome."""
+    with session_factory() as session:
+        application = session.get(ApplicationRow, application_id)
+        if application is None:
+            raise LookupError(f"Application {application_id} no longer exists")
+        application.status = "submitted"
+        session.commit()
+
+
 _REAUTH_INSTRUCTIONS = (
     "Run `python scripts/browser_login_capture.py {site_key}`, sign in by hand in the browser "
     "window that opens (including any verification step), then retry this application."
@@ -450,6 +462,7 @@ class HeadHunterApplyHandler:
                 )
             fresh_state = await browser_engine.storage_state()
 
+        _mark_application_submitted(self._session_factory, claimed_task.application_id)
         _persist_browser_session(
             self._session_factory,
             self._session_store,

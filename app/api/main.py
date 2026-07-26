@@ -4,6 +4,7 @@ import sys
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import asdict
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
@@ -35,6 +36,7 @@ from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
 from adapters.job_boards.linkedin_reference import LinkedInJobReference
 from app.api.schemas import (
     ActiveCvFileRequest,
+    ApplicationMatchDetailsResponse,
     ApplicationMaterialsResponse,
     ApplicationMaterialsUpdateRequest,
     ApplicationResponse,
@@ -73,6 +75,7 @@ from app.api.schemas import (
     PrepareApplicationRequest,
     ProfileFactRequest,
     ProfileFactResponse,
+    RequirementMatchDetailResponse,
     ReviewDecisionRequest,
     ReviewItemResponse,
     SavedVacancyPageResponse,
@@ -87,6 +90,7 @@ from app.api.schemas import (
 )
 from app.browser.engine import PlaywrightEngine
 from app.browser.selector_library import SelectorLibrary
+from app.browser.session_probe import probe_browser_session
 from app.browser.session_service import BrowserSessionService
 from app.browser.session_store import InvalidBrowserState, delete_browser_state_file
 from app.config import Settings, get_settings
@@ -103,6 +107,7 @@ from app.llm.preferences import (
 from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
 from app.llm.router import ModelProvider, ModelRouter, NoModelAvailableError
+from app.matching.jobs import MatchingJobNotReadyError, MatchingJobService
 from app.observability.logging import configure_logging
 from app.observability.metrics import metrics
 from app.services.browser_authorization import (
@@ -135,11 +140,15 @@ from app.storage.database import SessionFactory, session_scope
 from app.storage.documents import DocumentStorage, InvalidDocumentError
 from app.storage.evidence_artifacts import EvidenceArtifactStorage, InvalidEvidenceArtifact
 from app.storage.tables import (
+    ApplicationMatchResultRow,
     ApplicationRow,
     BrowserSessionRow,
+    CandidateEvidenceRow,
     CvFileRow,
     LlmPreferenceRow,
+    RequirementMatchRow,
     UserRow,
+    VacancyRequirementRow,
     WorkerHeartbeatRow,
     WorkflowTaskRow,
 )
@@ -417,6 +426,8 @@ def list_saved_vacancies(
     status_filter: str = "all",
     location: str = "",
     min_match_score: int = 0,
+    published_from: date | None = None,
+    published_to: date | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> SavedVacancyPageResponse:
@@ -424,6 +435,8 @@ def list_saved_vacancies(
         raise HTTPException(status_code=422, detail="Unsupported vacancy source")
     if not 0 <= min_match_score <= 100 or page < 1 or not 1 <= page_size <= 100:
         raise HTTPException(status_code=422, detail="Invalid vacancy pagination or score filter")
+    if published_from is not None and published_to is not None and published_from > published_to:
+        raise HTTPException(status_code=422, detail="Invalid vacancy publication date range")
     try:
         vacancy_page = VacancyCatalogService(session).list_saved_vacancies(
             user_id,
@@ -432,6 +445,8 @@ def list_saved_vacancies(
             status=status_filter,
             location=location,
             min_match_score=min_match_score,
+            published_from=published_from,
+            published_to=published_to,
             page=page,
             page_size=page_size,
         )
@@ -651,14 +666,16 @@ def update_llm_preference(
     "/v1/users/{user_id}/browser-sessions",
     response_model=list[BrowserSessionStatusResponse],
 )
-def get_browser_session_statuses(
+async def get_browser_session_statuses(
     user_id: str,
     session: Annotated[Session, Depends(session_scope)],
+    probe: bool = False,
 ) -> list[BrowserSessionStatusResponse]:
     if session.get(UserRow, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
+    settings = get_settings()
     try:
-        store = create_session_store(get_settings())
+        store = create_session_store(settings)
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
@@ -671,10 +688,23 @@ def get_browser_session_statuses(
             )
         )
         is_authorized = False
+        session_probe = None
         if row is not None and row.status in {"available", "active"}:
             try:
-                store.load(row.encrypted_state_path)
+                stored_state = store.load(row.encrypted_state_path)
                 is_authorized = True
+                if probe:
+                    session_probe = await probe_browser_session(
+                        site_key=site_key,
+                        state=stored_state,
+                        headless=settings.browser_headless,
+                        timeout_ms=settings.browser_timeout_ms,
+                        artifact_directory=settings.artifact_directory,
+                    )
+                    if session_probe.is_live is False:
+                        is_authorized = False
+                        row.status = "expired"
+                        session.commit()
             except InvalidBrowserState:
                 is_authorized = False
         statuses.append(
@@ -686,6 +716,11 @@ def get_browser_session_statuses(
                 ),
                 last_url=row.last_url if row is not None else None,
                 updated_at=row.updated_at.isoformat() if row is not None else None,
+                is_live=session_probe.is_live if session_probe is not None else None,
+                checked_at=(
+                    session_probe.checked_at.isoformat() if session_probe is not None else None
+                ),
+                check_error=session_probe.error if session_probe is not None else None,
             )
         )
     return statuses
@@ -795,6 +830,30 @@ def add_profile_fact(
         value=fact.value,
         is_verified=fact.is_verified,
     )
+
+
+@app.post(
+    "/v1/applications/{application_id}/recalculate-match",
+    response_model=WorkflowTaskResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def recalculate_application_match(
+    application_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> WorkflowTaskResponse:
+    settings = get_settings()
+    if not settings.matching_v2_enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="Matching v2 is disabled; set APP_MATCHING_V2_ENABLED=true",
+        )
+    try:
+        task = MatchingJobService(session).schedule(application_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except MatchingJobNotReadyError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _workflow_task_response(task)
 
 
 @app.post(
@@ -1298,6 +1357,91 @@ def prepare_application(
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return ApplicationResponse.model_validate(application, from_attributes=True)
+
+
+@app.get(
+    "/v1/applications/{application_id}/match-details",
+    response_model=ApplicationMatchDetailsResponse,
+)
+def application_match_details(
+    application_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationMatchDetailsResponse:
+    application = session.get(ApplicationRow, application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+    aggregate = session.get(ApplicationMatchResultRow, application_id)
+    if aggregate is None:
+        raise HTTPException(status_code=404, detail="Match details have not been calculated")
+    rows = session.execute(
+        select(RequirementMatchRow, VacancyRequirementRow, CandidateEvidenceRow)
+        .join(
+            VacancyRequirementRow,
+            VacancyRequirementRow.id == RequirementMatchRow.requirement_id,
+        )
+        .outerjoin(
+            CandidateEvidenceRow,
+            CandidateEvidenceRow.id == RequirementMatchRow.evidence_id,
+        )
+        .where(RequirementMatchRow.application_id == application_id)
+        .order_by(VacancyRequirementRow.created_at, VacancyRequirementRow.id)
+    ).all()
+    requirement_details = [
+        RequirementMatchDetailResponse(
+            requirement_id=requirement.id,
+            requirement_text=requirement.requirement_text,
+            requirement_type=requirement.requirement_type,
+            importance=requirement.importance,
+            is_blocker=requirement.is_blocker,
+            source_fragment=requirement.source_fragment,
+            evidence_id=evidence.id if evidence is not None else None,
+            evidence_text=evidence.evidence_text if evidence is not None else None,
+            evidence_experience_level=(
+                evidence.experience_level if evidence is not None else None
+            ),
+            evidence_source_fragment=(
+                evidence.source_fragment if evidence is not None else None
+            ),
+            lexical_score=requirement_match.lexical_score,
+            dense_score=requirement_match.dense_score,
+            hybrid_score=requirement_match.hybrid_score,
+            reranker_raw_score=requirement_match.reranker_raw_score,
+            reranker_score=requirement_match.reranker_score,
+            final_match_score=requirement_match.final_match_score,
+            match_level=requirement_match.match_level,
+            explanation=requirement_match.explanation,
+            retrieval_model_versions=requirement_match.retrieval_model_versions_json,
+        )
+        for requirement_match, requirement, evidence in rows
+    ]
+    return ApplicationMatchDetailsResponse(
+        application_id=application.id,
+        cv_file_id=aggregate.cv_file_id,
+        legacy_match_score=application.match_score,
+        status=aggregate.status,
+        run_id=aggregate.run_id,
+        eligibility_status=aggregate.eligibility_status,
+        final_score=aggregate.final_score,
+        hard_skill_score=aggregate.hard_skill_score,
+        preferred_skill_score=aggregate.preferred_skill_score,
+        role_score=aggregate.role_score,
+        seniority_score=aggregate.seniority_score,
+        experience_score=aggregate.experience_score,
+        work_format_score=aggregate.work_format_score,
+        location_score=aggregate.location_score,
+        domain_score=aggregate.domain_score,
+        blocker_count=aggregate.blocker_count,
+        matched_required_count=aggregate.matched_required_count,
+        missing_required_count=aggregate.missing_required_count,
+        scoring_version=aggregate.scoring_version,
+        model_versions=aggregate.model_versions_json,
+        explanation=aggregate.explanation_json,
+        fallback_reason=aggregate.fallback_reason,
+        failure_reason=aggregate.failure_reason,
+        started_at=aggregate.started_at,
+        calculated_at=aggregate.calculated_at,
+        requirements=requirement_details,
+    )
 
 
 @app.post(

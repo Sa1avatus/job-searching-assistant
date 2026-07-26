@@ -13,6 +13,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.browser.session_probe import probe_browser_session
 from app.browser.session_service import BrowserSessionNotFound, BrowserSessionService
 from app.browser.session_store import EncryptedBrowserStateStore, InvalidBrowserState
 from app.config import Settings, get_settings
@@ -74,6 +75,50 @@ def audit_browser_sessions(
     return restored_count, corrupted_count
 
 
+async def probe_active_browser_sessions(
+    session_factory: sessionmaker[Session],
+    store: EncryptedBrowserStateStore,
+    settings: Settings,
+) -> tuple[int, int, int]:
+    """Check live authentication for all usable sessions without performing site actions."""
+    with session_factory() as session:
+        session_rows = session.scalars(
+            select(BrowserSessionRow).where(
+                BrowserSessionRow.status.in_(("available", "active"))
+            )
+        ).all()
+
+    live_count = 0
+    expired_count = 0
+    unknown_count = 0
+    for browser_session in session_rows:
+        with session_factory() as session:
+            try:
+                _row, state = BrowserSessionService(session, store).restore(browser_session.id)
+            except (BrowserSessionNotFound, InvalidBrowserState):
+                unknown_count += 1
+                continue
+        result = await probe_browser_session(
+            site_key=browser_session.site_key,
+            state=state,
+            headless=settings.browser_headless,
+            timeout_ms=settings.browser_timeout_ms,
+            artifact_directory=settings.artifact_directory,
+        )
+        if result.is_live is True:
+            live_count += 1
+        elif result.is_live is False:
+            expired_count += 1
+            with session_factory() as session:
+                stored_row = session.get(BrowserSessionRow, browser_session.id)
+                if stored_row is not None:
+                    stored_row.status = "expired"
+                    session.commit()
+        else:
+            unknown_count += 1
+    return live_count, expired_count, unknown_count
+
+
 async def run_worker() -> None:
     configure_logging()
     settings = get_settings()
@@ -104,6 +149,7 @@ async def run_worker() -> None:
     logger = structlog.get_logger()
     logger.info("browser_worker_started", worker=WORKER_NAME)
     next_session_audit_at = 0.0
+    next_live_session_probe_at = 0.0
     try:
         while not stopped.is_set():
             if time.monotonic() >= next_session_audit_at:
@@ -114,6 +160,17 @@ async def run_worker() -> None:
                     corrupted_count=corrupted_count,
                 )
                 next_session_audit_at = time.monotonic() + 30
+            if time.monotonic() >= next_live_session_probe_at:
+                live_count, expired_count, unknown_count = await probe_active_browser_sessions(
+                    SessionFactory, store, settings
+                )
+                logger.info(
+                    "browser_session_live_probe_completed",
+                    live_count=live_count,
+                    expired_count=expired_count,
+                    unknown_count=unknown_count,
+                )
+                next_live_session_probe_at = time.monotonic() + 300
             processed = await dispatcher.run_once()
             if not processed:
                 with suppress(TimeoutError):

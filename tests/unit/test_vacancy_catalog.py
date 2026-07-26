@@ -1,3 +1,5 @@
+from datetime import UTC, date, datetime
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -94,3 +96,44 @@ def test_catalog_hides_rejected_and_blacklisted_companies() -> None:
 
     assert visible_page.total == 0
     assert [item.company for item in rejected_page.items] == ["Visible Co"]
+
+
+def test_catalog_filters_by_source_publication_date() -> None:
+    session_factory = _session_factory()
+    with session_factory() as session:
+        recruitment = RecruitmentService(session)
+        user = recruitment.create_user("Candidate")
+        old_vacancy = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/old",
+            title="Old",
+            company="Example",
+            required_skills=[],
+            preferred_skills=[],
+            published_at=datetime(2026, 6, 1, tzinfo=UTC),
+        )
+        recent_vacancy = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/recent",
+            title="Recent",
+            company="Example",
+            required_skills=[],
+            preferred_skills=[],
+            published_at=datetime(2026, 7, 20, 15, 30, tzinfo=UTC),
+        )
+        unknown_vacancy = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/unknown",
+            title="Unknown",
+            company="Example",
+            required_skills=[],
+            preferred_skills=[],
+        )
+        for vacancy in (old_vacancy, recent_vacancy, unknown_vacancy):
+            recruitment.prepare_application(user.id, vacancy.id)
+
+        page = VacancyCatalogService(session).list_saved_vacancies(
+            user.id,
+            published_from=date(2026, 7, 1),
+            published_to=date(2026, 7, 31),
+        )
+
+    assert [item.title for item in page.items] == ["Recent"]
+    assert page.items[0].published_at == datetime(2026, 7, 20, 15, 30, tzinfo=UTC)

@@ -12,6 +12,8 @@ from app.domain.forms import FormField, FormFieldType
 from app.services.job_discovery import (
     JobDiscoveryService,
     NoSearchKeywordsError,
+    _contains_skill,
+    _normalize_skill,
     build_search_queries,
 )
 from app.services.recruitment import RecruitmentService
@@ -286,6 +288,15 @@ def test_build_search_queries_combines_phrases_and_words_without_duplicates() ->
         "Engineer",
         "FastAPI",
     ]
+
+
+def test_skill_matching_normalizes_spacing_and_respects_word_boundaries() -> None:
+    normalized_skill = _normalize_skill("  Machine   Learning ")
+
+    assert normalized_skill == "machine learning"
+    assert _contains_skill("Production MACHINE\nLEARNING systems", normalized_skill)
+    assert _contains_skill("C++ and C# services", _normalize_skill("C++"))
+    assert not _contains_skill("Django services", _normalize_skill("Go"))
 
 
 def test_linkedin_discovery_keeps_jobs_without_easy_apply() -> None:

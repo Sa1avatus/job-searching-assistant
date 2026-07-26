@@ -13,13 +13,14 @@ from app.domain.models import TaskState
 from app.services.recruitment import RecruitmentService
 from app.storage.database import Base
 from app.storage.tables import WorkerHeartbeatRow, WorkflowTaskRow
-from app.storage.task_repository import SqlTaskRepository
+from app.storage.task_repository import ClaimedTask, SqlTaskRepository
 from app.workers.coordination import RedisCoordinator
 from app.workers.dispatcher import (
     ApplicationReviewCheckpointHandler,
     DurableTaskDispatcher,
     ExecutionOutcome,
     HumanActionRequest,
+    MatchingTaskHandler,
 )
 
 
@@ -67,6 +68,14 @@ class EvidenceHandler:
                 screenshot_path=self._screenshot_path,
             ),
         )
+
+
+class RecordingMatchingRunner:
+    def __init__(self) -> None:
+        self.application_ids: list[str] = []
+
+    async def run(self, application_id: str) -> None:
+        self.application_ids.append(application_id)
 
 
 def _controlled_png() -> bytes:
@@ -126,6 +135,27 @@ def test_repository_claims_highest_priority_task_only_once() -> None:
         "workflow": "controlled_review",
         "fixture_name": "application",
     }
+
+
+def test_matching_handler_runs_requested_application() -> None:
+    async def run_test() -> None:
+        runner = RecordingMatchingRunner()
+        outcome = await MatchingTaskHandler(runner).handle(
+            ClaimedTask(
+                task_id="task-1",
+                application_id="application-1",
+                idempotency_key="matching-v2:application-1:version",
+                attempt_number=1,
+                queue_name="dispatcher",
+                payload={},
+            )
+        )
+
+        assert runner.application_ids == ["application-1"]
+        assert outcome.state is TaskState.COMPLETED
+        assert outcome.evidence == ("application:application-1",)
+
+    asyncio.run(run_test())
 
 
 def test_dispatcher_moves_prepared_application_to_durable_review_checkpoint() -> None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime, time
 
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ class SavedVacancy:
     match_score: int
     status: str
     source: str
+    published_at: datetime | None
     created_at: datetime
 
 
@@ -46,6 +47,8 @@ class VacancyCatalogService:
         status: str = "all",
         location: str = "",
         min_match_score: int = 0,
+        published_from: date | None = None,
+        published_to: date | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> SavedVacancyPage:
@@ -73,6 +76,8 @@ class VacancyCatalogService:
             status=status,
             location=location,
             min_match_score=min_match_score,
+            published_from=published_from,
+            published_to=published_to,
         )
         count_statement = statement.with_only_columns(func.count()).order_by(None)
         total = int(self._session.scalar(count_statement) or 0)
@@ -100,6 +105,7 @@ class VacancyCatalogService:
                     match_score=application.match_score,
                     status=application.status,
                     source=self._source_name(vacancy),
+                    published_at=vacancy.published_at,
                     created_at=application.created_at,
                 )
                 for application, vacancy in rows
@@ -131,6 +137,8 @@ class VacancyCatalogService:
         status: str,
         location: str,
         min_match_score: int,
+        published_from: date | None,
+        published_to: date | None,
     ) -> Select[tuple[ApplicationRow, VacancyRow]]:
         normalized_query = query.strip()
         if normalized_query:
@@ -151,6 +159,16 @@ class VacancyCatalogService:
             statement = statement.where(ApplicationRow.status == status)
         if min_match_score:
             statement = statement.where(ApplicationRow.match_score >= min_match_score)
+        if published_from is not None:
+            statement = statement.where(
+                VacancyRow.published_at
+                >= datetime.combine(published_from, time.min, tzinfo=UTC)
+            )
+        if published_to is not None:
+            statement = statement.where(
+                VacancyRow.published_at
+                <= datetime.combine(published_to, time.max, tzinfo=UTC)
+            )
         if source == "headhunter":
             statement = statement.where(VacancyRow.source_url.ilike("%hh.ru/%"))
         elif source == "linkedin":

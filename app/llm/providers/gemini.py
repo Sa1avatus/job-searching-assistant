@@ -51,33 +51,44 @@ class GeminiProvider(ModelProvider):
         )
 
     async def complete(self, request: ModelRequest) -> dict[str, object]:
+        generation_config: dict[str, object] = {
+            "maxOutputTokens": _MAX_OUTPUT_TOKENS,
+            "responseMimeType": "application/json",
+        }
+        thinking_config = _thinking_config(self._model)
+        if thinking_config is not None:
+            generation_config["thinkingConfig"] = thinking_config
+        request_body = {
+            "system_instruction": {
+                "parts": [
+                    {
+                        "text": (
+                            "You output only a single valid JSON object and nothing else: "
+                            "no preamble, no markdown code fences, no trailing commentary."
+                        )
+                    }
+                ]
+            },
+            "contents": [{"role": "user", "parts": [{"text": request.prompt}]}],
+            "generationConfig": generation_config,
+        }
         response = await self._http_client.post(
             f"{_API_BASE}/{self._model}:generateContent",
             headers={"x-goog-api-key": self._api_key},
-            json={
-                "system_instruction": {
-                    "parts": [
-                        {
-                            "text": (
-                                "You output only a single valid JSON object and nothing else: "
-                                "no preamble, no markdown code fences, no trailing commentary."
-                            )
-                        }
-                    ]
-                },
-                "contents": [{"role": "user", "parts": [{"text": request.prompt}]}],
-                "generationConfig": {
-                    "maxOutputTokens": _MAX_OUTPUT_TOKENS,
-                    "responseMimeType": "application/json",
-                    # gemini-2.5-* models "think" by default, spending part of maxOutputTokens on
-                    # internal reasoning before the final answer; for a deterministic extraction
-                    # task like this, that only risks silently truncating the actual JSON output
-                    # (finishReason=MAX_TOKENS with empty content). Disable it explicitly. Older
-                    # models without thinking support simply ignore this field.
-                    "thinkingConfig": {"thinkingBudget": 0},
-                },
-            },
+            json=request_body,
         )
+        if response.status_code == 400 and "thinkingConfig" in generation_config:
+            logger.info(
+                "gemini_retry_without_thinking_config",
+                model=self._model,
+                task_name=request.task_name,
+            )
+            del generation_config["thinkingConfig"]
+            response = await self._http_client.post(
+                f"{_API_BASE}/{self._model}:generateContent",
+                headers={"x-goog-api-key": self._api_key},
+                json=request_body,
+            )
         if response.status_code >= 400:
             raise GeminiResponseError(
                 f"Gemini API returned HTTP {response.status_code}: {response.text[:500]}"
@@ -107,3 +118,14 @@ class GeminiProvider(ModelProvider):
         if not isinstance(parsed, dict):
             raise GeminiResponseError("Gemini response JSON was not an object")
         return parsed
+
+
+def _thinking_config(model: str) -> dict[str, object] | None:
+    normalized_model = model.casefold()
+    if normalized_model.startswith("gemini-3"):
+        return {"thinkingLevel": "low"}
+    if normalized_model.startswith("gemini-2.5-pro"):
+        return {"thinkingBudget": 128}
+    if normalized_model.startswith("gemini-2.5-flash"):
+        return {"thinkingBudget": 0}
+    return None

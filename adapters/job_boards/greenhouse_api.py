@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from html.parser import HTMLParser
 from urllib.parse import quote, urlparse
 
@@ -128,6 +129,7 @@ class GreenhouseJobPayload(BaseModel):
     content: str = ""
     absolute_url: str
     language: str = "en"
+    updated_at: datetime | None = None
     application_deadline: str | None = None
     questions: list[GreenhouseQuestion] = Field(default_factory=list)
     location_questions: list[GreenhouseQuestion] = Field(default_factory=list)
@@ -173,6 +175,7 @@ class ExtractedGreenhouseJob:
     form_fields: tuple[FormField, ...]
     requires_sensitive_review: bool
     evidence_api_url: str
+    published_at: datetime | None = None
 
 
 GREENHOUSE_FIELD_TYPES: dict[str, FormFieldType | None] = {
@@ -244,6 +247,7 @@ class GreenhouseJobBoardApi:
             form_fields=(*standard_fields, *compliance_fields),
             requires_sensitive_review=requires_sensitive_review,
             evidence_api_url=reference.api_url,
+            published_at=payload.updated_at,
         )
 
     async def list_jobs(self, board_url: str) -> tuple[GreenhouseSearchHit, ...]:

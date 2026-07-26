@@ -154,6 +154,57 @@ class ApplicationResponse(BaseModel):
     warnings: list[str]
 
 
+class RequirementMatchDetailResponse(BaseModel):
+    requirement_id: str
+    requirement_text: str
+    requirement_type: str
+    importance: str
+    is_blocker: bool
+    source_fragment: str
+    evidence_id: str | None
+    evidence_text: str | None
+    evidence_experience_level: str | None
+    evidence_source_fragment: str | None
+    lexical_score: float | None
+    dense_score: float | None
+    hybrid_score: float | None
+    reranker_raw_score: float | None
+    reranker_score: float | None
+    final_match_score: float
+    match_level: str
+    explanation: str
+    retrieval_model_versions: dict[str, object]
+
+
+class ApplicationMatchDetailsResponse(BaseModel):
+    application_id: str
+    cv_file_id: str | None
+    legacy_match_score: int
+    status: str
+    run_id: str | None
+    eligibility_status: str
+    final_score: float
+    hard_skill_score: float
+    preferred_skill_score: float
+    role_score: float
+    seniority_score: float
+    experience_score: float
+    work_format_score: float
+    location_score: float
+    domain_score: float
+    blocker_count: int
+    matched_required_count: int
+    missing_required_count: int
+    scoring_version: str
+    model_versions: dict[str, object]
+    explanation: dict[str, object]
+    fallback_reason: str | None
+    failure_reason: str | None
+    started_at: datetime | None
+    calculated_at: datetime | None
+    requirements: list[RequirementMatchDetailResponse]
+
+
 class TaskTransitionResponse(BaseModel):
     previous_state: str
     new_state: str
@@ -294,9 +345,12 @@ class LlmPreferenceResponse(BaseModel):
 class BrowserSessionStatusResponse(BaseModel):
     site_key: Literal["headhunter", "linkedin"]
     is_authorized: bool
+    is_live: bool | None = None
     is_waiting_for_login: bool
     last_url: str | None = None
     updated_at: str | None = None
+    checked_at: str | None = None
+    check_error: str | None = None
 
 
 class BrowserAuthorizationResponse(BaseModel):
@@ -335,6 +389,7 @@ class SavedVacancyResponse(BaseModel):
     match_score: int
     status: str
     source: Literal["headhunter", "linkedin", "greenhouse", "registry", "other"]
+    published_at: datetime | None
     created_at: datetime
 
 

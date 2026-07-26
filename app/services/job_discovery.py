@@ -26,6 +26,8 @@ from adapters.job_boards.greenhouse_api import (
 )
 from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter, HeadHunterSearchHit
 from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter, LinkedInSearchHit
+from app.config import get_settings
+from app.matching.jobs import MatchingJobService
 from app.services.company_blacklist import CompanyBlacklistService
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError, RecruitmentService
 from app.storage.tables import ApplicationRow, CvFileRow, UserRow, VacancyRow
@@ -38,6 +40,17 @@ class LinkedInSessionRequiredError(RuntimeError):
 _DEFAULT_LIMIT = 15
 _MAX_LIMIT = 50
 _MAX_SEARCH_QUERIES = 8
+
+
+def _normalize_skill(skill: str) -> str:
+    return " ".join(skill.casefold().split())
+
+
+def _contains_skill(text: str, normalized_skill: str) -> bool:
+    if not normalized_skill:
+        return False
+    flexible_skill = r"\s+".join(re.escape(part) for part in normalized_skill.split())
+    return re.search(rf"(?<!\w){flexible_skill}(?!\w)", text.casefold()) is not None
 
 
 class NoSearchKeywordsError(RuntimeError):
@@ -180,6 +193,7 @@ class JobDiscoveryService:
                         for field in extracted.form_fields
                     ],
                     requires_sensitive_review=extracted.requires_sensitive_review,
+                    published_at=extracted.published_at,
                 )
             except DuplicateEntityError:
                 vacancy = self._session.scalar(
@@ -310,6 +324,7 @@ class JobDiscoveryService:
                     source_evidence_url=extracted.source_url,
                     application_fields=[],
                     requires_sensitive_review=False,
+                    published_at=extracted.published_at,
                 )
             except DuplicateEntityError:
                 vacancy = self._session.scalar(
@@ -467,6 +482,7 @@ class JobDiscoveryService:
                         for field in extracted.form_fields
                     ],
                     requires_sensitive_review=extracted.requires_sensitive_review,
+                    published_at=extracted.published_at,
                 )
             except DuplicateEntityError:
                 vacancy = self._session.scalar(
@@ -529,36 +545,96 @@ class JobDiscoveryService:
         return board_urls
 
     def _rescore_from_text(
-        self, application: ApplicationRow, vacancy: VacancyRow, cv_file_id: str | None
+        self,
+        application: ApplicationRow,
+        vacancy: VacancyRow,
+        cv_file_id: str | None,
     ) -> None:
         user = self._session.get(UserRow, application.user_id)
         if user is None:
             return
-        cv_file = RecruitmentService(self._session).active_cv_file(user.id, cv_file_id)
-        skill_names = (
-            list(cv_file.skills)
-            if cv_file is not None
-            else [
-                fact.name.strip()
-                for fact in user.facts
-                if fact.category == "skill" and fact.is_verified and fact.name.strip()
-            ]
+
+        cv_file = RecruitmentService(self._session).active_cv_file(
+            user.id,
+            cv_file_id,
         )
-        if not skill_names:
-            application.match_score = 0
-            self._session.commit()
-            return
+
+        candidate_skills = {
+            _normalize_skill(skill)
+            for skill in (
+                list(cv_file.skills)
+                if cv_file is not None
+                else [
+                    fact.name
+                    for fact in user.facts
+                    if (
+                        fact.category == "skill"
+                        and fact.is_verified
+                        and fact.name.strip()
+                    )
+                ]
+            )
+            if skill.strip()
+        }
+
+        required_skills = {
+            _normalize_skill(skill)
+            for skill in (vacancy.required_skills or [])
+            if skill.strip()
+        }
+
+        preferred_skills = {
+            _normalize_skill(skill)
+            for skill in (vacancy.preferred_skills or [])
+            if skill.strip()
+        }
+
+        vacancy_text = (
+            f"{vacancy.title}\n"
+            f"{vacancy.description_text or ''}"
+        ).casefold()
+
+        if not required_skills:
+            required_skills = {
+                skill
+                for skill in candidate_skills
+                if _contains_skill(vacancy_text, skill)
+            }
+
+        matched_required = candidate_skills & required_skills
+        matched_preferred = candidate_skills & preferred_skills
+
+        required_coverage = (
+            len(matched_required) / len(required_skills)
+            if required_skills
+            else 0.0
+        )
+
+        preferred_coverage = (
+            len(matched_preferred) / len(preferred_skills)
+            if preferred_skills
+            else 0.0
+        )
+
         title = vacancy.title.casefold()
-        description = (vacancy.description_text or "").casefold()
-        matched_skills = [
-            skill
-            for skill in skill_names
-            if skill.casefold() in title or skill.casefold() in description
-        ]
-        coverage_score = 85 * len(matched_skills) / len(skill_names)
-        title_bonus = 15 if any(skill.casefold() in title for skill in matched_skills) else 0
-        application.match_score = min(100, round(coverage_score + title_bonus))
+        title_match = any(
+            _contains_skill(title, skill)
+            for skill in matched_required
+        )
+
+        score = (
+            required_coverage * 70
+            + preferred_coverage * 15
+            + (15 if title_match else 0)
+        )
+
+        if required_skills and required_coverage < 0.4:
+            score = min(score, 35)
+
+        application.match_score = min(100, round(score))
         self._session.commit()
+        if get_settings().matching_v2_enabled and application.selected_cv_file_id is not None:
+            MatchingJobService(self._session).schedule(application.id)
 
     def _resolve_search_text(
         self, user: UserRow, cv_file: CvFileRow | None, search_text: str | None

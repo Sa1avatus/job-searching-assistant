@@ -61,6 +61,12 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert 'id="search-resume-selector"' in response.text
     assert "/active-cv-file" in response.text
     assert "cv_file_id: cvFileId" in response.text
+    assert "dashboardSearchResults:" in response.text
+    assert "persistSearchResults(outcomes)" in response.text
+    assert "restoreSearchResults()" in response.text
+    assert "job-assistant-login-" in response.text
+    assert ":7900/vnc.html" in response.text
+    assert "autoconnect" in response.text
 
 
 def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:

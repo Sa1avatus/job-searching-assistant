@@ -62,6 +62,9 @@
     .vacancy-list { display: grid; gap: 12px; margin-top: 18px; }
     .vacancy-card { border: 1px solid #303b60; border-radius: 14px; padding: 16px; background: #101831; }
     .vacancy-card .actions { align-items: center; justify-content: space-between; }
+    .match-details { margin-top: 12px; padding: 14px; border: 1px solid #303b60; border-radius: 12px; background: #0d152b; }
+    .match-details h4 { margin: 8px 0 5px; }
+    .match-details ul { margin: 5px 0 10px; padding-left: 20px; color: #c5cdef; }
     .pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 18px; }
     .filter-actions { display: flex; gap: 8px; margin-top: 12px; }
     .danger { background: #541f2b; border-color: #8d3447; }
@@ -103,6 +106,8 @@
         <div><label for="vacancy-status">Статус</label><select id="vacancy-status"><option value="all">Все</option><option value="saved">Сохранена</option><option value="awaiting_review">Ожидает решения</option><option value="approved">Принята</option><option value="rejected">Отклонена</option><option value="skipped">Пропущена</option><option value="submitted">Отправлена</option><option value="interview">Собеседование</option></select></div>
         <div><label for="vacancy-location">Локация</label><input id="vacancy-location" placeholder="например, Москва"></div>
         <div><label for="vacancy-score">Соответствие от</label><input id="vacancy-score" type="number" min="0" max="100" value="0"></div>
+        <div><label for="vacancy-published-from">Опубликована с</label><input id="vacancy-published-from" type="date"></div>
+        <div><label for="vacancy-published-to">Опубликована по</label><input id="vacancy-published-to" type="date"></div>
       </div>
       <div class="filter-actions">
         <button id="apply-vacancy-filters" type="button" class="primary">Применить</button>
@@ -147,7 +152,7 @@
         <div style="flex:0"><button id="load-models" type="button">Получить модели</button></div>
       </div>
       <div class="row" style="margin-top:12px;">
-        <div><label>Модель</label><select id="llm-model"><option value="">сначала получите список</option></select></div>
+        <div><label>Модель</label><input id="llm-model" list="llm-model-options" placeholder="выберите или введите ID модели"><datalist id="llm-model-options"></datalist></div>
         <div style="flex:0"><button id="save-llm" type="button" class="primary">Сохранить настройку</button></div>
       </div>
       <div id="llm-state" class="task-state"></div>
@@ -155,7 +160,7 @@
 
     <section class="step" data-panel="sessions">
       <h2>Сессии сайтов</h2>
-      <div class="hint">Вход выполняется вручную в отдельном окне Chromium. Приложение не получает пароль, код подтверждения или CAPTCHA — сохраняются только зашифрованные cookies и состояние сайта.</div>
+      <div class="hint">Вход выполняется вручную в Chromium на локальном браузерном экране. Приложение не получает пароль, код подтверждения или CAPTCHA — сохраняются только зашифрованные cookies и состояние сайта.</div>
       <div id="browser-sessions" class="session-grid">
         <article class="session-card" data-site="headhunter">
           <h3>hh.ru</h3>
@@ -317,7 +322,9 @@
         cancelButton.hidden = false;
       } else if (session.is_authorized) {
         status.textContent = 'Авторизовано';
-        details.textContent = session.updated_at
+        details.textContent = session.check_error
+          ? `Сессия сохранена, но сейчас не удалось проверить сайт: ${session.check_error}.`
+          : session.updated_at
           ? `Сессия сохранена ${new Date(session.updated_at).toLocaleString('ru-RU')}. Если сайт попросит войти снова, повторите авторизацию.`
           : 'Зашифрованная сессия сохранена.';
         loginButton.textContent = `Войти заново в ${browserSiteLabels[site]}`;
@@ -326,7 +333,9 @@
         cancelButton.hidden = true;
       } else {
         status.textContent = 'Не авторизовано';
-        details.textContent = 'Нажмите кнопку входа — откроется отдельное окно сайта.';
+        details.textContent = session.is_live === false
+          ? `Проверка ${session.checked_at ? new Date(session.checked_at).toLocaleString('ru-RU') : ''} показала, что сайт снова требует вход.`
+          : 'Нажмите кнопку входа — откроется отдельное окно сайта.';
         loginButton.textContent = `Войти в ${browserSiteLabels[site]}`;
         loginButton.hidden = false;
         confirmButton.hidden = true;
@@ -344,13 +353,14 @@
       });
     }
 
-    async function loadBrowserSessionStatuses() {
+    async function loadBrowserSessionStatuses(probe = false) {
       const userId = userIdInput.value.trim();
       if (!userId) {
         renderBrowserSessionsWithoutUser();
         return [];
       }
-      const sessions = await asJson(await fetch(`/v1/users/${userId}/browser-sessions`, {
+      const probeQuery = probe ? '?probe=true' : '';
+      const sessions = await asJson(await fetch(`/v1/users/${userId}/browser-sessions${probeQuery}`, {
         headers: headers(false)
       }));
       sessions.forEach(renderBrowserSessionStatus);
@@ -360,21 +370,33 @@
     ['headhunter', 'linkedin'].forEach(site => {
       document.querySelector(`#${site}-login`).addEventListener('click', async (event) => {
         const button = event.currentTarget;
+        const loginWindow = window.open('about:blank', `job-assistant-login-${site}`);
         try {
           const userId = userIdInput.value.trim();
           if (!userId) throw new Error('Сначала создайте или укажите User ID');
+          if (!loginWindow) {
+            throw new Error('Браузер заблокировал окно входа. Разрешите всплывающие окна для 127.0.0.1');
+          }
           button.disabled = true;
           showStatus(`Открываем окно входа ${browserSiteLabels[site]}…`);
           await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${site}/start`, {
             method: 'POST', headers: headers(false)
           }));
+          const viewerUrl = new URL(`http://${window.location.hostname}:7900/vnc.html`);
+          viewerUrl.searchParams.set('autoconnect', 'true');
+          viewerUrl.searchParams.set('resize', 'scale');
+          viewerUrl.searchParams.set('path', 'websockify');
+          loginWindow.location.replace(viewerUrl.toString());
           renderBrowserSessionStatus({
             site_key: site,
             is_authorized: Boolean(browserSessionStatuses[site]?.is_authorized),
             is_waiting_for_login: true
           });
           showStatus(`Войдите в ${browserSiteLabels[site]} в открывшемся окне, затем нажмите «Я вошёл — сохранить».`);
-        } catch (error) { showError(error); }
+        } catch (error) {
+          if (loginWindow && !loginWindow.closed) loginWindow.close();
+          showError(error);
+        }
         finally { button.disabled = false; }
       });
 
@@ -503,8 +525,7 @@
       const preference = await response.json();
       if (!preference) return;
       document.querySelector('#llm-provider').value = preference.provider;
-      const modelSelect = document.querySelector('#llm-model');
-      modelSelect.replaceChildren(new Option(preference.model, preference.model, true, true));
+      document.querySelector('#llm-model').value = preference.model;
       document.querySelector('#llm-state').textContent = `Сохранено: ${preference.provider} / ${preference.model}. Ключ уже настроен.`;
     }
 
@@ -517,8 +538,9 @@
         const payload = await asJson(await fetch('/v1/llm/models', {
           method: 'POST', headers: headers(true), body: JSON.stringify({provider, api_key: apiKey})
         }));
-        const modelSelect = document.querySelector('#llm-model'); modelSelect.replaceChildren();
-        payload.models.forEach(model => modelSelect.append(new Option(model, model)));
+        const modelOptions = document.querySelector('#llm-model-options');
+        modelOptions.replaceChildren();
+        payload.models.forEach(model => modelOptions.append(new Option(model, model)));
         if (!payload.models.length) throw new Error('Провайдер не вернул подходящих моделей');
         showStatus(`Доступно моделей: ${payload.models.length}`);
       } catch (error) { showError(error); }
@@ -615,6 +637,50 @@
     });
     document.querySelector('#locations').disabled = document.querySelector('#anywhere').checked;
 
+    const applicationTaskTerminalStates = new Set([
+      'completed', 'failed', 'cancelled', 'interrupted', 'waiting_for_user'
+    ]);
+
+    function applicationTaskMessage(task) {
+      const transition = task.transitions?.at(-1);
+      const reason = transition?.reason || '';
+      const evidence = transition?.evidence || [];
+      if (task.state === 'completed' && evidence.includes('submission:true')) {
+        return 'Отклик успешно отправлен.';
+      }
+      if (task.state === 'completed' && evidence.includes('submission:already_applied')) {
+        return 'На эту вакансию уже был отправлен отклик.';
+      }
+      if (task.state === 'waiting_for_user') {
+        return `Нужно действие пользователя: ${reason || 'повторите авторизацию на сайте.'}`;
+      }
+      if (task.state === 'failed') {
+        const technicalDetail = evidence.find(item => !item.startsWith('submission:'));
+        return `Отклик не отправлен: ${technicalDetail || reason || 'фоновая задача завершилась с ошибкой.'}`;
+      }
+      if (task.state === 'cancelled' || task.state === 'interrupted') {
+        return `Отправка остановлена: ${reason || task.state}.`;
+      }
+      return `Отправка выполняется: ${task.state}.`;
+    }
+
+    async function waitForApplicationTask(applicationId, taskState) {
+      const deadline = Date.now() + 180000;
+      while (Date.now() < deadline) {
+        const task = await asJson(await fetch(`/v1/applications/${applicationId}/task`, {
+          headers: headers(false)
+        }));
+        taskState.textContent = applicationTaskMessage(task);
+        if (applicationTaskTerminalStates.has(task.state)) {
+          if (task.state === 'completed') loadSavedVacancies(1).catch(() => {});
+          return task;
+        }
+        await new Promise(resolve => setTimeout(resolve, 2500));
+      }
+      taskState.textContent = 'Отправка всё ещё выполняется. Статус обновится при повторном открытии списка.';
+      return null;
+    }
+
     function renderResult(item) {
       const card = element('article');
       const top = element('div', undefined, 'topline');
@@ -656,7 +722,10 @@
             method: 'POST', headers: headers(true),
             body: JSON.stringify({confirmation: 'submit_real_application_i_understand_the_platform_tos_risk'})
           }));
-          taskState.textContent = `Статус: ${task.state}. Обновите вручную через /v1/applications/${item.application_id}/task, если статус waiting_for_user.`;
+          taskState.textContent = applicationTaskMessage(task);
+          if (!applicationTaskTerminalStates.has(task.state)) {
+            await waitForApplicationTask(item.application_id, taskState);
+          }
         } catch (error) {
           taskState.textContent = `Не удалось отправить автоматически: ${error.message}. Откройте вакансию по ссылке и откликнитесь вручную.`;
         } finally { accept.disabled = false; }
@@ -672,6 +741,89 @@
         .then(response => response.ok ? response.json() : null)
         .then(materials => { if (materials) coverText.value = materials.cover_letter_text || ''; });
       return card;
+    }
+
+    const SEARCH_RESULTS_STORAGE_PREFIX = 'dashboardSearchResults:';
+    const SEARCH_RESULTS_VERSION = 1;
+
+    function searchResultsStorageKey() {
+      const userId = userIdInput.value.trim();
+      return userId ? `${SEARCH_RESULTS_STORAGE_PREFIX}${userId}` : null;
+    }
+
+    function normalizeSearchResult(item) {
+      const source = String(item?.source || '');
+      const normalized = {
+        application_id: String(item?.application_id || ''),
+        vacancy_id: String(item?.vacancy_id || ''),
+        title: String(item?.title || ''),
+        company: String(item?.company || ''),
+        source_url: String(item?.source_url || ''),
+        match_score: Number(item?.match_score),
+        status: String(item?.status || ''),
+        source
+      };
+      if (
+        !normalized.application_id || !normalized.vacancy_id || !normalized.title
+        || !normalized.source_url || !Number.isFinite(normalized.match_score)
+        || !['headhunter', 'linkedin', 'greenhouse'].includes(source)
+      ) return null;
+      normalized.match_score = Math.max(0, Math.min(100, normalized.match_score));
+      return normalized;
+    }
+
+    function persistSearchResults(outcomes) {
+      const storageKey = searchResultsStorageKey();
+      if (!storageKey) return;
+      const normalized = outcomes.map(normalizeSearchResult).filter(Boolean);
+      localStorage.setItem(storageKey, JSON.stringify({
+        version: SEARCH_RESULTS_VERSION,
+        outcomes: normalized
+      }));
+    }
+
+    function updateCachedSearchResults(predicate) {
+      const storageKey = searchResultsStorageKey();
+      if (!storageKey) return;
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return;
+      try {
+        const cached = JSON.parse(raw);
+        if (cached?.version !== SEARCH_RESULTS_VERSION || !Array.isArray(cached.outcomes)) {
+          localStorage.removeItem(storageKey);
+          return;
+        }
+        persistSearchResults(cached.outcomes.map(normalizeSearchResult).filter(Boolean).filter(predicate));
+      } catch {
+        localStorage.removeItem(storageKey);
+      }
+    }
+
+    function restoreSearchResults() {
+      const storageKey = searchResultsStorageKey();
+      const results = document.querySelector('#results');
+      if (!storageKey) return false;
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return false;
+      try {
+        const cached = JSON.parse(raw);
+        if (cached?.version !== SEARCH_RESULTS_VERSION || !Array.isArray(cached.outcomes)) {
+          throw new Error('Unsupported search-result cache');
+        }
+        const outcomes = cached.outcomes.map(normalizeSearchResult);
+        if (outcomes.some(item => item === null)) throw new Error('Malformed search-result cache');
+        outcomes.sort((left, right) => right.match_score - left.match_score);
+        results.replaceChildren();
+        if (!outcomes.length) {
+          results.append(element('div', 'Последний поиск не дал результатов.', 'empty'));
+        } else {
+          outcomes.forEach(item => results.append(renderResult(item)));
+        }
+        return true;
+      } catch {
+        localStorage.removeItem(storageKey);
+        return false;
+      }
     }
 
     const vacancySourceLabels = {
@@ -695,7 +847,9 @@
         vacancySourceLabels[item.source] || item.source,
         item.location || 'Локация не указана',
         vacancyStatusLabels[item.status] || item.status,
-        new Date(item.created_at).toLocaleDateString('ru-RU')
+        item.published_at
+          ? `Опубликована ${new Date(item.published_at).toLocaleDateString('ru-RU')}`
+          : 'Дата публикации не указана'
       ];
       title.append(element('div', metadata.join(' · '), 'meta'));
       top.append(title, createMatchMeter(item.match_score));
@@ -709,16 +863,90 @@
       reject.addEventListener('click', () => rejectVacancy(item.application_id, card).catch(showError));
       const blacklist = element('button', 'Компания в чёрный список'); blacklist.type = 'button';
       blacklist.addEventListener('click', () => blacklistCompany(item.company, true).catch(showError));
+      const detailsButton = element('button', 'Почему подходит'); detailsButton.type = 'button';
+      const details = element('div', undefined, 'match-details'); details.hidden = true;
+      detailsButton.addEventListener('click', () => {
+        loadMatchDetails(item.application_id, details, detailsButton).catch(showError);
+      });
       if (!['submitted', 'interview'].includes(item.status)) actions.append(reject);
-      actions.append(blacklist, applicationLink, link);
-      card.append(top, actions);
+      actions.append(blacklist, detailsButton, applicationLink, link);
+      card.append(top, actions, details);
       return card;
+    }
+
+    async function loadMatchDetails(applicationId, container, button) {
+      if (!container.hidden) {
+        container.hidden = true;
+        button.textContent = 'Почему подходит';
+        return;
+      }
+      container.hidden = false;
+      button.disabled = true;
+      container.replaceChildren(element('div', 'Загрузка подробного расчёта…', 'task-state'));
+      try {
+        const response = await fetch(`/v1/applications/${applicationId}/match-details`, {
+          headers: headers(false)
+        });
+        if (response.status === 404) {
+          container.replaceChildren(element('div', 'Подробный расчёт ещё не выполнен.', 'task-state'));
+          return;
+        }
+        const payload = await asJson(response);
+        const heading = element(
+          'strong',
+          `Matching v2: ${Math.round(payload.final_score)}% · статус ${payload.status}`
+        );
+        const summary = element(
+          'div',
+          `Обязательных требований найдено: ${payload.matched_required_count}; не найдено: ${payload.missing_required_count}.`,
+          'task-state'
+        );
+        container.replaceChildren(heading, summary);
+        if (payload.fallback_reason) {
+          container.append(element('div', `Fallback: ${payload.fallback_reason}`, 'task-state'));
+        }
+        const blockers = payload.requirements.filter(requirement => requirement.match_level === 'blocker');
+        const missing = payload.requirements.filter(
+          requirement => ['missing', 'theoretical_only'].includes(requirement.match_level)
+        );
+        const supported = payload.requirements.filter(requirement => requirement.evidence_text);
+        appendMatchDetailList(
+          container,
+          'Блокирующие требования',
+          blockers,
+          requirement => requirement.requirement_text
+        );
+        appendMatchDetailList(
+          container,
+          'Чего не хватает',
+          missing,
+          requirement => requirement.requirement_text
+        );
+        appendMatchDetailList(
+          container,
+          'Подтверждения в резюме',
+          supported,
+          requirement => `${requirement.requirement_text}: ${requirement.evidence_source_fragment || requirement.evidence_text}`
+        );
+        button.textContent = 'Скрыть объяснение';
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function appendMatchDetailList(container, title, items, textForItem) {
+      if (!items.length) return;
+      container.append(element('h4', title));
+      const list = element('ul');
+      items.forEach(item => list.append(element('li', textForItem(item))));
+      container.append(list);
     }
 
     async function rejectVacancy(applicationId, card) {
       await asJson(await fetch(`/v1/applications/${applicationId}/reject-vacancy`, {
         method: 'POST', headers: headers(false)
       }));
+      updateCachedSearchResults(item => item.application_id !== applicationId);
       card.remove();
       showStatus('Вакансия отклонена и больше не будет показана в общем списке.');
       await loadSavedVacancies(1);
@@ -731,6 +959,10 @@
       await asJson(await fetch(`/v1/users/${userId}/company-blacklist`, {
         method: 'POST', headers: headers(true), body: JSON.stringify({company})
       }));
+      const normalizedCompany = company.trim().toLocaleLowerCase();
+      updateCachedSearchResults(
+        item => item.company.trim().toLocaleLowerCase() !== normalizedCompany
+      );
       showStatus(`Компания «${company}» добавлена в чёрный список.`);
       await Promise.all([loadCompanyBlacklist(), loadSavedVacancies(1)]);
     }
@@ -798,6 +1030,10 @@
         page: String(requestedPage),
         page_size: '20'
       });
+      const publishedFrom = document.querySelector('#vacancy-published-from').value;
+      const publishedTo = document.querySelector('#vacancy-published-to').value;
+      if (publishedFrom) parameters.set('published_from', publishedFrom);
+      if (publishedTo) parameters.set('published_to', publishedTo);
       list.replaceChildren(element('div', 'Загружаем вакансии…', 'empty'));
       const payload = await asJson(await fetch(`/v1/users/${userId}/vacancies?${parameters}`, {
         headers: headers(false)
@@ -827,6 +1063,8 @@
       document.querySelector('#vacancy-status').value = 'all';
       document.querySelector('#vacancy-location').value = '';
       document.querySelector('#vacancy-score').value = '0';
+      document.querySelector('#vacancy-published-from').value = '';
+      document.querySelector('#vacancy-published-to').value = '';
       vacancyPage = 1; loadSavedVacancies().catch(showError);
     });
     document.querySelector('#vacancy-previous').addEventListener('click', () => loadSavedVacancies(vacancyPage - 1).catch(showError));
@@ -875,11 +1113,13 @@
           .map((result, index) => result.status === 'rejected' ? `${vacancySourceLabels[sources[index].source]}: ${result.reason.message}` : null)
           .filter(Boolean);
         if (!outcomes.length) {
+          persistSearchResults([]);
           results.append(element('div', failures.length ? 'Поиск не выполнен: проверьте настройку браузерных сессий.' : 'Ничего не найдено. Попробуйте другие ключевые слова или локации.', 'empty'));
           showStatus(failures.length ? failures.join('; ') : '0 результатов');
           return;
         }
         outcomes.sort((left, right) => right.match_score - left.match_score);
+        persistSearchResults(outcomes);
         outcomes.forEach(item => results.append(renderResult(item)));
         loadSavedVacancies(1).catch(() => {});
         showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
@@ -891,6 +1131,7 @@
       await Promise.all([
         loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles()
       ]);
+      restoreSearchResults();
     }
     keyInput.addEventListener('change', () => sessionStorage.setItem('dashboardApiKey', keyInput.value));
     userIdInput.addEventListener('change', () => loadUserWorkspace().catch(showError));
@@ -898,8 +1139,10 @@
       loadUserWorkspace().then(() => showStatus('Профиль загружен.')).catch(showError);
     });
     activatePanel(localStorage.getItem('dashboardActivePanel') || 'vacancies');
+    restoreSearchResults();
     loadSavedLlmPreference();
-    loadBrowserSessionStatuses().catch(showError);
+    loadBrowserSessionStatuses(true).catch(showError);
+    window.setInterval(() => loadBrowserSessionStatuses(true).catch(() => {}), 300000);
     loadSavedVacancies().catch(showError);
     loadCompanyBlacklist().catch(showError);
     loadCvFiles().catch(showError);

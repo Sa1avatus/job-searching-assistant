@@ -3,6 +3,9 @@ FROM mcr.microsoft.com/playwright/python:v1.61.0-noble
 WORKDIR /app
 COPY requirements.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends novnc websockify x11vnc \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
 COPY app ./app
