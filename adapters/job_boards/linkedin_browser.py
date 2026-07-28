@@ -36,10 +36,16 @@ from app.browser.evidence import capture_browser_failure
 from app.browser.form_discovery import discover_form_fields
 from app.browser.publication_dates import parse_publication_datetime
 from app.domain.failures import FailureCategory
+from app.domain.vacancy_attributes import find_salary_text
 
 _HOST_SUFFIX = "linkedin.com"
 _MAX_EASY_APPLY_STEPS = 8
 _CHALLENGE_URL_MARKERS = ("/checkpoint/", "/uas/login", "/authwall")
+
+_LINKEDIN_INSIGHT_SELECTORS: tuple[str, ...] = (
+    ".job-details-jobs-unified-top-card__job-insight",
+    ".jobs-unified-top-card__job-insight",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +65,8 @@ class ExtractedLinkedInVacancy:
     description_text: str
     has_easy_apply: bool
     published_at: datetime | None = None
+    salary_text: str = ""
+    employment_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +351,28 @@ class LinkedInBrowserAdapter:
             publication_value = await publication_locator.inner_text()
         published_at = parse_publication_datetime(publication_value)
         has_easy_apply = await page.get_by_role("button", name="Easy Apply").count() > 0
+
+        seen_insights: set[str] = set()
+        insight_fragments: list[str] = []
+        for selector in _LINKEDIN_INSIGHT_SELECTORS:
+            candidates = page.locator(selector)
+            for idx in range(await candidates.count()):
+                candidate = candidates.nth(idx)
+                try:
+                    if await candidate.is_visible():
+                        raw = (await candidate.inner_text()).strip()
+                        normalized = re.sub(r"\s+", " ", raw)
+                        if normalized and normalized not in seen_insights:
+                            seen_insights.add(normalized)
+                            insight_fragments.append(normalized)
+                except Exception:  # noqa: BLE001 - stale insight candidates are skipped
+                    continue
+        employment_text = ", ".join(insight_fragments)
+        insight_combined = " ".join(insight_fragments)
+        salary_text = find_salary_text(insight_combined)
+        if not salary_text:
+            salary_text = find_salary_text(description_text)
+
         return ExtractedLinkedInVacancy(
             source_url=url,
             title=title,
@@ -351,6 +381,8 @@ class LinkedInBrowserAdapter:
             description_text=description_text,
             has_easy_apply=has_easy_apply,
             published_at=published_at,
+            salary_text=salary_text,
+            employment_text=employment_text,
         )
 
     async def _raise_if_challenge_url(self, page: Page) -> None:

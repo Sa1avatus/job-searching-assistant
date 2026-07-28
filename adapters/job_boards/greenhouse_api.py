@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.browser.form_discovery import classify_semantic_category
 from app.domain.forms import FormField, FormFieldType
+from app.domain.vacancy_attributes import find_salary_text
 
 
 class _TextExtractor(HTMLParser):
@@ -160,6 +161,8 @@ class GreenhouseSearchHit:
     company: str
     location: str
     description_text: str
+    salary_text: str = ""
+    employment_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +179,8 @@ class ExtractedGreenhouseJob:
     requires_sensitive_review: bool
     evidence_api_url: str
     published_at: datetime | None = None
+    salary_text: str = ""
+    employment_text: str = ""
 
 
 GREENHOUSE_FIELD_TYPES: dict[str, FormFieldType | None] = {
@@ -235,19 +240,23 @@ class GreenhouseJobBoardApi:
         requires_sensitive_review = bool(
             compliance_fields or payload.data_compliance or payload.demographic_questions
         )
+        description_text = html_to_text(payload.content)
+        salary_text = find_salary_text(description_text)
         return ExtractedGreenhouseJob(
             source_url=reference.source_url,
             job_id=payload.id,
             title=payload.title,
             company=payload.company_name,
             location=payload.location.name,
-            description_text=html_to_text(payload.content),
+            description_text=description_text,
             language=payload.language,
             application_deadline=payload.application_deadline,
             form_fields=(*standard_fields, *compliance_fields),
             requires_sensitive_review=requires_sensitive_review,
             evidence_api_url=reference.api_url,
             published_at=payload.updated_at,
+            salary_text=salary_text,
+            employment_text=description_text,
         )
 
     async def list_jobs(self, board_url: str) -> tuple[GreenhouseSearchHit, ...]:
@@ -255,13 +264,18 @@ class GreenhouseJobBoardApi:
         response = await self._http_client.get(reference.api_url, params={"content": "true"})
         response.raise_for_status()
         payload = GreenhouseJobsPayload.model_validate(response.json())
-        return tuple(
-            GreenhouseSearchHit(
-                source_url=(f"https://boards.greenhouse.io/{reference.board_token}/jobs/{job.id}"),
-                title=job.title,
-                company=job.company_name or reference.board_token,
-                location=job.location.name,
-                description_text=html_to_text(job.content),
+        hits: list[GreenhouseSearchHit] = []
+        for job in payload.jobs:
+            description_text = html_to_text(job.content)
+            hits.append(
+                GreenhouseSearchHit(
+                    source_url=f"https://boards.greenhouse.io/{reference.board_token}/jobs/{job.id}",
+                    title=job.title,
+                    company=job.company_name or reference.board_token,
+                    location=job.location.name,
+                    description_text=description_text,
+                    salary_text=find_salary_text(description_text),
+                    employment_text=description_text,
+                )
             )
-            for job in payload.jobs
-        )
+        return tuple(hits)

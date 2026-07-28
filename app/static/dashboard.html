@@ -9,7 +9,7 @@
     * { box-sizing: border-box; }
     body { margin: 0; background: #0b1020; color: #eef2ff; min-height: 100vh; }
     header, main { width: min(1280px, calc(100% - 32px)); margin: 0 auto; }
-    header { padding: 40px 0 20px; }
+    header { padding: 40px 0 20px; display: flex; justify-content: space-between; gap: 16px; align-items: start; }
     h1 { margin: 0; font-size: clamp(26px, 5vw, 40px); letter-spacing: -0.03em; }
     .eyebrow { color: #8da2fb; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; font-size: 12px; }
     main.dashboard-shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; padding-bottom: 40px; }
@@ -52,6 +52,11 @@
     a.link-btn:hover { border-color: #8da2fb; }
     .empty { border: 1px dashed #344166; border-radius: 18px; padding: 40px; text-align: center; color: #aab5d6; }
     .badge { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #223056; color: #aab5d6; }
+    .attribute-tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+    .badge.salary { background: #173f35; border: 1px solid #2b725e; color: #9ff3cf; }
+    .language-toggle { min-width: 52px; padding: 8px 11px; font-size: 22px; line-height: 1; }
+    .skill-add-row { display: flex; gap: 8px; margin-top: 10px; max-width: 620px; }
+    .skill-add-row input { min-width: 0; }
     .task-state { margin-top: 8px; font-size: 13px; color: #aab5d6; }
     .session-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
     .session-card { border: 1px solid #303b60; border-radius: 14px; padding: 16px; background: #101831; }
@@ -70,6 +75,8 @@
     .danger { background: #541f2b; border-color: #8d3447; }
     .blacklist-list { display: grid; gap: 10px; margin-top: 18px; }
     .blacklist-entry { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid #303b60; border-radius: 12px; background: #101831; }
+    .summary-affordance { display: block; color: #8da2fb; font-size: 13px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; cursor: help; }
+    .summary-affordance:focus { outline: 1px solid #8da2fb; outline-offset: 2px; }
     @media (max-width: 850px) {
       main.dashboard-shell { grid-template-columns: 1fr; }
       .sidebar { position: static; display: flex; overflow-x: auto; }
@@ -81,8 +88,11 @@
 </head>
 <body>
   <header>
-    <div class="eyebrow">Личный кабинет</div>
-    <h1>Поиск и отклик на вакансии</h1>
+    <div>
+      <div class="eyebrow">Личный кабинет</div>
+      <h1>Поиск и отклик на вакансии</h1>
+    </div>
+    <button id="language-toggle" class="language-toggle" type="button" title="Switch to English" aria-label="Switch to English">🇬🇧</button>
   </header>
   <main class="dashboard-shell">
     <nav class="sidebar" aria-label="Разделы личного кабинета">
@@ -108,6 +118,8 @@
         <div><label for="vacancy-score">Соответствие от</label><input id="vacancy-score" type="number" min="0" max="100" value="0"></div>
         <div><label for="vacancy-published-from">Опубликована с</label><input id="vacancy-published-from" type="date"></div>
         <div><label for="vacancy-published-to">Опубликована по</label><input id="vacancy-published-to" type="date"></div>
+        <div><label for="vacancy-work-format">Формат работы</label><select id="vacancy-work-format"><option value="all">Все</option><option value="remote">Удалённо</option><option value="hybrid">Гибрид</option><option value="office">Офис</option><option value="unspecified">Не указан</option></select></div>
+        <div><label for="vacancy-employment-type">Тип занятости</label><select id="vacancy-employment-type"><option value="all">Все</option><option value="full_time">Полная занятость</option><option value="part_time">Частичная занятость</option><option value="contract">Контракт</option><option value="project">Проект</option><option value="temporary">Временная работа</option><option value="internship">Стажировка</option></select></div>
       </div>
       <div class="filter-actions">
         <button id="apply-vacancy-filters" type="button" class="primary">Применить</button>
@@ -200,6 +212,10 @@
       <div id="draft-block" style="display:none; margin-top:16px;">
         <label>Найденные навыки (снимите галочку, если что-то лишнее)</label>
         <div id="skills-chips" class="chips"></div>
+        <div class="skill-add-row">
+          <input id="manual-skill" maxlength="200" placeholder="Добавить навык вручную">
+          <button id="add-manual-skill" type="button">Добавить</button>
+        </div>
         <label style="margin-top:14px;">Краткое summary опыта</label>
         <textarea id="summary-text"></textarea>
         <label style="margin-top:14px;">Суммарный опыт, лет</label>
@@ -256,6 +272,172 @@
       if (className) node.className = className;
       return node;
     };
+    const TRANSLATIONS = {
+      'Личный кабинет': 'Dashboard',
+      'Поиск и отклик на вакансии': 'Job search and applications',
+      'Разделы личного кабинета': 'Dashboard sections',
+      'Все вакансии': 'All vacancies',
+      'Поиск': 'Search',
+      'Чёрный список': 'Blacklist',
+      'Резюме': 'Resumes',
+      'Сессии сайтов': 'Site sessions',
+      'Модель': 'Model',
+      'Доступ': 'Access',
+      'Все сохранённые вакансии': 'All saved vacancies',
+      'Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.': 'Vacancies from search and imported sources. Filters apply to the entire database, not only the current page.',
+      'Текст': 'Text',
+      'Источник': 'Source',
+      'Статус': 'Status',
+      'Локация': 'Location',
+      'Соответствие от': 'Minimum match',
+      'Опубликована с': 'Published from',
+      'Опубликована по': 'Published to',
+      'Формат работы': 'Work format',
+      'Тип занятости': 'Employment type',
+      'Все': 'All',
+      'Удалённо': 'Remote',
+      'Гибрид': 'Hybrid',
+      'Офис': 'Office',
+      'Не указан': 'Unspecified',
+      'Полная занятость': 'Full-time',
+      'Частичная занятость': 'Part-time',
+      'Контракт': 'Contract',
+      'Проект': 'Project',
+      'Временная работа': 'Temporary',
+      'Стажировка': 'Internship',
+      'Применить': 'Apply filters',
+      'Сбросить': 'Reset',
+      '← Назад': '← Previous',
+      'Вперёд →': 'Next →',
+      'Чёрный список компаний': 'Company blacklist',
+      'Вакансии этих компаний не появляются в каталоге и не добавляются повторно при новом поиске. Удаление компании из списка снова разрешает её вакансии.': 'Vacancies from these companies are hidden from the catalog and future searches. Removing a company allows its vacancies again.',
+      'Компания': 'Company',
+      'Добавить': 'Add',
+      'Ключ доступа к приложению': 'Application access key',
+      'API-ключ (если сервис настроен без ключа — оставьте пустым). ID пользователя сохраняется в браузере.': 'API key (leave empty if the service does not require one). The user ID is stored in this browser.',
+      'Загрузить профиль': 'Load profile',
+      'Создать пользователя': 'Create user',
+      'Языковая модель': 'Language model',
+      'Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Получите список доступных моделей, выберите одну и сохраните.': 'The key is encrypted before storage and is never displayed again. Load available models, select one, and save it.',
+      'Провайдер': 'Provider',
+      'API-ключ провайдера': 'Provider API key',
+      'Получить модели': 'Load models',
+      'Сохранить настройку': 'Save settings',
+      'Проверяем…': 'Checking…',
+      'Вход выполняется вручную в Chromium на локальном браузерном экране. Приложение не получает пароль, код подтверждения или CAPTCHA — сохраняются только зашифрованные cookies и состояние сайта.': 'Sign-in is completed manually in Chromium on the local browser screen. The app never receives passwords, verification codes, or CAPTCHA answers; only encrypted cookies and site state are stored.',
+      'Войти в hh.ru': 'Sign in to hh.ru',
+      'Войти в LinkedIn': 'Sign in to LinkedIn',
+      'Я вошёл — сохранить': 'I am signed in — save',
+      'Отмена': 'Cancel',
+      'Загрузить файлы': 'Upload files',
+      'Можно хранить несколько резюме. Навыки, ключевые слова и сводка опыта сохраняются отдельно для каждого файла. Выбранное резюме используется для поиска, оценки и сопроводительных писем.': 'You can store multiple resumes. Skills, keywords, and experience summaries are saved per file. The selected resume is used for search, matching, and cover letters.',
+      'Мои резюме': 'My resumes',
+      'Проанализировать выбранное': 'Analyze selected resume',
+      'Найденные навыки (снимите галочку, если что-то лишнее)': 'Detected skills (uncheck anything irrelevant)',
+      'Добавить навык вручную': 'Add a skill manually',
+      'Краткое summary опыта': 'Experience summary',
+      'Суммарный опыт, лет': 'Total experience, years',
+      'Ключевые слова для поиска': 'Search keywords',
+      'Подтвердить и сохранить': 'Confirm and save',
+      'Локации': 'Locations',
+      'Через запятую, например: Москва, Санкт-Петербург. Оставьте пустым для поиска везде.': 'Comma-separated, for example: Moscow, Saint Petersburg. Leave empty to search anywhere.',
+      'Везде': 'Anywhere',
+      'Резюме для этого поиска': 'Resume for this search',
+      'Доски Greenhouse': 'Greenhouse boards',
+      'hh.ru и LinkedIn ищутся через управляемый браузер с вашими сессиями. Greenhouse использует официальный публичный read-only интерфейс досок компаний и не требует входа.': 'hh.ru and LinkedIn are searched through a managed browser using your sessions. Greenhouse uses the official public read-only company board interface and does not require sign-in.',
+      'везде': 'anywhere',
+      'По одной ссылке на строку, например https://boards.greenhouse.io/company. Если оставить пустым, используются Greenhouse-доски из уже сохранённых вакансий.': 'One URL per line, for example https://boards.greenhouse.io/company. Leave empty to use Greenhouse boards from saved vacancies.',
+      'Найти вакансии': 'Find vacancies',
+      'Сопроводительное письмо (можно отредактировать)': 'Cover letter (editable)',
+      'Принять и откликнуться': 'Accept and apply',
+      'Открыть для рассмотрения': 'Open for review',
+      'Отклик отправлен': 'Application sent',
+      'Отклонить': 'Reject',
+      'Компания в чёрный список': 'Blacklist company',
+      'Открыть вакансию': 'Open vacancy',
+      'Материалы и решение': 'Materials and decision',
+      'Почему подходит': 'Why it matches',
+      'Формат не указан': 'Format unspecified',
+      'Сохранена': 'Saved',
+      'Ожидает решения': 'Awaiting decision',
+      'Принята': 'Accepted',
+      'Отклонена': 'Rejected',
+      'Пропущена': 'Skipped',
+      'Отправлена': 'Submitted',
+      'Собеседование': 'Interview',
+      'Черновик': 'Draft',
+      'уже был в списке ранее': 'already appeared in the list'
+    };
+    let currentLanguage = localStorage.getItem('dashboardLanguage') === 'en' ? 'en' : 'ru';
+    const originalTextNodes = new WeakMap();
+    const originalAttributes = new WeakMap();
+
+    function translatedStaticText(text) {
+      const leading = text.match(/^\s*/)?.[0] || '';
+      const trailing = text.match(/\s*$/)?.[0] || '';
+      const trimmed = text.trim();
+      return TRANSLATIONS[trimmed] ? `${leading}${TRANSLATIONS[trimmed]}${trailing}` : text;
+    }
+
+    function translateTree(root = document.body) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let textNode;
+      while ((textNode = walker.nextNode())) {
+        if (['SCRIPT', 'STYLE'].includes(textNode.parentElement?.tagName)) continue;
+        if (!originalTextNodes.has(textNode)) originalTextNodes.set(textNode, textNode.nodeValue);
+        const original = originalTextNodes.get(textNode);
+        textNode.nodeValue = currentLanguage === 'en' ? translatedStaticText(original) : original;
+      }
+      const elements = root.querySelectorAll ? [root, ...root.querySelectorAll('*')] : [];
+      elements.forEach(node => {
+        if (!(node instanceof Element)) return;
+        if (node.id === 'language-toggle') return;
+        if (!originalAttributes.has(node)) {
+          originalAttributes.set(node, {
+            placeholder: node.getAttribute('placeholder'),
+            title: node.getAttribute('title'),
+            ariaLabel: node.getAttribute('aria-label')
+          });
+        }
+        const originals = originalAttributes.get(node);
+        [['placeholder', originals.placeholder], ['title', originals.title], ['aria-label', originals.ariaLabel]]
+          .forEach(([attribute, original]) => {
+            if (original === null) return;
+            node.setAttribute(
+              attribute,
+              currentLanguage === 'en' ? (TRANSLATIONS[original] || original) : original
+            );
+          });
+      });
+      document.documentElement.lang = currentLanguage;
+    }
+
+    function updateLanguageToggle() {
+      const button = document.querySelector('#language-toggle');
+      const switchToEnglish = currentLanguage === 'ru';
+      button.textContent = switchToEnglish ? '🇬🇧' : '🇷🇺';
+      button.title = switchToEnglish ? 'Switch to English' : 'Переключить на русский';
+      button.setAttribute('aria-label', button.title);
+    }
+
+    document.querySelector('#language-toggle').addEventListener('click', () => {
+      currentLanguage = currentLanguage === 'ru' ? 'en' : 'ru';
+      localStorage.setItem('dashboardLanguage', currentLanguage);
+      translateTree();
+      updateLanguageToggle();
+      loadSavedVacancies(vacancyPage).catch(showError);
+      restoreSearchResults();
+    });
+    const translationObserver = new MutationObserver(mutations => {
+      if (currentLanguage !== 'en') return;
+      mutations.forEach(mutation => {
+        mutation.addedNodes.forEach(node => {
+          if (node.nodeType === Node.ELEMENT_NODE) translateTree(node);
+          if (node.nodeType === Node.TEXT_NODE && node.parentElement) translateTree(node.parentElement);
+        });
+      });
+    });
+    translationObserver.observe(document.body, {childList: true, subtree: true});
     function showError(error) { statusNode.textContent = error.message; }
     function showStatus(text) { statusNode.textContent = text; }
     async function asJson(response) {
@@ -291,11 +473,11 @@
       const meter = element('div', undefined, 'match-meter');
       meter.style.setProperty('--match', String(score));
       meter.setAttribute('role', 'progressbar');
-      meter.setAttribute('aria-label', 'Степень соответствия');
+      meter.setAttribute('aria-label', currentLanguage === 'en' ? 'Match score' : 'Степень соответствия');
       meter.setAttribute('aria-valuemin', '0');
       meter.setAttribute('aria-valuemax', '100');
       meter.setAttribute('aria-valuenow', String(score));
-      meter.append(element('div', `${score}% подходит`));
+      meter.append(element('div', currentLanguage === 'en' ? `${score}% match` : `${score}% подходит`));
       const track = element('div', undefined, 'match-meter__track');
       track.append(element('div', undefined, 'match-meter__fill'));
       meter.append(track);
@@ -445,15 +627,49 @@
 
     let cvFiles = [];
 
+    function mergeSkills(...skillLists) {
+      const merged = [];
+      const seen = new Set();
+      skillLists.flat().forEach(rawSkill => {
+        const skill = String(rawSkill || '').trim();
+        const key = skill.toLocaleLowerCase();
+        if (!skill || seen.has(key)) return;
+        seen.add(key);
+        merged.push(skill);
+      });
+      return merged;
+    }
+
+    function selectedSkills() {
+      return [...document.querySelectorAll('#skills-chips input:checked')].map(input => input.value);
+    }
+
     function renderSkills(skills) {
       const chips = document.querySelector('#skills-chips'); chips.replaceChildren();
-      skills.forEach(skill => {
+      mergeSkills(skills).forEach(skill => {
         const chip = element('label', undefined, 'chip');
         const checkbox = element('input'); checkbox.type = 'checkbox'; checkbox.checked = true; checkbox.value = skill;
         chip.append(checkbox, document.createTextNode(skill));
         chips.append(chip);
       });
     }
+
+    function addManualSkill() {
+      const input = document.querySelector('#manual-skill');
+      const skill = input.value.trim();
+      if (!skill) return;
+      renderSkills(mergeSkills(selectedSkills(), skill));
+      input.value = '';
+      input.focus();
+    }
+
+    document.querySelector('#add-manual-skill').addEventListener('click', addManualSkill);
+    document.querySelector('#manual-skill').addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        addManualSkill();
+      }
+    });
 
     function renderResumeProfile(cvFile) {
       const draftBlock = document.querySelector('#draft-block');
@@ -596,7 +812,8 @@
         const draft = await asJson(await fetch(`/v1/users/${userId}/cv-files/${cvFileId}/extract-profile`, {
           method: 'POST', headers: headers(false)
         }));
-        renderSkills(draft.skills);
+        const savedSkills = cvFiles.find(cvFile => cvFile.id === cvFileId)?.skills || [];
+        renderSkills(mergeSkills(savedSkills, draft.skills));
         document.querySelector('#summary-text').value = draft.experience_summary || '';
         document.querySelector('#keywords-text').value = draft.search_keywords || '';
         document.querySelector('#experience-years').value = draft.years_of_experience ?? '';
@@ -610,7 +827,7 @@
         const userId = userIdInput.value.trim();
         const cvFileId = document.querySelector('#resume-selector').value;
         if (!cvFileId) throw new Error('Выберите резюме');
-        const skills = [...document.querySelectorAll('#skills-chips input:checked')].map(c => c.value);
+        const skills = selectedSkills();
         const experience_summary = document.querySelector('#summary-text').value;
         const search_keywords = document.querySelector('#keywords-text').value.trim();
         const yearsText = document.querySelector('#experience-years').value;
@@ -664,6 +881,12 @@
       return `Отправка выполняется: ${task.state}.`;
     }
 
+    function isSubmissionConfirmed(task) {
+      if (!task || task.state !== 'completed') return false;
+      const evidence = task.transitions?.at(-1)?.evidence || [];
+      return evidence.includes('submission:true') || evidence.includes('submission:already_applied');
+    }
+
     async function waitForApplicationTask(applicationId, taskState) {
       const deadline = Date.now() + 180000;
       while (Date.now() < deadline) {
@@ -672,13 +895,56 @@
         }));
         taskState.textContent = applicationTaskMessage(task);
         if (applicationTaskTerminalStates.has(task.state)) {
-          if (task.state === 'completed') loadSavedVacancies(1).catch(() => {});
           return task;
         }
         await new Promise(resolve => setTimeout(resolve, 2500));
       }
       taskState.textContent = 'Отправка всё ещё выполняется. Статус обновится при повторном открытии списка.';
       return null;
+    }
+
+    const workFormatLabels = {
+      ru: {remote: 'Удалённо', hybrid: 'Гибрид', office: 'Офис', unspecified: 'Формат не указан'},
+      en: {remote: 'Remote', hybrid: 'Hybrid', office: 'Office', unspecified: 'Format unspecified'}
+    };
+    const employmentTypeLabels = {
+      ru: {
+        full_time: 'Полная занятость', part_time: 'Частичная занятость',
+        contract: 'Контракт', project: 'Проект', temporary: 'Временная работа',
+        internship: 'Стажировка'
+      },
+      en: {
+        full_time: 'Full-time', part_time: 'Part-time', contract: 'Contract',
+        project: 'Project', temporary: 'Temporary', internship: 'Internship'
+      }
+    };
+
+    function createWorkFormatBadge(workFormat) {
+      const labels = workFormatLabels[currentLanguage];
+      const format = workFormat && labels[workFormat] ? workFormat : 'unspecified';
+      return element('span', labels[format], 'badge');
+    }
+
+    function createVacancyAttributeTags(item) {
+      const tags = element('div', undefined, 'attribute-tags');
+      tags.append(createWorkFormatBadge(item.work_format));
+      Array.from(item.employment_types || []).forEach(employmentType => {
+        const label = employmentTypeLabels[currentLanguage][employmentType];
+        if (label) {
+          tags.append(element('span', label, 'badge'));
+        }
+      });
+      if (item.salary_text) tags.append(element('span', item.salary_text, 'badge salary'));
+      return tags;
+    }
+
+    function createSummaryAffordance(text) {
+      if (!text) return null;
+      const truncated = text.length > 120 ? text.substring(0, 120) + '…' : text;
+      const node = element('span', truncated, 'summary-affordance');
+      node.setAttribute('tabindex', '0');
+      node.setAttribute('title', text);
+      return node;
     }
 
     function renderResult(item) {
@@ -689,9 +955,17 @@
       top.append(title, createMatchMeter(item.match_score));
       card.append(top);
       if (item.status === 'already_existed') card.append(element('span', 'уже был в списке ранее', 'badge'));
+      card.append(createVacancyAttributeTags(item));
+      const summaryNode = createSummaryAffordance(item.vacancy_summary);
+      if (summaryNode) card.append(summaryNode);
       const meta = element('div', undefined, 'meta');
-      const sourceLabel = vacancySourceLabels[item.source] || item.source;
-      const link = element('a', `Открыть вакансию на ${sourceLabel}`); link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
+      const sourceLabel = vacancySourceLabels[currentLanguage][item.source] || item.source;
+      const link = element(
+        'a',
+        currentLanguage === 'en'
+          ? `Open vacancy on ${sourceLabel}`
+          : `Открыть вакансию на ${sourceLabel}`
+      ); link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
       card.append(meta);
       const coverBlock = element('div', undefined, 'cover-letter');
       coverBlock.append(element('label', 'Сопроводительное письмо (можно отредактировать)'));
@@ -705,6 +979,10 @@
         item.source === 'greenhouse' ? 'Открыть для рассмотрения' : 'Принять и откликнуться',
         'accept'
       ); accept.type = 'button';
+      if (['submitted', 'interview'].includes(item.application_status)) {
+        accept.textContent = 'Отклик отправлен';
+        accept.disabled = true;
+      }
       accept.addEventListener('click', async () => {
         if (item.source === 'greenhouse') {
           window.location.href = `/review?application_id=${encodeURIComponent(item.application_id)}`;
@@ -723,12 +1001,21 @@
             body: JSON.stringify({confirmation: 'submit_real_application_i_understand_the_platform_tos_risk'})
           }));
           taskState.textContent = applicationTaskMessage(task);
+          let finalTask = task;
           if (!applicationTaskTerminalStates.has(task.state)) {
-            await waitForApplicationTask(item.application_id, taskState);
+            finalTask = await waitForApplicationTask(item.application_id, taskState);
+          }
+          if (isSubmissionConfirmed(finalTask)) {
+            item.application_status = 'submitted';
+            accept.textContent = 'Отклик отправлен';
+            updateCachedSearchResultStatus(item.application_id, 'submitted');
+            return;
           }
         } catch (error) {
           taskState.textContent = `Не удалось отправить автоматически: ${error.message}. Откройте вакансию по ссылке и откликнитесь вручную.`;
-        } finally { accept.disabled = false; }
+        } finally {
+          if (item.application_status !== 'submitted') accept.disabled = false;
+        }
       });
       const reject = element('button', 'Отклонить', 'danger'); reject.type = 'button';
       reject.addEventListener('click', () => rejectVacancy(item.application_id, card).catch(showError));
@@ -744,7 +1031,7 @@
     }
 
     const SEARCH_RESULTS_STORAGE_PREFIX = 'dashboardSearchResults:';
-    const SEARCH_RESULTS_VERSION = 1;
+    const SEARCH_RESULTS_VERSION = 3;
 
     function searchResultsStorageKey() {
       const userId = userIdInput.value.trim();
@@ -761,7 +1048,14 @@
         source_url: String(item?.source_url || ''),
         match_score: Number(item?.match_score),
         status: String(item?.status || ''),
-        source
+        source,
+        application_status: String(item?.application_status || ''),
+        vacancy_summary: String(item?.vacancy_summary || ''),
+        work_format: String(item?.work_format || 'unspecified'),
+        salary_text: String(item?.salary_text || ''),
+        employment_types: Array.isArray(item?.employment_types)
+          ? item.employment_types.map(String)
+          : []
       };
       if (
         !normalized.application_id || !normalized.vacancy_id || !normalized.title
@@ -799,6 +1093,29 @@
       }
     }
 
+    function updateCachedSearchResultStatus(applicationId, newStatus) {
+      const storageKey = searchResultsStorageKey();
+      if (!storageKey) return;
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return;
+      try {
+        const cached = JSON.parse(raw);
+        if (cached?.version !== SEARCH_RESULTS_VERSION || !Array.isArray(cached.outcomes)) {
+          localStorage.removeItem(storageKey);
+          return;
+        }
+        cached.outcomes = cached.outcomes.map(item => {
+          if (item.application_id === applicationId) {
+            return { ...item, application_status: newStatus };
+          }
+          return item;
+        });
+        localStorage.setItem(storageKey, JSON.stringify(cached));
+      } catch {
+        localStorage.removeItem(storageKey);
+      }
+    }
+
     function restoreSearchResults() {
       const storageKey = searchResultsStorageKey();
       const results = document.querySelector('#results');
@@ -827,13 +1144,26 @@
     }
 
     const vacancySourceLabels = {
-      headhunter: 'hh.ru', linkedin: 'LinkedIn', greenhouse: 'Greenhouse',
-      registry: 'Импортированный реестр', other: 'Другой источник'
+      ru: {
+        headhunter: 'hh.ru', linkedin: 'LinkedIn', greenhouse: 'Greenhouse',
+        registry: 'Импортированный реестр', other: 'Другой источник'
+      },
+      en: {
+        headhunter: 'hh.ru', linkedin: 'LinkedIn', greenhouse: 'Greenhouse',
+        registry: 'Imported registry', other: 'Other source'
+      }
     };
     const vacancyStatusLabels = {
-      saved: 'Сохранена', awaiting_review: 'Ожидает решения', approved: 'Принята',
-      rejected: 'Отклонена', skipped: 'Пропущена', submitted: 'Отправлена',
-      interview: 'Собеседование', draft: 'Черновик'
+      ru: {
+        saved: 'Сохранена', awaiting_review: 'Ожидает решения', approved: 'Принята',
+        rejected: 'Отклонена', skipped: 'Пропущена', submitted: 'Отправлена',
+        interview: 'Собеседование', draft: 'Черновик'
+      },
+      en: {
+        saved: 'Saved', awaiting_review: 'Awaiting decision', approved: 'Accepted',
+        rejected: 'Rejected', skipped: 'Skipped', submitted: 'Submitted',
+        interview: 'Interview', draft: 'Draft'
+      }
     };
     let vacancyPage = 1;
     let vacancyTotalPages = 1;
@@ -844,15 +1174,21 @@
       const title = element('div');
       title.append(element('div', item.company, 'company'), element('h3', item.title));
       const metadata = [
-        vacancySourceLabels[item.source] || item.source,
-        item.location || 'Локация не указана',
-        vacancyStatusLabels[item.status] || item.status,
+        vacancySourceLabels[currentLanguage][item.source] || item.source,
+        item.location || (currentLanguage === 'en' ? 'Location unspecified' : 'Локация не указана'),
+        vacancyStatusLabels[currentLanguage][item.status] || item.status,
         item.published_at
-          ? `Опубликована ${new Date(item.published_at).toLocaleDateString('ru-RU')}`
-          : 'Дата публикации не указана'
+          ? currentLanguage === 'en'
+            ? `Published ${new Date(item.published_at).toLocaleDateString('en-US')}`
+            : `Опубликована ${new Date(item.published_at).toLocaleDateString('ru-RU')}`
+          : currentLanguage === 'en' ? 'Publication date unspecified' : 'Дата публикации не указана'
       ];
       title.append(element('div', metadata.join(' · '), 'meta'));
       top.append(title, createMatchMeter(item.match_score));
+      card.append(top);
+      card.append(createVacancyAttributeTags(item));
+      const summaryNode = createSummaryAffordance(item.vacancy_summary);
+      if (summaryNode) card.append(summaryNode);
       const actions = element('div', undefined, 'actions');
       const link = element('a', 'Открыть вакансию');
       link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
@@ -916,7 +1252,7 @@
           blockers,
           requirement => requirement.requirement_text
         );
-        appendMatchDetailList(
+        appendMissingSkillsTags(
           container,
           'Чего не хватает',
           missing,
@@ -942,6 +1278,14 @@
       container.append(list);
     }
 
+    function appendMissingSkillsTags(container, title, items, textForItem) {
+      if (!items.length) return;
+      container.append(element('h4', title));
+      const tagsContainer = element('div', undefined, 'chips');
+      items.forEach(item => tagsContainer.append(element('span', textForItem(item), 'chip')));
+      container.append(tagsContainer);
+    }
+
     async function rejectVacancy(applicationId, card) {
       await asJson(await fetch(`/v1/applications/${applicationId}/reject-vacancy`, {
         method: 'POST', headers: headers(false)
@@ -949,7 +1293,6 @@
       updateCachedSearchResults(item => item.application_id !== applicationId);
       card.remove();
       showStatus('Вакансия отклонена и больше не будет показана в общем списке.');
-      await loadSavedVacancies(1);
     }
 
     async function blacklistCompany(company, askForConfirmation = false) {
@@ -1027,6 +1370,8 @@
         status_filter: document.querySelector('#vacancy-status').value,
         location: document.querySelector('#vacancy-location').value.trim(),
         min_match_score: document.querySelector('#vacancy-score').value || '0',
+        work_format: document.querySelector('#vacancy-work-format').value,
+        employment_type: document.querySelector('#vacancy-employment-type').value,
         page: String(requestedPage),
         page_size: '20'
       });
@@ -1048,8 +1393,12 @@
       }
       const start = payload.total ? (payload.page - 1) * payload.page_size + 1 : 0;
       const end = Math.min(payload.page * payload.page_size, payload.total);
-      document.querySelector('#vacancy-summary').textContent = `Показано ${start}–${end} из ${payload.total}`;
-      document.querySelector('#vacancy-page').textContent = `Страница ${payload.page} из ${payload.total_pages}`;
+      document.querySelector('#vacancy-summary').textContent = currentLanguage === 'en'
+        ? `Showing ${start}–${end} of ${payload.total}`
+        : `Показано ${start}–${end} из ${payload.total}`;
+      document.querySelector('#vacancy-page').textContent = currentLanguage === 'en'
+        ? `Page ${payload.page} of ${payload.total_pages}`
+        : `Страница ${payload.page} из ${payload.total_pages}`;
       document.querySelector('#vacancy-previous').disabled = payload.page <= 1;
       document.querySelector('#vacancy-next').disabled = payload.page >= payload.total_pages;
     }
@@ -1065,6 +1414,8 @@
       document.querySelector('#vacancy-score').value = '0';
       document.querySelector('#vacancy-published-from').value = '';
       document.querySelector('#vacancy-published-to').value = '';
+      document.querySelector('#vacancy-work-format').value = 'all';
+      document.querySelector('#vacancy-employment-type').value = 'all';
       vacancyPage = 1; loadSavedVacancies().catch(showError);
     });
     document.querySelector('#vacancy-previous').addEventListener('click', () => loadSavedVacancies(vacancyPage - 1).catch(showError));
@@ -1110,7 +1461,7 @@
         }));
         const outcomes = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []);
         const failures = settled
-          .map((result, index) => result.status === 'rejected' ? `${vacancySourceLabels[sources[index].source]}: ${result.reason.message}` : null)
+          .map((result, index) => result.status === 'rejected' ? `${vacancySourceLabels[currentLanguage][sources[index].source]}: ${result.reason.message}` : null)
           .filter(Boolean);
         if (!outcomes.length) {
           persistSearchResults([]);
@@ -1138,6 +1489,8 @@
     document.querySelector('#load-user').addEventListener('click', () => {
       loadUserWorkspace().then(() => showStatus('Профиль загружен.')).catch(showError);
     });
+    translateTree();
+    updateLanguageToggle();
     activatePanel(localStorage.getItem('dashboardActivePanel') || 'vacancies');
     restoreSearchResults();
     loadSavedLlmPreference();

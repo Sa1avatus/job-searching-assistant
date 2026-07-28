@@ -116,6 +116,10 @@ def test_linkedin_apply_disabled_by_default(tmp_path: Path) -> None:
         )
         assert outcome.state is TaskState.FAILED
         assert "APP_ENABLE_LINKEDIN_APPLY" in outcome.reason
+        with session_factory() as session:
+            application = session.get(ApplicationRow, application_id)
+            assert application is not None
+            assert application.status == "awaiting_review"
 
     asyncio.run(run_handler())
 
@@ -359,6 +363,178 @@ def test_headhunter_blocked_apply_preserves_status(tmp_path: Path) -> None:
             application = session.get(ApplicationRow, application_id)
             assert application is not None
             assert application.status == "awaiting_review"
+
+    asyncio.run(run_handler())
+
+
+def test_linkedin_apply_waits_for_user_without_captured_session(tmp_path: Path) -> None:
+    async def run_handler() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(
+            session_factory, adapter_name="linkedin-reference"
+        )
+        handler = LinkedInApplyHandler(
+            Settings(_env_file=None, artifact_directory=tmp_path, enable_linkedin_apply=True),
+            session_factory,
+            _store(tmp_path),
+        )
+
+        outcome = await handler.handle(
+            ClaimedTask(
+                task_id="linkedin-no-session",
+                application_id=application_id,
+                idempotency_key=f"application-review:{application_id}",
+                attempt_number=1,
+                queue_name="browser",
+                payload={"workflow": "linkedin_apply"},
+            )
+        )
+
+        assert outcome.state is TaskState.WAITING_FOR_USER
+        assert outcome.human_action is not None
+        assert outcome.human_action.kind == "reauthenticate"
+        with session_factory() as session:
+            application = session.get(ApplicationRow, application_id)
+            assert application is not None
+            assert application.status == "awaiting_review"
+
+    asyncio.run(run_handler())
+
+
+def test_linkedin_apply_rejects_invalid_payload_without_changing_status(
+    tmp_path: Path,
+) -> None:
+    async def run_handler() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(
+            session_factory, adapter_name="linkedin-reference"
+        )
+        handler = LinkedInApplyHandler(
+            Settings(_env_file=None, artifact_directory=tmp_path, enable_linkedin_apply=True),
+            session_factory,
+            _store(tmp_path),
+        )
+
+        outcome = await handler.handle(
+            ClaimedTask(
+                task_id="linkedin-invalid",
+                application_id=application_id,
+                idempotency_key=f"application-review:{application_id}",
+                attempt_number=1,
+                queue_name="browser",
+                payload={"workflow": "linkedin_apply", "unexpected": True},
+            )
+        )
+
+        assert outcome.state is TaskState.FAILED
+        assert outcome.reason == "LinkedIn apply task payload is invalid"
+        with session_factory() as session:
+            application = session.get(ApplicationRow, application_id)
+            assert application is not None
+            assert application.status == "awaiting_review"
+
+    asyncio.run(run_handler())
+
+
+def test_linkedin_blocked_apply_preserves_status(tmp_path: Path) -> None:
+    async def run_handler() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(
+            session_factory, adapter_name="linkedin-reference"
+        )
+
+        class BlockedLinkedInAdapter:
+            def __init__(self, _engine: object) -> None:
+                pass
+
+            async def apply(
+                self, url: str, *, answers: dict[str, str | bool | None]
+            ) -> object:
+                raise ApplyBlocked("external application is required")
+
+        handler = LinkedInApplyHandler(
+            Settings(_env_file=None, artifact_directory=tmp_path, enable_linkedin_apply=True),
+            session_factory,
+            _store(tmp_path),
+            adapter_factory=BlockedLinkedInAdapter,
+        )
+        with (
+            mock.patch("app.workers.browser_tasks.PlaywrightEngine", _FakePlaywrightEngine),
+            mock.patch(
+                "app.workers.browser_tasks._restore_browser_session",
+                return_value={"cookies": [], "origins": []},
+            ),
+        ):
+            outcome = await handler.handle(
+                ClaimedTask(
+                    task_id="linkedin-blocked",
+                    application_id=application_id,
+                    idempotency_key=f"application-review:{application_id}",
+                    attempt_number=1,
+                    queue_name="browser",
+                    payload={"workflow": "linkedin_apply"},
+                )
+            )
+
+        assert outcome.state is TaskState.FAILED
+        with session_factory() as session:
+            application = session.get(ApplicationRow, application_id)
+            assert application is not None
+            assert application.status == "awaiting_review"
+
+    asyncio.run(run_handler())
+
+
+def test_linkedin_successful_apply_marks_submitted(tmp_path: Path) -> None:
+    async def run_handler() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(
+            session_factory, adapter_name="linkedin-reference"
+        )
+
+        class SuccessfulLinkedInAdapter:
+            def __init__(self, _engine: object) -> None:
+                pass
+
+            async def apply(
+                self, url: str, *, answers: dict[str, str | bool | None]
+            ) -> object:
+                class ApplyResult:
+                    confirmation_url = url
+
+                return ApplyResult()
+
+        handler = LinkedInApplyHandler(
+            Settings(_env_file=None, artifact_directory=tmp_path, enable_linkedin_apply=True),
+            session_factory,
+            _store(tmp_path),
+            adapter_factory=SuccessfulLinkedInAdapter,
+        )
+        with (
+            mock.patch("app.workers.browser_tasks.PlaywrightEngine", _FakePlaywrightEngine),
+            mock.patch(
+                "app.workers.browser_tasks._restore_browser_session",
+                return_value={"cookies": [], "origins": []},
+            ),
+            mock.patch("app.workers.browser_tasks._persist_browser_session"),
+        ):
+            outcome = await handler.handle(
+                ClaimedTask(
+                    task_id="linkedin-success",
+                    application_id=application_id,
+                    idempotency_key=f"application-review:{application_id}",
+                    attempt_number=1,
+                    queue_name="browser",
+                    payload={"workflow": "linkedin_apply"},
+                )
+            )
+
+        assert outcome.state is TaskState.COMPLETED
+        assert "submission:true" in outcome.evidence
+        with session_factory() as session:
+            application = session.get(ApplicationRow, application_id)
+            assert application is not None
+            assert application.status == "submitted"
 
     asyncio.run(run_handler())
 

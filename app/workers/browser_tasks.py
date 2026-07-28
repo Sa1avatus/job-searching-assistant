@@ -593,6 +593,7 @@ class LinkedInApplyHandler:
                 )
             fresh_state = await browser_engine.storage_state()
 
+        _mark_application_submitted(self._session_factory, claimed_task.application_id)
         _persist_browser_session(
             self._session_factory,
             self._session_store,

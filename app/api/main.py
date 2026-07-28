@@ -136,6 +136,7 @@ from app.services.recruitment import (
 )
 from app.services.resume_intake import ResumeIntakeService
 from app.services.vacancy_catalog import VacancyCatalogService
+from app.services.vacancy_metadata import summarize_vacancy
 from app.storage.database import SessionFactory, session_scope
 from app.storage.documents import DocumentStorage, InvalidDocumentError
 from app.storage.evidence_artifacts import EvidenceArtifactStorage, InvalidEvidenceArtifact
@@ -428,11 +429,25 @@ def list_saved_vacancies(
     min_match_score: int = 0,
     published_from: date | None = None,
     published_to: date | None = None,
+    work_format: str = "all",
+    employment_type: str = "all",
     page: int = 1,
     page_size: int = 20,
 ) -> SavedVacancyPageResponse:
     if source not in {"all", "headhunter", "linkedin", "greenhouse", "registry", "other"}:
         raise HTTPException(status_code=422, detail="Unsupported vacancy source")
+    if work_format not in {"all", "remote", "hybrid", "office", "unspecified"}:
+        raise HTTPException(status_code=422, detail="Unsupported work format")
+    if employment_type not in {
+        "all",
+        "full_time",
+        "part_time",
+        "contract",
+        "project",
+        "temporary",
+        "internship",
+    }:
+        raise HTTPException(status_code=422, detail="Unsupported employment type")
     if not 0 <= min_match_score <= 100 or page < 1 or not 1 <= page_size <= 100:
         raise HTTPException(status_code=422, detail="Invalid vacancy pagination or score filter")
     if published_from is not None and published_to is not None and published_from > published_to:
@@ -447,6 +462,8 @@ def list_saved_vacancies(
             min_match_score=min_match_score,
             published_from=published_from,
             published_to=published_to,
+            work_format=work_format,
+            employment_type=employment_type,
             page=page,
             page_size=page_size,
         )
@@ -1090,10 +1107,13 @@ async def discover_headhunter_vacancies(
         materials_router = ModelRouter(providers)
         materials_service = MaterialsGenerationService(session, materials_router)
         for outcome in outcomes:
-            if outcome.status != "created":
+            if not materials_service.needs_material_refresh(outcome.application_id):
                 continue
             try:
-                await materials_service.draft_materials(outcome.application_id)
+                await materials_service.draft_materials(
+                    outcome.application_id,
+                    replace_mismatched_cover_letter=True,
+                )
             except Exception:  # noqa: BLE001 - a drafting failure must not fail the whole search
                 continue
     return serialize_discovery_outcomes(outcomes)
@@ -1159,10 +1179,13 @@ async def discover_linkedin_vacancies(
         materials_router = ModelRouter(providers)
         materials_service = MaterialsGenerationService(session, materials_router)
         for outcome in outcomes:
-            if outcome.status != "created":
+            if not materials_service.needs_material_refresh(outcome.application_id):
                 continue
             try:
-                await materials_service.draft_materials(outcome.application_id)
+                await materials_service.draft_materials(
+                    outcome.application_id,
+                    replace_mismatched_cover_letter=True,
+                )
             except Exception:  # noqa: BLE001 - a drafting failure must not fail the whole search
                 continue
     return serialize_discovery_outcomes(outcomes)
@@ -1201,10 +1224,13 @@ async def discover_greenhouse_vacancies(
     if providers:
         materials_service = MaterialsGenerationService(session, ModelRouter(providers))
         for outcome in outcomes:
-            if outcome.status != "created":
+            if not materials_service.needs_material_refresh(outcome.application_id):
                 continue
             try:
-                await materials_service.draft_materials(outcome.application_id)
+                await materials_service.draft_materials(
+                    outcome.application_id,
+                    replace_mismatched_cover_letter=True,
+                )
             except Exception:  # noqa: BLE001 - drafting failure must not discard the vacancy
                 continue
     return serialize_discovery_outcomes(outcomes)
@@ -1632,6 +1658,15 @@ def list_review_queue(
                 if answer.semantic_category in SENSITIVE_CATEGORIES
             ],
             active_human_action=_active_human_action(workflow_task),
+            vacancy_summary=summarize_vacancy(vacancy.description_text),
+            work_format=vacancy.work_format,
+            salary_text=vacancy.salary_text,
+            employment_types=list(vacancy.employment_types or ()),
+            missing_required_skills=[
+                warning.removeprefix("Missing required skill: ").strip()
+                for warning in application.warnings
+                if warning.startswith("Missing required skill: ")
+            ],
         )
         for application, vacancy, cv_file, workflow_task in RecruitmentService(
             session

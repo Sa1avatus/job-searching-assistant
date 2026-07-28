@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.models import ApplicationQuestion, ProfileFact, TaskState, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy, prepare_answers
+from app.domain.vacancy_attributes import EMPLOYMENT_TYPE_ORDER, EmploymentType
 from app.storage.documents import SavedDocument
 from app.storage.tables import (
     ApplicationAnswerRow,
@@ -191,7 +192,42 @@ class RecruitmentService:
         application_fields: list[dict[str, object]] | None = None,
         requires_sensitive_review: bool = False,
         published_at: datetime | None = None,
+        salary_text: str = "",
+        work_format: str = "unspecified",
+        employment_types: tuple[EmploymentType, ...] | list[EmploymentType] = (),
     ) -> VacancyRow:
+        # Validate work_format
+        valid_work_formats = {"remote", "hybrid", "office", "unspecified"}
+        if work_format not in valid_work_formats:
+            raise ValueError(
+                f"Invalid work_format: {work_format}. Must be one of {valid_work_formats}"
+            )
+
+        # Normalize salary_text
+        normalized_salary = salary_text.strip()
+
+        # Canonicalize employment_types
+        normalized_types = (
+            tuple(employment_types) if isinstance(employment_types, list) else employment_types
+        )
+
+        # Validate employment types and preserve order from EMPLOYMENT_TYPE_ORDER
+        valid_set = set(EMPLOYMENT_TYPE_ORDER)
+        for et in normalized_types:
+            if et not in valid_set:
+                raise ValueError(
+                    f"Invalid employment type: {et}. Must be one of {EMPLOYMENT_TYPE_ORDER}"
+                )
+
+        # Remove duplicates and maintain order from EMPLOYMENT_TYPE_ORDER
+        seen = set()
+        ordered_unique = []
+        for et in EMPLOYMENT_TYPE_ORDER:
+            if et in normalized_types and et not in seen:
+                ordered_unique.append(et)
+                seen.add(et)
+        canonical_employment_types = tuple(ordered_unique)
+
         vacancy = VacancyRow(
             source_url=source_url,
             title=title,
@@ -205,6 +241,9 @@ class RecruitmentService:
             application_fields=application_fields or [],
             requires_sensitive_review=requires_sensitive_review,
             published_at=published_at,
+            salary_text=normalized_salary,
+            work_format=work_format,
+            employment_types=canonical_employment_types,
         )
         self._session.add(vacancy)
         try:

@@ -60,6 +60,8 @@ def test_catalog_filters_user_vacancies_and_paginates() -> None:
     assert first_page.total_pages == 2
     assert len(first_page.items) == 1
     assert first_page.items[0].match_score == 80
+    assert first_page.items[0].vacancy_summary == ""
+    assert first_page.items[0].work_format == "unspecified"
     assert filtered.total == 1
     assert filtered.items[0].title == "Python Engineer"
     assert filtered.items[0].source == "headhunter"
@@ -137,3 +139,87 @@ def test_catalog_filters_by_source_publication_date() -> None:
 
     assert [item.title for item in page.items] == ["Recent"]
     assert page.items[0].published_at == datetime(2026, 7, 20, 15, 30, tzinfo=UTC)
+
+
+def test_saved_vacancy_includes_summary_and_work_format() -> None:
+    session_factory = _session_factory()
+    with session_factory() as session:
+        recruitment = RecruitmentService(session)
+        user = recruitment.create_user("Candidate")
+        vacancy = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/metadata",
+            title="Python Engineer",
+            company="Tech Co",
+            required_skills=[],
+            preferred_skills=[],
+            location="Remote",
+            description_text="Build Python services. Join a distributed team.",
+        )
+        recruitment.prepare_application(user.id, vacancy.id)
+
+        page = VacancyCatalogService(session).list_saved_vacancies(user.id)
+
+    assert len(page.items) == 1
+    item = page.items[0]
+    assert item.vacancy_summary == "Build Python services."
+    assert item.work_format == "remote"
+
+
+def test_saved_vacancy_work_format_hybrid() -> None:
+    session_factory = _session_factory()
+    with session_factory() as session:
+        recruitment = RecruitmentService(session)
+        user = recruitment.create_user("Candidate")
+        vacancy = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/hybrid",
+            title="Developer",
+            company="Hybrid Co",
+            required_skills=[],
+            preferred_skills=[],
+            location="",
+            description_text="Гибридный формат работы в команде.",
+        )
+        recruitment.prepare_application(user.id, vacancy.id)
+
+        page = VacancyCatalogService(session).list_saved_vacancies(user.id)
+
+    assert page.items[0].work_format == "hybrid"
+
+
+def test_catalog_exposes_and_filters_vacancy_attributes() -> None:
+    session_factory = _session_factory()
+    with session_factory() as session:
+        recruitment = RecruitmentService(session)
+        user = recruitment.create_user("Candidate")
+        matching = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/remote-contract",
+            title="Platform Engineer",
+            company="Remote Co",
+            required_skills=[],
+            preferred_skills=[],
+            salary_text="$120,000",
+            work_format="remote",
+            employment_types=["contract"],
+        )
+        other = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/office-full-time",
+            title="Office Engineer",
+            company="Office Co",
+            required_skills=[],
+            preferred_skills=[],
+            work_format="office",
+            employment_types=["full_time"],
+        )
+        recruitment.prepare_application(user.id, matching.id)
+        recruitment.prepare_application(user.id, other.id)
+
+        page = VacancyCatalogService(session).list_saved_vacancies(
+            user.id,
+            work_format="remote",
+            employment_type="contract",
+        )
+
+    assert page.total == 1
+    assert page.items[0].salary_text == "$120,000"
+    assert page.items[0].work_format == "remote"
+    assert page.items[0].employment_types == ("contract",)

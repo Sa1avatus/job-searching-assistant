@@ -138,6 +138,11 @@ def test_application_moves_through_persistent_review_queue(tmp_path) -> None:
             queue = client.get("/v1/review-queue").json()
             assert len(queue) == 1
             assert queue[0]["company"] == "Example"
+            assert queue[0]["vacancy_summary"] == ""
+            assert queue[0]["work_format"] == "unspecified"
+            assert queue[0]["salary_text"] == ""
+            assert queue[0]["employment_types"] == []
+            assert queue[0]["missing_required_skills"] == ["postgresql"]
             assert queue[0]["adapter_name"] == "generic"
             assert queue[0]["selected_cv_filename"] == "resume.pdf"
             assert queue[0]["current_workflow_state"] == "scheduled"

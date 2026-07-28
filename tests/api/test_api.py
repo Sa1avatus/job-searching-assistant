@@ -78,12 +78,20 @@ def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:
         source_url="https://hh.ru/vacancy/123",
         match_score=80,
         status="created",
+        application_status="awaiting_review",
+        vacancy_summary="Build AI systems.",
+        work_format="hybrid",
     )
 
     response = serialize_discovery_outcomes([outcome])
 
     assert response[0].application_id == "application-1"
     assert response[0].match_score == 80
+    assert response[0].application_status == "awaiting_review"
+    assert response[0].vacancy_summary == "Build AI systems."
+    assert response[0].work_format == "hybrid"
+    assert response[0].salary_text == ""
+    assert response[0].employment_types == []
 
 
 def test_assessment_returns_grounded_gap() -> None:
@@ -209,3 +217,63 @@ def test_browser_handoff_requires_manual_platform_actions() -> None:
     assert linkedin_response.status_code == 200
     assert linkedin_response.json()["canonical_url"] == "https://www.linkedin.com/jobs/view/456"
     assert linkedin_response.json()["mode"] == "manual_browser_handoff"
+
+
+def test_dashboard_exposes_stateful_metadata_and_non_disruptive_rejection() -> None:
+    response = client.get("/dashboard")
+    html = response.text
+
+    assert response.status_code == 200
+    # Work-format badge with Russian labels for all format values
+    assert "workFormatLabels" in html
+    assert "Удалённо" in html
+    assert "Гибрид" in html
+    assert "Офис" in html
+    # Accessible summary tooltip
+    assert "createSummaryAffordance" in html
+    assert "summary-affordance" in html
+    # Cache version bumped for new metadata fields
+    assert "SEARCH_RESULTS_VERSION = 3" in html
+    # New fields normalized and persisted in search cache
+    assert "application_status" in html
+    assert "vacancy_summary" in html
+    assert "work_format" in html
+    assert "salary_text" in html
+    assert "employment_types" in html
+    assert 'id="vacancy-work-format"' in html
+    assert 'id="vacancy-employment-type"' in html
+    assert 'id="manual-skill"' in html
+    assert 'id="language-toggle"' in html
+    assert "dashboardLanguage" in html
+    # Submitted / interview vacancies show disabled primary action
+    assert "Отклик отправлен" in html
+    assert "isSubmissionConfirmed" in html
+    # Missing skills rendered as chip tags
+    assert "appendMissingSkillsTags" in html
+    # Cache status update after confirmed submission
+    assert "updateCachedSearchResultStatus" in html
+
+
+def test_review_has_metadata_tags_source_button_and_in_place_rejection() -> None:
+    response = client.get("/review")
+    html = response.text
+
+    assert response.status_code == 200
+    # Work-format badge with Russian labels
+    assert "workFormatLabels" in html
+    assert "Удалённо" in html
+    # Accessible summary tooltip
+    assert "summary-affordance" in html
+    # Missing skills from dedicated field and derived from warnings
+    assert "missing_required_skills" in html
+    assert "Missing required skill:" in html
+    assert "employment_types" in html
+    assert "salary_text" in html
+    assert 'id="language-toggle"' in html
+    assert "dashboardLanguage" in html
+    # Source vacancy moved to bottom actions as button
+    assert "link-btn" in html
+    assert "Открыть вакансию" in html
+    # Reject removes only affected card without queue reload
+    assert "decision === 'reject'" in html
+    assert "closest('article')" in html

@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError
+from app.services.vacancy_metadata import detect_work_format, summarize_vacancy
 from app.storage.tables import ApplicationRow, CompanyBlacklistRow, UserRow, VacancyRow
 
 
@@ -23,6 +24,10 @@ class SavedVacancy:
     source: str
     published_at: datetime | None
     created_at: datetime
+    vacancy_summary: str
+    work_format: str
+    salary_text: str
+    employment_types: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +54,8 @@ class VacancyCatalogService:
         min_match_score: int = 0,
         published_from: date | None = None,
         published_to: date | None = None,
+        work_format: str = "all",
+        employment_type: str = "all",
         page: int = 1,
         page_size: int = 20,
     ) -> SavedVacancyPage:
@@ -78,6 +85,8 @@ class VacancyCatalogService:
             min_match_score=min_match_score,
             published_from=published_from,
             published_to=published_to,
+            work_format=work_format,
+            employment_type=employment_type,
         )
         count_statement = statement.with_only_columns(func.count()).order_by(None)
         total = int(self._session.scalar(count_statement) or 0)
@@ -107,6 +116,18 @@ class VacancyCatalogService:
                     source=self._source_name(vacancy),
                     published_at=vacancy.published_at,
                     created_at=application.created_at,
+                    vacancy_summary=summarize_vacancy(vacancy.description_text),
+                    work_format=(
+                        vacancy.work_format
+                        if vacancy.work_format != "unspecified"
+                        else detect_work_format(
+                            vacancy.title,
+                            vacancy.location,
+                            vacancy.description_text,
+                        )
+                    ),
+                    salary_text=vacancy.salary_text,
+                    employment_types=tuple(vacancy.employment_types or ()),
                 )
                 for application, vacancy in rows
             ],
@@ -139,6 +160,8 @@ class VacancyCatalogService:
         min_match_score: int,
         published_from: date | None,
         published_to: date | None,
+        work_format: str,
+        employment_type: str,
     ) -> Select[tuple[ApplicationRow, VacancyRow]]:
         normalized_query = query.strip()
         if normalized_query:
@@ -168,6 +191,14 @@ class VacancyCatalogService:
             statement = statement.where(
                 VacancyRow.published_at
                 <= datetime.combine(published_to, time.max, tzinfo=UTC)
+            )
+        if work_format != "all":
+            statement = statement.where(VacancyRow.work_format == work_format)
+        if employment_type != "all":
+            statement = statement.where(
+                cast(VacancyRow.employment_types, String).ilike(
+                    f'%"{employment_type}"%'
+                )
             )
         if source == "headhunter":
             statement = statement.where(VacancyRow.source_url.ilike("%hh.ru/%"))

@@ -12,7 +12,7 @@
     header { padding: 48px 0 24px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: end; }
     h1 { margin: 0; font-size: clamp(28px, 5vw, 48px); letter-spacing: -0.04em; }
     .eyebrow { color: #8da2fb; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; font-size: 12px; }
-    .auth { display: grid; grid-template-columns: minmax(160px, 220px) auto; gap: 8px; align-items: end; }
+    .auth { display: grid; grid-template-columns: minmax(160px, 220px) auto auto; gap: 8px; align-items: end; }
     .auth label { min-width: 0; }
     input, textarea, button { border: 1px solid #303b60; border-radius: 10px; padding: 10px 13px; font: inherit; }
     input, textarea { background: #101831; color: #fff; width: 100%; }
@@ -39,16 +39,26 @@
     .approve { background: #124d3b; border-color: #24765e; }
     .reject { background: #5a2030; border-color: #8c344b; }
     a { color: #a9baff; }
+    a.link-btn { color: #a9baff; text-decoration: none; border: 1px solid #303b60; border-radius: 10px; padding: 10px 13px; font-weight: 700; display: inline-block; }
+    a.link-btn:hover { border-color: #8da2fb; }
     .empty { border: 1px dashed #344166; border-radius: 18px; padding: 44px; text-align: center; color: #aab5d6; }
+    .badge { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #223056; color: #aab5d6; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .chip { display: flex; align-items: center; gap: 6px; background: #17224a; border: 1px solid #35437a; border-radius: 999px; padding: 6px 12px; font-size: 13px; }
+    .badge.salary { background: #173f35; border: 1px solid #2b725e; color: #9ff3cf; }
+    .language-toggle { min-width: 52px; font-size: 22px; line-height: 1; }
+    .summary-affordance { display: block; color: #8da2fb; font-size: 13px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; cursor: help; }
+    .summary-affordance:focus { outline: 1px solid #8da2fb; outline-offset: 2px; }
     @media (max-width: 720px) { header { grid-template-columns: 1fr; align-items: start; } .auth { width: 100%; grid-template-columns: minmax(0, 1fr) auto; } }
   </style>
 </head>
 <body>
   <header>
-    <div><div class="eyebrow">Human checkpoint</div><h1>Review queue</h1></div>
+    <div><div id="review-eyebrow" class="eyebrow">Human checkpoint</div><h1 id="review-title">Review queue</h1></div>
     <div class="auth">
-      <label><span class="eyebrow">API key</span><br><input id="api-key" type="password" autocomplete="off" aria-label="API key"></label>
+      <label><span id="api-key-label" class="eyebrow">API key</span><br><input id="api-key" type="password" autocomplete="off" aria-label="API key"></label>
       <button id="refresh" type="button">Refresh</button>
+      <button id="language-toggle" class="language-toggle" type="button" title="Переключить на русский" aria-label="Переключить на русский">🇷🇺</button>
     </div>
   </header>
   <main>
@@ -68,6 +78,36 @@
       if (className) node.className = className;
       return node;
     };
+    let currentLanguage = localStorage.getItem('dashboardLanguage') === 'en' ? 'en' : 'ru';
+    const tr = (ru, en) => currentLanguage === 'en' ? en : ru;
+    const workFormatLabels = {
+      ru: {remote: 'Удалённо', hybrid: 'Гибрид', office: 'Офис', unspecified: 'Формат не указан'},
+      en: {remote: 'Remote', hybrid: 'Hybrid', office: 'Office', unspecified: 'Format unspecified'}
+    };
+    const employmentTypeLabels = {
+      ru: {
+        full_time: 'Полная занятость', part_time: 'Частичная занятость',
+        contract: 'Контракт', project: 'Проект', temporary: 'Временная работа',
+        internship: 'Стажировка'
+      },
+      en: {
+        full_time: 'Full-time', part_time: 'Part-time', contract: 'Contract',
+        project: 'Project', temporary: 'Temporary', internship: 'Internship'
+      }
+    };
+
+    function updateLanguage() {
+      document.documentElement.lang = currentLanguage;
+      document.title = tr('Очередь проверки откликов', 'Application review queue');
+      document.querySelector('#review-eyebrow').textContent = tr('Проверка человеком', 'Human checkpoint');
+      document.querySelector('#review-title').textContent = tr('Очередь проверки', 'Review queue');
+      document.querySelector('#api-key-label').textContent = tr('API-ключ', 'API key');
+      document.querySelector('#refresh').textContent = tr('Обновить', 'Refresh');
+      const toggle = document.querySelector('#language-toggle');
+      toggle.textContent = currentLanguage === 'ru' ? '🇬🇧' : '🇷🇺';
+      toggle.title = currentLanguage === 'ru' ? 'Switch to English' : 'Переключить на русский';
+      toggle.setAttribute('aria-label', toggle.title);
+    }
     async function decide(applicationId, decision, buttons) {
       buttons.forEach(button => button.disabled = true);
       const response = await fetch(`/v1/applications/${applicationId}/decision`, {
@@ -75,7 +115,15 @@
         body: JSON.stringify({decision})
       });
       if (!response.ok) throw new Error(`Decision failed (${response.status})`);
-      await loadQueue();
+      if (decision === 'reject') {
+        const card = buttons[0]?.closest('article');
+        if (card) card.remove();
+        const remaining = queue.querySelectorAll('article').length;
+        statusNode.textContent = `${remaining} application${remaining === 1 ? '' : 's'} awaiting review`;
+        if (!remaining) queue.append(element('div', 'Nothing is waiting for review.', 'empty'));
+      } else {
+        await loadQueue();
+      }
     }
     async function retryTask(applicationId, buttons) {
       buttons.forEach(button => button.disabled = true);
@@ -128,20 +176,67 @@
       const top = element('div', undefined, 'topline');
       const title = element('div');
       title.append(element('div', item.company, 'company'), element('h2', item.vacancy_title));
+      if (item.work_format) {
+        const labels = workFormatLabels[currentLanguage];
+        title.append(element('span', labels[item.work_format] || labels.unspecified, 'badge'));
+      }
+      Array.from(item.employment_types || []).forEach(employmentType => {
+        const label = employmentTypeLabels[currentLanguage][employmentType];
+        if (label) title.append(element('span', label, 'badge'));
+      });
+      if (item.salary_text) title.append(element('span', item.salary_text, 'badge salary'));
       top.append(title, element('div', `${item.match_score}%`, 'score'));
       card.append(top);
+      if (item.vacancy_summary) {
+        const truncated = item.vacancy_summary.length > 120 ? item.vacancy_summary.substring(0, 120) + '…' : item.vacancy_summary;
+        const summaryNode = element('span', truncated, 'summary-affordance');
+        summaryNode.setAttribute('tabindex', '0');
+        summaryNode.setAttribute('title', item.vacancy_summary);
+        card.append(summaryNode);
+      }
       const meta = element('div', undefined, 'meta');
-      meta.append('CV: ', element('strong', item.selected_cv_filename || 'not selected'), ' · ');
-      const source = element('a', 'Source vacancy'); source.href = item.source_url; source.target = '_blank'; source.rel = 'noopener noreferrer';
-      meta.append(source); card.append(meta);
-      card.append(element('div', `Workflow: ${item.current_workflow_state}`, 'meta'));
-      if (item.warnings.length) {
+      meta.append(
+        tr('Резюме: ', 'CV: '),
+        element('strong', item.selected_cv_filename || tr('не выбрано', 'not selected'))
+      );
+      card.append(meta);
+      card.append(
+        element(
+          'div',
+          `${tr('Процесс', 'Workflow')}: ${item.current_workflow_state}`,
+          'meta'
+        )
+      );
+      const missingSkills = Array.from(item.missing_required_skills || []);
+      const filteredWarnings = [];
+      (item.warnings || []).forEach(warning => {
+        const prefix = 'Missing required skill:';
+        if (typeof warning === 'string' && warning.startsWith(prefix)) {
+          const skill = warning.slice(prefix.length).trim();
+          if (skill && !missingSkills.some(s => s.toLowerCase() === skill.toLowerCase())) {
+            missingSkills.push(skill);
+          }
+        } else {
+          filteredWarnings.push(warning);
+        }
+      });
+      if (filteredWarnings.length) {
         const warnings = element('ul', undefined, 'warnings');
-        item.warnings.forEach(warning => warnings.append(element('li', warning)));
+        filteredWarnings.forEach(warning => warnings.append(element('li', warning)));
         card.append(warnings);
       }
+      if (missingSkills.length) {
+        const skillsHeading = element(
+          'div',
+          tr('Отсутствующие навыки:', 'Missing required skills:'),
+          'meta'
+        );
+        const tagsContainer = element('div', undefined, 'chips');
+        missingSkills.forEach(skill => tagsContainer.append(element('span', skill, 'chip')));
+        card.append(skillsHeading, tagsContainer);
+      }
       const materials = element('div', undefined, 'materials');
-      const coverLabel = element('label', 'Cover letter');
+      const coverLabel = element('label', tr('Сопроводительное письмо', 'Cover letter'));
       const coverLetter = element('textarea'); coverLetter.value = item.cover_letter_text || '';
       coverLetter.setAttribute('aria-label', `Cover letter for ${item.company}`);
       coverLabel.append(coverLetter); materials.append(coverLabel);
@@ -173,13 +268,17 @@
         card.append(checkpoint);
       }
       const actions = element('div', undefined, 'actions');
-      const specs = [['approve', 'Approve', 'approve'], ['reject', 'Reject', 'reject'], ['skip', 'Skip', '']];
+      const specs = [
+        ['approve', tr('Принять', 'Approve'), 'approve'],
+        ['reject', tr('Отклонить', 'Reject'), 'reject'],
+        ['skip', tr('Пропустить', 'Skip'), '']
+      ];
       const buttons = specs.map(([decision, label, className]) => {
         const button = element('button', label, className); button.type = 'button';
         button.addEventListener('click', () => decide(item.id, decision, buttons).catch(showError));
         actions.append(button); return button;
       });
-      const save = element('button', 'Save draft'); save.type = 'button'; buttons.push(save);
+      const save = element('button', tr('Сохранить черновик', 'Save draft')); save.type = 'button'; buttons.push(save);
       save.addEventListener('click', () => saveMaterials(item, coverLetter, answerInputs, buttons).catch(showError));
       actions.append(save);
       if (item.adapter_name === 'greenhouse' && ['scheduled', 'waiting_for_user'].includes(item.current_workflow_state)) {
@@ -199,6 +298,12 @@
         retry.addEventListener('click', () => retryTask(item.id, buttons).catch(showError));
         actions.append(retry);
       }
+      const sourceBtn = element('a', tr('Открыть вакансию', 'Open vacancy'));
+      sourceBtn.href = item.source_url;
+      sourceBtn.target = '_blank';
+      sourceBtn.rel = 'noopener noreferrer';
+      sourceBtn.className = 'link-btn';
+      actions.append(sourceBtn);
       card.append(actions); return card;
     }
     function showError(error) { statusNode.textContent = error.message; }
@@ -206,15 +311,28 @@
       evidenceObjectUrls.forEach(objectUrl => URL.revokeObjectURL(objectUrl));
       evidenceObjectUrls.clear();
       sessionStorage.setItem('reviewApiKey', keyInput.value);
-      statusNode.textContent = 'Loading…'; queue.replaceChildren();
+      statusNode.textContent = tr('Загрузка…', 'Loading…'); queue.replaceChildren();
       const response = await fetch('/v1/review-queue', {headers: headers()});
       if (!response.ok) throw new Error(`Queue unavailable (${response.status})`);
       const items = await response.json();
       items.forEach(item => queue.append(renderItem(item)));
-      if (!items.length) queue.append(element('div', 'Nothing is waiting for review.', 'empty'));
-      statusNode.textContent = `${items.length} application${items.length === 1 ? '' : 's'} awaiting review`;
+      if (!items.length) {
+        queue.append(
+          element('div', tr('Нет откликов, ожидающих проверки.', 'Nothing is waiting for review.'), 'empty')
+        );
+      }
+      statusNode.textContent = currentLanguage === 'en'
+        ? `${items.length} application${items.length === 1 ? '' : 's'} awaiting review`
+        : `Ожидают проверки: ${items.length}`;
     }
     document.querySelector('#refresh').addEventListener('click', () => loadQueue().catch(showError));
+    document.querySelector('#language-toggle').addEventListener('click', () => {
+      currentLanguage = currentLanguage === 'ru' ? 'en' : 'ru';
+      localStorage.setItem('dashboardLanguage', currentLanguage);
+      updateLanguage();
+      loadQueue().catch(showError);
+    });
+    updateLanguage();
     loadQueue().catch(showError);
   </script>
 </body>

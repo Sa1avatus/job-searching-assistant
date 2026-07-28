@@ -68,6 +68,12 @@ _COVER_LETTER_SAVE_SELECTOR = (
     "[role='dialog'] button:has-text('Сохранить')"
 )
 
+_EMPLOYMENT_DETAIL_SELECTORS: tuple[str, ...] = (
+    "[data-qa='vacancy-view-employment-mode']",
+    "[data-qa='vacancy-view-schedule']",
+    "[data-qa='vacancy-view-work-format']",
+)
+
 # hh.ru's `area` filter uses the same small set of numeric region ids as its (now avoided) public
 # API, but there is no network-free way to look up an arbitrary name, so only the common cases are
 # built in here. Unknown location names are ignored (search falls back to "anywhere") rather than
@@ -120,6 +126,8 @@ class ExtractedHeadHunterVacancy:
     form_fields: tuple[FormField, ...]
     requires_sensitive_review: bool
     published_at: datetime | None = None
+    salary_text: str = ""
+    employment_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,6 +408,36 @@ class HeadHunterBrowserAdapter:
         has_test_indicator = page.get_by_text("необходимо пройти тест", exact=False)
         requires_sensitive_review = await has_test_indicator.count() > 0
 
+        salary_candidates = page.locator("[data-qa='vacancy-salary']")
+        salary_text = ""
+        for idx in range(await salary_candidates.count()):
+            candidate = salary_candidates.nth(idx)
+            try:
+                if await candidate.is_visible():
+                    raw = (await candidate.inner_text()).strip()
+                    if raw:
+                        salary_text = re.sub(r"\s+", " ", raw)
+                        break
+            except Exception:  # noqa: BLE001 - stale salary candidates are skipped
+                continue
+
+        seen_fragments: set[str] = set()
+        employment_fragments: list[str] = []
+        for selector in _EMPLOYMENT_DETAIL_SELECTORS:
+            candidates = page.locator(selector)
+            for idx in range(await candidates.count()):
+                candidate = candidates.nth(idx)
+                try:
+                    if await candidate.is_visible():
+                        raw = (await candidate.inner_text()).strip()
+                        normalized = re.sub(r"\s+", " ", raw)
+                        if normalized and normalized not in seen_fragments:
+                            seen_fragments.add(normalized)
+                            employment_fragments.append(normalized)
+                except Exception:  # noqa: BLE001 - stale detail candidates are skipped
+                    continue
+        employment_text = ", ".join(employment_fragments)
+
         fields = [
             FormField(
                 "resume",
@@ -433,6 +471,8 @@ class HeadHunterBrowserAdapter:
             form_fields=tuple(fields),
             requires_sensitive_review=requires_sensitive_review,
             published_at=published_at,
+            salary_text=salary_text,
+            employment_text=employment_text,
         )
 
     async def _find_cover_letter_field(self, page: Page) -> Locator | None:

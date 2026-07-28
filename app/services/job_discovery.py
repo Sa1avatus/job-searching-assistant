@@ -27,9 +27,11 @@ from adapters.job_boards.greenhouse_api import (
 from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter, HeadHunterSearchHit
 from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter, LinkedInSearchHit
 from app.config import get_settings
+from app.domain.vacancy_attributes import detect_employment_types
 from app.matching.jobs import MatchingJobService
 from app.services.company_blacklist import CompanyBlacklistService
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError, RecruitmentService
+from app.services.vacancy_metadata import detect_work_format, summarize_vacancy
 from app.storage.tables import ApplicationRow, CvFileRow, UserRow, VacancyRow
 
 
@@ -53,6 +55,19 @@ def _contains_skill(text: str, normalized_skill: str) -> bool:
     return re.search(rf"(?<!\w){flexible_skill}(?!\w)", text.casefold()) is not None
 
 
+def _detect_extracted_work_format(
+    *,
+    title: str,
+    location: str,
+    description_text: str,
+    employment_text: str,
+) -> str:
+    bounded_format = detect_work_format("", location, employment_text)
+    if bounded_format != "unspecified":
+        return bounded_format
+    return detect_work_format(title, location, description_text)
+
+
 class NoSearchKeywordsError(RuntimeError):
     """The candidate has no verified skills/keywords to search with."""
 
@@ -70,6 +85,11 @@ class DiscoveryOutcome:
     source_url: str
     match_score: int
     status: str  # "created" | "already_existed"
+    application_status: str
+    vacancy_summary: str
+    work_format: str
+    salary_text: str = ""
+    employment_types: tuple[str, ...] = ()
 
 
 def build_search_queries(search_text: str) -> list[str]:
@@ -172,6 +192,12 @@ class JobDiscoveryService:
             except Exception:  # noqa: BLE001 - a single unreadable search hit should not abort the run
                 return None
             try:
+                work_format = _detect_extracted_work_format(
+                    title=extracted.title,
+                    location=extracted.location,
+                    description_text=extracted.description_text,
+                    employment_text=extracted.employment_text,
+                )
                 vacancy = recruitment.create_vacancy(
                     source_url=extracted.source_url,
                     title=extracted.title,
@@ -194,6 +220,14 @@ class JobDiscoveryService:
                     ],
                     requires_sensitive_review=extracted.requires_sensitive_review,
                     published_at=extracted.published_at,
+                    salary_text=extracted.salary_text,
+                    work_format=work_format,
+                    employment_types=detect_employment_types(
+                        extracted.employment_text,
+                        extracted.title,
+                        extracted.location,
+                        extracted.description_text,
+                    ),
                 )
             except DuplicateEntityError:
                 vacancy = self._session.scalar(
@@ -224,6 +258,11 @@ class JobDiscoveryService:
                 source_url=vacancy.source_url,
                 match_score=existing_application.match_score,
                 status="already_existed",
+                application_status=existing_application.status,
+                vacancy_summary=summarize_vacancy(vacancy.description_text),
+                work_format=vacancy.work_format,
+                salary_text=vacancy.salary_text,
+                employment_types=tuple(vacancy.employment_types or ()),
             )
 
         try:
@@ -239,6 +278,11 @@ class JobDiscoveryService:
             source_url=vacancy.source_url,
             match_score=application.match_score,
             status="created",
+            application_status=application.status,
+            vacancy_summary=summarize_vacancy(vacancy.description_text),
+            work_format=vacancy.work_format,
+            salary_text=vacancy.salary_text,
+            employment_types=tuple(vacancy.employment_types or ()),
         )
 
     async def discover_linkedin_vacancies(
@@ -312,6 +356,12 @@ class JobDiscoveryService:
             except Exception:  # noqa: BLE001 - a single unreadable search hit should not abort the run
                 return None
             try:
+                work_format = _detect_extracted_work_format(
+                    title=extracted.title,
+                    location=extracted.location,
+                    description_text=extracted.description_text,
+                    employment_text=extracted.employment_text,
+                )
                 vacancy = recruitment.create_vacancy(
                     source_url=extracted.source_url,
                     title=extracted.title,
@@ -325,6 +375,14 @@ class JobDiscoveryService:
                     application_fields=[],
                     requires_sensitive_review=False,
                     published_at=extracted.published_at,
+                    salary_text=extracted.salary_text,
+                    work_format=work_format,
+                    employment_types=detect_employment_types(
+                        extracted.employment_text,
+                        extracted.title,
+                        extracted.location,
+                        extracted.description_text,
+                    ),
                 )
             except DuplicateEntityError:
                 vacancy = self._session.scalar(
@@ -355,6 +413,11 @@ class JobDiscoveryService:
                 source_url=vacancy.source_url,
                 match_score=existing_application.match_score,
                 status="already_existed",
+                application_status=existing_application.status,
+                vacancy_summary=summarize_vacancy(vacancy.description_text),
+                work_format=vacancy.work_format,
+                salary_text=vacancy.salary_text,
+                employment_types=tuple(vacancy.employment_types or ()),
             )
         try:
             application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
@@ -369,6 +432,11 @@ class JobDiscoveryService:
             source_url=vacancy.source_url,
             match_score=application.match_score,
             status="created",
+            application_status=application.status,
+            vacancy_summary=summarize_vacancy(vacancy.description_text),
+            work_format=vacancy.work_format,
+            salary_text=vacancy.salary_text,
+            employment_types=tuple(vacancy.employment_types or ()),
         )
 
     async def discover_greenhouse_vacancies(
@@ -461,6 +529,12 @@ class JobDiscoveryService:
             if CompanyBlacklistService(self._session).contains(user_id, extracted.company):
                 return None
             try:
+                work_format = _detect_extracted_work_format(
+                    title=extracted.title,
+                    location=extracted.location,
+                    description_text=extracted.description_text,
+                    employment_text=extracted.employment_text,
+                )
                 vacancy = recruitment.create_vacancy(
                     source_url=extracted.source_url,
                     title=extracted.title,
@@ -483,6 +557,14 @@ class JobDiscoveryService:
                     ],
                     requires_sensitive_review=extracted.requires_sensitive_review,
                     published_at=extracted.published_at,
+                    salary_text=extracted.salary_text,
+                    work_format=work_format,
+                    employment_types=detect_employment_types(
+                        extracted.employment_text,
+                        extracted.title,
+                        extracted.location,
+                        extracted.description_text,
+                    ),
                 )
             except DuplicateEntityError:
                 vacancy = self._session.scalar(
@@ -511,6 +593,11 @@ class JobDiscoveryService:
                 source_url=vacancy.source_url,
                 match_score=existing_application.match_score,
                 status="already_existed",
+                application_status=existing_application.status,
+                vacancy_summary=summarize_vacancy(vacancy.description_text),
+                work_format=vacancy.work_format,
+                salary_text=vacancy.salary_text,
+                employment_types=tuple(vacancy.employment_types or ()),
             )
         try:
             application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
@@ -525,6 +612,11 @@ class JobDiscoveryService:
             source_url=vacancy.source_url,
             match_score=application.match_score,
             status="created",
+            application_status=application.status,
+            vacancy_summary=summarize_vacancy(vacancy.description_text),
+            work_format=vacancy.work_format,
+            salary_text=vacancy.salary_text,
+            employment_types=tuple(vacancy.employment_types or ()),
         )
 
     def known_greenhouse_board_urls(self) -> list[str]:

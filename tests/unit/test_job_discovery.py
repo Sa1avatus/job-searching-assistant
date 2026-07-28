@@ -13,6 +13,7 @@ from app.services.job_discovery import (
     JobDiscoveryService,
     NoSearchKeywordsError,
     _contains_skill,
+    _detect_extracted_work_format,
     _normalize_skill,
     build_search_queries,
 )
@@ -47,6 +48,8 @@ class _FakeAdapter:
                 FormField("resume", "Резюме", FormFieldType.FILE, True, semantic_category="resume"),
             ),
             requires_sensitive_review=False,
+            salary_text="от 250 000 ₽",
+            employment_text="Удалённо, полная занятость",
         )
 
 
@@ -71,6 +74,8 @@ class _FakeLinkedInAdapter:
             location="Remote",
             description_text="Python services",
             has_easy_apply=False,
+            salary_text="$120,000 - $150,000",
+            employment_text="Remote, Full-time",
         )
 
 
@@ -99,6 +104,8 @@ class _FakeGreenhouseAdapter:
             form_fields=(),
             requires_sensitive_review=False,
             evidence_api_url="https://boards-api.greenhouse.io/v1/boards/example/jobs/3",
+            salary_text="$140,000",
+            employment_text="Hybrid contract role",
         )
 
 
@@ -134,6 +141,11 @@ def test_discover_creates_vacancy_and_application() -> None:
         assert len(outcomes) == 1
         assert outcomes[0].status == "created"
         assert outcomes[0].title == "Backend Engineer"
+        assert outcomes[0].application_status == "awaiting_review"
+        assert outcomes[0].vacancy_summary == "Build things with Python."
+        assert outcomes[0].work_format == "remote"
+        assert outcomes[0].salary_text == "от 250 000 ₽"
+        assert outcomes[0].employment_types == ("full_time",)
         assert adapter.search_calls == [("Python", [])]
 
     asyncio.run(run())
@@ -184,6 +196,8 @@ def test_discover_uses_selected_resume_keywords_skills_and_file() -> None:
             assert application is not None
             assert application.selected_cv_file_id == cv_file.id
             assert application.match_score > 0
+            assert outcomes[0].application_status == "awaiting_review"
+            assert outcomes[0].vacancy_summary == "Build things with Python."
 
     asyncio.run(run())
 
@@ -211,8 +225,12 @@ def test_discover_marks_existing_application_as_already_existed() -> None:
                 user_id, headhunter_adapter=adapter, locations=[]
             )
         assert first[0].status == "created"
+        assert first[0].application_status == "awaiting_review"
         assert second[0].status == "already_existed"
+        assert second[0].application_status == "awaiting_review"
         assert second[0].application_id == first[0].application_id
+        assert second[0].vacancy_summary == first[0].vacancy_summary
+        assert second[0].work_format == first[0].work_format
 
     asyncio.run(run())
 
@@ -299,6 +317,18 @@ def test_skill_matching_normalizes_spacing_and_respects_word_boundaries() -> Non
     assert not _contains_skill("Django services", _normalize_skill("Go"))
 
 
+def test_bounded_employment_evidence_takes_priority_over_page_noise() -> None:
+    assert (
+        _detect_extracted_work_format(
+            title="AI Engineer",
+            location="Singapore",
+            description_text="Premium suggestions include hybrid opportunities.",
+            employment_text="On-site · Full-time",
+        )
+        == "office"
+    )
+
+
 def test_linkedin_discovery_keeps_jobs_without_easy_apply() -> None:
     async def run() -> None:
         session_factory = _session_factory()
@@ -318,6 +348,11 @@ def test_linkedin_discovery_keeps_jobs_without_easy_apply() -> None:
 
         assert len(outcomes) == 1
         assert outcomes[0].source_url == "https://www.linkedin.com/jobs/view/2"
+        assert outcomes[0].application_status == "awaiting_review"
+        assert outcomes[0].vacancy_summary == "Python services"
+        assert outcomes[0].work_format == "remote"
+        assert outcomes[0].salary_text == "$120,000 - $150,000"
+        assert outcomes[0].employment_types == ("full_time",)
 
     asyncio.run(run())
 
@@ -342,5 +377,10 @@ def test_greenhouse_discovery_searches_supplied_board() -> None:
 
         assert len(outcomes) == 1
         assert outcomes[0].company == "Green Example"
+        assert outcomes[0].application_status == "awaiting_review"
+        assert outcomes[0].vacancy_summary == "Build Python services"
+        assert outcomes[0].work_format == "hybrid"
+        assert outcomes[0].salary_text == "$140,000"
+        assert outcomes[0].employment_types == ("contract",)
 
     asyncio.run(run())

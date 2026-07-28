@@ -64,6 +64,18 @@ def _is_russian_text(text: str) -> bool:
     return len(re.findall(r"[А-Яа-яЁё]", text)) >= 10
 
 
+def _matches_language(text: str, language: str) -> bool:
+    cyrillic_count = len(re.findall(r"[А-Яа-яЁё]", text))
+    latin_count = len(re.findall(r"[A-Za-z]", text))
+    if language == "ru":
+        return _is_russian_text(text) or (
+            cyrillic_count >= 3 and cyrillic_count >= latin_count / 3
+        )
+    return latin_count >= 10 and (
+        cyrillic_count < 3 or latin_count >= cyrillic_count * 3
+    )
+
+
 def _build_prompt(
     *,
     vacancy: VacancyRow,
@@ -101,7 +113,28 @@ class MaterialsGenerationService:
         self._session = session
         self._router = router
 
-    async def draft_materials(self, application_id: str) -> GeneratedMaterials:
+    def needs_material_refresh(self, application_id: str) -> bool:
+        """Return whether an awaiting-review application has missing or wrong-language material."""
+        application = self._session.get(ApplicationRow, application_id)
+        if application is None or application.status != "awaiting_review":
+            return False
+        vacancy = self._session.get(VacancyRow, application.vacancy_id)
+        if vacancy is None:
+            return False
+        cover_letter = application.cover_letter_text or ""
+        response_language = detect_vacancy_language(vacancy)
+        if not cover_letter.strip() or not _matches_language(cover_letter, response_language):
+            return True
+        return any(
+            not answer.answer
+            and answer.semantic_category not in SENSITIVE_CATEGORIES
+            and answer.field_id != "resume"
+            for answer in application.answers
+        )
+
+    async def draft_materials(
+        self, application_id: str, *, replace_mismatched_cover_letter: bool = False
+    ) -> GeneratedMaterials:
         application = self._session.get(ApplicationRow, application_id)
         if application is None:
             raise EntityNotFoundError("Application not found")
@@ -142,21 +175,23 @@ class MaterialsGenerationService:
             timeout_seconds=45,
         )
         draft = await self._router.route(request, MaterialsDraft)
-        if response_language == "ru" and not _is_russian_text(draft.cover_letter_text):
+        if not _matches_language(draft.cover_letter_text, response_language):
+            required_language = "Russian" if response_language == "ru" else "English"
             correction_request = ModelRequest(
                 task_name="correct_application_materials_language",
                 task_class=ModelTaskClass.LOW_COST,
                 prompt=(
                     f"{prompt}\n\nIMPORTANT: The previous response used the wrong language. "
-                    "Return a newly written cover_letter_text entirely in Russian."
+                    f"Return a newly written cover_letter_text entirely in {required_language}."
                 ),
                 max_cost_usd=0.05,
                 timeout_seconds=45,
             )
             draft = await self._router.route(correction_request, MaterialsDraft)
-            if not _is_russian_text(draft.cover_letter_text):
+            if not _matches_language(draft.cover_letter_text, response_language):
                 raise MaterialsLanguageMismatchError(
-                    "The model did not produce a Russian cover letter for a Russian vacancy"
+                    f"The model did not produce a {required_language} cover letter for a "
+                    f"{required_language} vacancy"
                 )
 
         filled: list[str] = []
@@ -182,7 +217,12 @@ class MaterialsGenerationService:
             answer.warning = "Drafted by AI from your verified profile facts — review before use"
             filled.append(field_id)
 
-        if not (application.cover_letter_text or "").strip():
+        existing_cover_letter = application.cover_letter_text or ""
+        should_replace_cover_letter = not existing_cover_letter.strip() or (
+            replace_mismatched_cover_letter
+            and not _matches_language(existing_cover_letter, response_language)
+        )
+        if should_replace_cover_letter:
             application.cover_letter_text = draft.cover_letter_text.strip()
         self._session.commit()
         return GeneratedMaterials(

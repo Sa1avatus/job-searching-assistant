@@ -3,6 +3,16 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl, SecretStr
 
+WorkFormat = Literal["remote", "hybrid", "office", "unspecified"]
+EmploymentTypeName = Literal[
+    "full_time",
+    "part_time",
+    "contract",
+    "project",
+    "temporary",
+    "internship",
+]
+
 
 class VacancyRequest(BaseModel):
     source_url: HttpUrl
@@ -294,6 +304,11 @@ class ReviewItemResponse(ApplicationResponse):
     missing_facts: list[str]
     requested_legal_declarations: list[str]
     active_human_action: HumanActionCheckpointResponse | None
+    vacancy_summary: str
+    work_format: WorkFormat
+    salary_text: str
+    employment_types: list[EmploymentTypeName]
+    missing_required_skills: list[str]
 
 
 class ExtractedProfileResponse(BaseModel):
@@ -304,7 +319,7 @@ class ExtractedProfileResponse(BaseModel):
 
 
 class ConfirmProfileFactsRequest(BaseModel):
-    skills: list[str] = Field(default_factory=list, max_length=60)
+    skills: list[str] = Field(default_factory=list, max_length=160)
     experience_summary: str = Field(default="", max_length=2_000)
 
 
@@ -377,6 +392,11 @@ class DiscoveryOutcomeResponse(BaseModel):
     source_url: str
     match_score: int
     status: str
+    application_status: str
+    vacancy_summary: str
+    work_format: WorkFormat
+    salary_text: str
+    employment_types: list[EmploymentTypeName]
 
 
 class SavedVacancyResponse(BaseModel):
@@ -391,6 +411,10 @@ class SavedVacancyResponse(BaseModel):
     source: Literal["headhunter", "linkedin", "greenhouse", "registry", "other"]
     published_at: datetime | None
     created_at: datetime
+    vacancy_summary: str
+    work_format: WorkFormat
+    salary_text: str
+    employment_types: list[EmploymentTypeName]
 
 
 class SavedVacancyPageResponse(BaseModel):

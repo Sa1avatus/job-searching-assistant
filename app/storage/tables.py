@@ -115,6 +115,9 @@ class VacancyRow(Base):
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+    salary_text: Mapped[str] = mapped_column(Text, default="")
+    work_format: Mapped[str] = mapped_column(String(30), default="unspecified", index=True)
+    employment_types: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
