@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     retention_days: int = Field(default=30, ge=1, le=3650)
     retention_interval_seconds: int = Field(default=86_400, ge=60, le=604_800)
     hh_user_agent: str = Field(
-        default="JobSearchingAssistant/0.1 (local personal assistant)", min_length=1, max_length=300
+        default="JobSearchingAssistant/1.0 (local personal assistant)", min_length=1, max_length=300
     )
     hh_access_token: SecretStr | None = None
 

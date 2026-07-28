@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.domain.application_status import APPLICATION_STATUSES, ApplicationStatus
 from app.domain.models import ApplicationQuestion, ProfileFact, TaskState, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy, prepare_answers
 from app.domain.vacancy_attributes import EMPLOYMENT_TYPE_ORDER, EmploymentType
@@ -127,6 +128,26 @@ class RecruitmentService:
         user.active_cv_file_id = cv_file.id
         self._session.commit()
         return cv_file
+
+    def delete_cv_file(self, user_id: str, cv_file_id: str) -> Path:
+        user = self._require_user(user_id)
+        cv_file = self.get_cv_file(user_id, cv_file_id)
+        stored_path = Path(cv_file.storage_path)
+        self._session.execute(
+            update(ApplicationRow)
+            .where(ApplicationRow.selected_cv_file_id == cv_file.id)
+            .values(selected_cv_file_id=None)
+        )
+        replacement = self._session.scalar(
+            select(CvFileRow)
+            .where(CvFileRow.user_id == user_id, CvFileRow.id != cv_file.id)
+            .order_by(CvFileRow.created_at.desc(), CvFileRow.id.desc())
+        )
+        if user.active_cv_file_id == cv_file.id:
+            user.active_cv_file_id = replacement.id if replacement is not None else None
+        self._session.delete(cv_file)
+        self._session.commit()
+        return stored_path
 
     def save_cv_profile(
         self,
@@ -338,15 +359,19 @@ class RecruitmentService:
 
     def list_review_queue(
         self,
+        application_id: str | None = None,
     ) -> list[tuple[ApplicationRow, VacancyRow, CvFileRow | None, WorkflowTaskRow]]:
         statement = (
             select(ApplicationRow, VacancyRow, CvFileRow, WorkflowTaskRow)
             .join(VacancyRow, VacancyRow.id == ApplicationRow.vacancy_id)
             .outerjoin(CvFileRow, CvFileRow.id == ApplicationRow.selected_cv_file_id)
             .join(WorkflowTaskRow, WorkflowTaskRow.application_id == ApplicationRow.id)
-            .where(ApplicationRow.status == "awaiting_review")
             .order_by(ApplicationRow.created_at)
         )
+        if application_id is None:
+            statement = statement.where(ApplicationRow.status == "awaiting_review")
+        else:
+            statement = statement.where(ApplicationRow.id == application_id)
         return list(self._session.execute(statement).tuples())
 
     def schedule_greenhouse_browser_review(self, application_id: str) -> WorkflowTaskRow:
@@ -713,6 +738,20 @@ class RecruitmentService:
                     checkpoint.status = "resolved"
                     checkpoint.resolved_at = datetime.now(UTC)
                     checkpoint.resolution_evidence = [f"decision:{decision}"]
+        self._session.commit()
+        return application
+
+    def update_application_status(
+        self, application_id: str, status: ApplicationStatus
+    ) -> ApplicationRow:
+        application = self._session.scalar(
+            select(ApplicationRow).where(ApplicationRow.id == application_id).with_for_update()
+        )
+        if application is None:
+            raise EntityNotFoundError("Application not found")
+        if status not in APPLICATION_STATUSES:
+            raise ValueError("Unsupported application status")
+        application.status = status
         self._session.commit()
         return application
 

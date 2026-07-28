@@ -67,6 +67,7 @@ class ExtractedLinkedInVacancy:
     published_at: datetime | None = None
     salary_text: str = ""
     employment_text: str = ""
+    application_submitted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,9 +202,8 @@ class LinkedInBrowserAdapter:
         if location:
             query += f"&location={quote(location)}"
         page = await self._browser_engine.new_page()
-        navigation = await self._browser_engine.navigate(
-            page, f"https://www.linkedin.com/jobs/search/?{query}"
-        )
+        search_url = f"https://www.linkedin.com/jobs/search/?{query}"
+        navigation = await self._navigate_search_with_retry(page, search_url)
         if not navigation.is_successful:
             raise RuntimeError(f"LinkedIn search navigation failed: {navigation.error_category}")
         await self._raise_if_challenge_url(page)
@@ -280,8 +280,20 @@ class LinkedInBrowserAdapter:
                 action_name="search",
                 target="linkedin-result-identifiers-not-parsed",
                 error=RuntimeError("LinkedIn result elements did not expose parseable job ids"),
-            )
+                )
         return hits
+
+    async def _navigate_search_with_retry(
+        self, page: Page, search_url: str
+    ) -> BrowserActionResult:
+        navigation = await self._browser_engine.navigate(page, search_url)
+        if (
+            not navigation.is_successful
+            and navigation.error_category is FailureCategory.TRANSIENT_NETWORK_ERROR
+            and navigation.should_retry
+        ):
+            navigation = await self._browser_engine.navigate(page, search_url)
+        return navigation
 
     async def extract_vacancy(self, url: str) -> ExtractedLinkedInVacancy:
         """Read a job posting's detail pane. Requires a signed-in session (same as search)."""
@@ -330,6 +342,12 @@ class LinkedInBrowserAdapter:
         description_locator = page.locator(".jobs-description__content").first
         if await description_locator.count() == 0:
             description_locator = page.locator("#job-details, .jobs-box__html-content").first
+        if await description_locator.count() == 0:
+            about_heading = page.get_by_role(
+                "heading", name=re.compile(r"^(?:About the job|О вакансии)$", re.IGNORECASE)
+            ).first
+            if await about_heading.count() > 0:
+                description_locator = about_heading.locator("..").locator("..")
         description_text = (
             (await description_locator.inner_text()).strip()
             if await description_locator.count() > 0
@@ -367,11 +385,33 @@ class LinkedInBrowserAdapter:
                             insight_fragments.append(normalized)
                 except Exception:  # noqa: BLE001 - stale insight candidates are skipped
                     continue
+        semantic_insights = page.get_by_role(
+            "link",
+            name=re.compile(
+                r"^(?:Remote|Hybrid|On-site|Onsite|Full-time|Part-time|Contract|"
+                r"Temporary|Internship|Удалённо|Гибрид|Офис|Полная занятость|"
+                r"Частичная занятость|Контракт|Стажировка)$",
+                re.IGNORECASE,
+            ),
+        )
+        for idx in range(await semantic_insights.count()):
+            candidate = semantic_insights.nth(idx)
+            try:
+                if await candidate.is_visible():
+                    normalized = re.sub(r"\s+", " ", (await candidate.inner_text()).strip())
+                    if normalized and normalized not in seen_insights:
+                        seen_insights.add(normalized)
+                        insight_fragments.append(normalized)
+            except Exception:  # noqa: BLE001 - stale semantic candidates are skipped
+                continue
         employment_text = ", ".join(insight_fragments)
         insight_combined = " ".join(insight_fragments)
         salary_text = find_salary_text(insight_combined)
         if not salary_text:
             salary_text = find_salary_text(description_text)
+        application_submitted = (
+            await page.get_by_text("Application submitted", exact=False).count() > 0
+        )
 
         return ExtractedLinkedInVacancy(
             source_url=url,
@@ -383,6 +423,7 @@ class LinkedInBrowserAdapter:
             published_at=published_at,
             salary_text=salary_text,
             employment_text=employment_text,
+            application_submitted=application_submitted,
         )
 
     async def _raise_if_challenge_url(self, page: Page) -> None:

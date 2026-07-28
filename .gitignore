@@ -5,5 +5,7 @@ __pycache__/
 .venv/
 .env
 .artifacts/
+.local-worker/
+tasks/
+debug.log
 *.pyc
-

@@ -233,25 +233,60 @@ def test_dashboard_exposes_stateful_metadata_and_non_disruptive_rejection() -> N
     assert "createSummaryAffordance" in html
     assert "summary-affordance" in html
     # Cache version bumped for new metadata fields
-    assert "SEARCH_RESULTS_VERSION = 3" in html
+    assert "SEARCH_RESULTS_VERSION = 4" in html
     # New fields normalized and persisted in search cache
     assert "application_status" in html
     assert "vacancy_summary" in html
     assert "work_format" in html
     assert "salary_text" in html
     assert "employment_types" in html
+    assert "key_skills" in html
+    assert "createKeySkillTags" in html
+    assert "createStatusEditor" in html
+    assert "setApplicationStatus" in html
+    assert "Я откликнулся вручную" in html
     assert 'id="vacancy-work-format"' in html
     assert 'id="vacancy-employment-type"' in html
     assert 'id="manual-skill"' in html
     assert 'id="language-toggle"' in html
     assert "dashboardLanguage" in html
+    assert 'id="language-menu"' in html
+    assert 'aria-haspopup="listbox"' in html
+    assert '<svg class="language-flag"' in html
+    assert "LANGUAGE_OPTIONS" in html
+    assert "createLanguageFlag" in html
+    assert "selectedLanguage.names[selectedLanguage.code]" in html
+    assert "selectLanguage(language.code)" in html
+    assert "event.key === 'Escape'" in html
+    assert "currentLanguage = currentLanguage === 'ru' ? 'en' : 'ru'" not in html
+    assert "🇬🇧" not in html
+    assert "🇷🇺" not in html
     # Submitted / interview vacancies show disabled primary action
     assert "Отклик отправлен" in html
     assert "isSubmissionConfirmed" in html
+    assert 'id="delete-resume"' in html
+    assert "generate-materials" in html
+    assert "cover_letter_language_matches" in html
+    assert "application_status !== item.application_status" in html
+    assert "recalculate-match" in html
+    assert "Рассчитать подробно" in html
     # Missing skills rendered as chip tags
     assert "appendMissingSkillsTags" in html
     # Cache status update after confirmed submission
     assert "updateCachedSearchResultStatus" in html
+
+
+def test_review_page_exposes_selected_application_navigation_and_status_editor() -> None:
+    response = client.get("/review?application_id=application-123")
+    html = response.text
+
+    assert response.status_code == 200
+    assert 'class="sidebar"' in html
+    assert "selectedApplicationId" in html
+    assert "application_id" in html
+    assert "createStatusEditor" in html
+    assert "createKeySkillTags" in html
+    assert "Материалы и решения" in html
 
 
 def test_review_has_metadata_tags_source_button_and_in_place_rejection() -> None:
@@ -271,6 +306,17 @@ def test_review_has_metadata_tags_source_button_and_in_place_rejection() -> None
     assert "salary_text" in html
     assert 'id="language-toggle"' in html
     assert "dashboardLanguage" in html
+    assert 'id="language-menu"' in html
+    assert 'aria-haspopup="listbox"' in html
+    assert '<svg class="language-flag"' in html
+    assert "LANGUAGE_OPTIONS" in html
+    assert "createLanguageFlag" in html
+    assert "selectedLanguage.names[selectedLanguage.code]" in html
+    assert "selectLanguage(language.code)" in html
+    assert "event.key === 'Escape'" in html
+    assert "currentLanguage = currentLanguage === 'ru' ? 'en' : 'ru'" not in html
+    assert "🇬🇧" not in html
+    assert "🇷🇺" not in html
     # Source vacancy moved to bottom actions as button
     assert "link-btn" in html
     assert "Открыть вакансию" in html

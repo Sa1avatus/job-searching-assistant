@@ -34,12 +34,63 @@ _OFFICE_PATTERNS = [
     re.compile(r"\bon-?site\b", re.IGNORECASE),
     re.compile(r"\bin-?office\b", re.IGNORECASE),
     re.compile(r"\boffice\s+work\b", re.IGNORECASE),
+    re.compile(r"\bat\s+the\s+employer(?:'s|’s)?\s+location\b", re.IGNORECASE),
+    re.compile(r"\bat\s+the\s+workplace\b", re.IGNORECASE),
     re.compile(r"\bофис\b", re.IGNORECASE),
     re.compile(r"\bв\s+офисе\b", re.IGNORECASE),
     re.compile(r"\bна\s+месте\b", re.IGNORECASE),
+    re.compile(r"\bна\s+территории\s+работодателя\b", re.IGNORECASE),
 ]
 
 _INFORMATIVE_MIN_LENGTH = 20
+
+_KEY_SKILL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("Python", re.compile(r"(?<!\w)python(?!\w)", re.IGNORECASE)),
+    ("Java", re.compile(r"(?<!\w)java(?!script)(?!\w)", re.IGNORECASE)),
+    ("JavaScript", re.compile(r"(?<!\w)javascript(?!\w)", re.IGNORECASE)),
+    ("TypeScript", re.compile(r"(?<!\w)typescript(?!\w)", re.IGNORECASE)),
+    ("C#", re.compile(r"(?<!\w)c#(?!\w)", re.IGNORECASE)),
+    ("C++", re.compile(r"(?<!\w)c\+\+(?!\w)", re.IGNORECASE)),
+    ("Go", re.compile(r"(?<!\w)golang(?!\w)|(?<!\w)go(?!\w)", re.IGNORECASE)),
+    ("SQL", re.compile(r"(?<!\w)sql(?!\w)", re.IGNORECASE)),
+    ("PostgreSQL", re.compile(r"(?<!\w)postgres(?:ql)?(?!\w)", re.IGNORECASE)),
+    ("MySQL", re.compile(r"(?<!\w)mysql(?!\w)", re.IGNORECASE)),
+    ("NoSQL", re.compile(r"(?<!\w)nosql(?!\w)", re.IGNORECASE)),
+    ("Redis", re.compile(r"(?<!\w)redis(?!\w)", re.IGNORECASE)),
+    ("RabbitMQ", re.compile(r"(?<!\w)rabbitmq(?!\w)", re.IGNORECASE)),
+    ("Kafka", re.compile(r"(?<!\w)kafka(?!\w)", re.IGNORECASE)),
+    ("REST API", re.compile(r"(?<!\w)rest(?:ful)?\s+api(?:s)?(?!\w)", re.IGNORECASE)),
+    ("SOAP API", re.compile(r"(?<!\w)soap\s+api(?:s)?(?!\w)", re.IGNORECASE)),
+    ("FastAPI", re.compile(r"(?<!\w)fastapi(?!\w)", re.IGNORECASE)),
+    ("Django", re.compile(r"(?<!\w)django(?!\w)", re.IGNORECASE)),
+    ("Docker", re.compile(r"(?<!\w)docker(?!\w)", re.IGNORECASE)),
+    ("Kubernetes", re.compile(r"(?<!\w)kubernetes(?!\w)|(?<!\w)k8s(?!\w)", re.IGNORECASE)),
+    ("Terraform", re.compile(r"(?<!\w)terraform(?!\w)", re.IGNORECASE)),
+    ("AWS", re.compile(r"(?<!\w)aws(?!\w)", re.IGNORECASE)),
+    ("Azure", re.compile(r"(?<!\w)azure(?!\w)", re.IGNORECASE)),
+    ("GCP", re.compile(r"(?<!\w)gcp(?!\w)|google\s+cloud", re.IGNORECASE)),
+    ("CI/CD", re.compile(r"(?<!\w)ci\s*/\s*cd(?!\w)", re.IGNORECASE)),
+    ("Linux", re.compile(r"(?<!\w)linux(?!\w)", re.IGNORECASE)),
+    ("Git", re.compile(r"(?<!\w)git(?!\w)", re.IGNORECASE)),
+    ("TensorFlow", re.compile(r"(?<!\w)tensorflow(?!\w)", re.IGNORECASE)),
+    ("PyTorch", re.compile(r"(?<!\w)pytorch(?!\w)", re.IGNORECASE)),
+    ("Keras", re.compile(r"(?<!\w)keras(?!\w)", re.IGNORECASE)),
+    ("Airflow", re.compile(r"(?<!\w)airflow(?!\w)", re.IGNORECASE)),
+    ("MLflow", re.compile(r"(?<!\w)mlflow(?!\w)", re.IGNORECASE)),
+    ("Kubeflow", re.compile(r"(?<!\w)kubeflow(?!\w)", re.IGNORECASE)),
+    ("LLM", re.compile(r"(?<!\w)llms?(?!\w)|large\s+language\s+models?", re.IGNORECASE)),
+    ("RAG", re.compile(r"(?<!\w)rag(?!\w)|retrieval[- ]augmented", re.IGNORECASE)),
+    ("Machine Learning", re.compile(r"\bmachine\s+learning\b", re.IGNORECASE)),
+    ("Deep Learning", re.compile(r"\bdeep\s+learning\b", re.IGNORECASE)),
+    ("NLP", re.compile(r"(?<!\w)nlp(?!\w)|natural\s+language\s+processing", re.IGNORECASE)),
+    ("Generative AI", re.compile(r"\bgenerative\s+ai\b|(?<!\w)genai(?!\w)", re.IGNORECASE)),
+    ("Data Science", re.compile(r"\bdata\s+science\b", re.IGNORECASE)),
+    ("Data Governance", re.compile(r"\bdata\s+governance\b", re.IGNORECASE)),
+    ("Enterprise Architecture", re.compile(r"\benterprise\s+architecture\b", re.IGNORECASE)),
+    ("Distributed Systems", re.compile(r"\bdistributed\s+systems?\b", re.IGNORECASE)),
+    ("Information Security", re.compile(r"\binformation\s+security\b", re.IGNORECASE)),
+    ("TOGAF", re.compile(r"(?<!\w)togaf(?!\w)", re.IGNORECASE)),
+)
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -116,3 +167,32 @@ def detect_work_format(
     if any(p.search(combined) for p in _OFFICE_PATTERNS):
         return "office"
     return "unspecified"
+
+
+def extract_key_skills(
+    description_text: str,
+    declared_skills: list[str] | tuple[str, ...] = (),
+    *,
+    limit: int = 20,
+) -> tuple[str, ...]:
+    """Return stable display tags from declared skills and explicit description mentions."""
+    if limit < 1:
+        return ()
+    skills: list[str] = []
+    seen: set[str] = set()
+    for skill in declared_skills:
+        normalized = " ".join(skill.split()).strip()
+        key = normalized.casefold()
+        if normalized and key not in seen:
+            seen.add(key)
+            skills.append(normalized)
+            if len(skills) == limit:
+                return tuple(skills)
+    for label, pattern in _KEY_SKILL_PATTERNS:
+        if label.casefold() in seen or not pattern.search(description_text):
+            continue
+        seen.add(label.casefold())
+        skills.append(label)
+        if len(skills) == limit:
+            break
+    return tuple(skills)

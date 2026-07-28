@@ -142,6 +142,7 @@ def test_application_moves_through_persistent_review_queue(tmp_path) -> None:
             assert queue[0]["work_format"] == "unspecified"
             assert queue[0]["salary_text"] == ""
             assert queue[0]["employment_types"] == []
+            assert queue[0]["key_skills"] == ["PostgreSQL", "Python"]
             assert queue[0]["missing_required_skills"] == ["postgresql"]
             assert queue[0]["adapter_name"] == "generic"
             assert queue[0]["selected_cv_filename"] == "resume.pdf"
@@ -161,6 +162,9 @@ def test_application_moves_through_persistent_review_queue(tmp_path) -> None:
             )
             assert materials.status_code == 200
             assert materials.json()["cover_letter_text"] == "Truthful, user-reviewed letter."
+            assert materials.json()["application_status"] == "awaiting_review"
+            assert materials.json()["vacancy_language"] == "en"
+            assert materials.json()["cover_letter_language_matches"] is True
             assert materials.json()["missing_facts"] == []
             assert {
                 answer["field_id"]: answer["answer_source"]
@@ -191,6 +195,27 @@ def test_application_moves_through_persistent_review_queue(tmp_path) -> None:
             assert task["transitions"][-1]["evidence"][-1] == "decision:approve"
             assert client.get("/v1/review-queue").json() == []
             assert "application_review_queue_depth 0" in client.get("/metrics").text
+            selected = client.get(
+                "/v1/review-queue",
+                params={"application_id": application["id"]},
+            )
+            assert selected.status_code == 200
+            assert len(selected.json()) == 1
+            assert selected.json()[0]["status"] == "approved"
+
+            status_update = client.patch(
+                f"/v1/applications/{application['id']}/status",
+                json={"status": "submitted"},
+            )
+            assert status_update.status_code == 200
+            assert status_update.json()["status"] == "submitted"
+            assert (
+                client.patch(
+                    f"/v1/applications/{application['id']}/status",
+                    json={"status": "not-a-status"},
+                ).status_code
+                == 422
+            )
 
             deletion = client.delete(f"/v1/users/{user['id']}")
             assert deletion.status_code == 204

@@ -10,10 +10,11 @@ from app.services.materials_generation import (
     MaterialsGenerationService,
     MaterialsLanguageMismatchError,
     NoVerifiedFactsError,
+    detect_vacancy_language,
 )
 from app.services.recruitment import RecruitmentService
 from app.storage.database import Base
-from app.storage.tables import ApplicationRow
+from app.storage.tables import ApplicationRow, VacancyRow
 
 
 class _FakeRouter:
@@ -34,6 +35,31 @@ class _SequentialRouter:
     async def route(self, request: ModelRequest, schema: type[MaterialsDraft]) -> MaterialsDraft:
         self.requests.append(request)
         return next(self._drafts)
+
+
+def test_english_title_overrides_russian_page_interface_noise() -> None:
+    vacancy = VacancyRow(
+        source_url="https://example.test/jobs/english",
+        title="Solution Architect (Engineer + Product + Architecture)",
+        company="Example",
+        description_text=(
+            "Описание служебных элементов страницы на русском языке. "
+            "The actual role builds cloud platforms and distributed systems."
+        ),
+    )
+
+    assert detect_vacancy_language(vacancy) == "en"
+
+
+def test_russian_title_overrides_english_page_interface_noise() -> None:
+    vacancy = VacancyRow(
+        source_url="https://example.test/jobs/russian",
+        title="Архитектор корпоративных решений",
+        company="Example",
+        description_text="Premium recommendations and navigation text in English.",
+    )
+
+    assert detect_vacancy_language(vacancy) == "ru"
 
 
 def _session_factory():

@@ -14,7 +14,7 @@ services:
       APP_SUBMISSION_MODE: review
       APP_ARTIFACT_DIRECTORY: /app/.artifacts
       APP_MAX_DOCUMENT_BYTES: 5242880
-      APP_HH_USER_AGENT: ${APP_HH_USER_AGENT:-JobSearchingAssistant/0.1 (local personal assistant)}
+      APP_HH_USER_AGENT: ${APP_HH_USER_AGENT:-JobSearchingAssistant/1.0 (local personal assistant)}
       APP_HH_ACCESS_TOKEN: ${APP_HH_ACCESS_TOKEN:-}
       APP_BROWSER_STATE_ENCRYPTION_KEY: ${APP_BROWSER_STATE_ENCRYPTION_KEY:-}
       APP_ENABLE_HEADHUNTER_APPLY: ${APP_ENABLE_HEADHUNTER_APPLY:-false}
@@ -175,6 +175,8 @@ services:
       MODEL_DEVICE: cpu
       MODEL_BATCH_SIZE: 8
       HF_HOME: /models/huggingface
+      HF_HUB_DISABLE_XET: "1"
+      HF_HUB_DOWNLOAD_TIMEOUT: 600
     ports:
       - "127.0.0.1:8090:8090"
     healthcheck:
@@ -183,6 +185,7 @@ services:
       timeout: 10s
       retries: 30
       start_period: 300s
+    restart: unless-stopped
     volumes:
       - recruitment-model-cache:/models/huggingface
 

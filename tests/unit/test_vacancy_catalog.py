@@ -150,7 +150,7 @@ def test_saved_vacancy_includes_summary_and_work_format() -> None:
             source_url="https://example.test/jobs/metadata",
             title="Python Engineer",
             company="Tech Co",
-            required_skills=[],
+            required_skills=["PostgreSQL"],
             preferred_skills=[],
             location="Remote",
             description_text="Build Python services. Join a distributed team.",
@@ -163,6 +163,7 @@ def test_saved_vacancy_includes_summary_and_work_format() -> None:
     item = page.items[0]
     assert item.vacancy_summary == "Build Python services."
     assert item.work_format == "remote"
+    assert item.key_skills == ("PostgreSQL", "Python")
 
 
 def test_saved_vacancy_work_format_hybrid() -> None:

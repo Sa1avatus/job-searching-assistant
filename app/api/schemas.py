@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl, SecretStr
 
+from app.domain.application_status import ApplicationStatus
+
 WorkFormat = Literal["remote", "hybrid", "office", "unspecified"]
 EmploymentTypeName = Literal[
     "full_time",
@@ -239,6 +241,10 @@ class ReviewDecisionRequest(BaseModel):
     decision: str = Field(pattern="^(approve|reject|skip)$")
 
 
+class ApplicationStatusUpdateRequest(BaseModel):
+    status: ApplicationStatus
+
+
 class ScreeningAnswerResponse(BaseModel):
     field_id: str
     label: str
@@ -265,6 +271,13 @@ class ApplicationMaterialsUpdateRequest(BaseModel):
 
 class ApplicationMaterialsResponse(BaseModel):
     application_id: str
+    application_status: str
+    vacancy_language: Literal["ru", "en"]
+    cover_letter_language_matches: bool
+    vacancy_summary: str
+    work_format: WorkFormat
+    employment_types: list[EmploymentTypeName]
+    key_skills: list[str]
     cover_letter_text: str
     screening_answers: list[ScreeningAnswerResponse]
     missing_facts: list[str]
@@ -309,6 +322,7 @@ class ReviewItemResponse(ApplicationResponse):
     salary_text: str
     employment_types: list[EmploymentTypeName]
     missing_required_skills: list[str]
+    key_skills: list[str]
 
 
 class ExtractedProfileResponse(BaseModel):
@@ -397,6 +411,7 @@ class DiscoveryOutcomeResponse(BaseModel):
     work_format: WorkFormat
     salary_text: str
     employment_types: list[EmploymentTypeName]
+    key_skills: list[str]
 
 
 class SavedVacancyResponse(BaseModel):
@@ -415,6 +430,7 @@ class SavedVacancyResponse(BaseModel):
     work_format: WorkFormat
     salary_text: str
     employment_types: list[EmploymentTypeName]
+    key_skills: list[str]
 
 
 class SavedVacancyPageResponse(BaseModel):

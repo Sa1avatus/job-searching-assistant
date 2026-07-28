@@ -4,11 +4,94 @@ Recruitment assistant MVP with a personal dashboard, resume analysis, browser-ba
 matching, individual cover-letter drafts, review, and explicitly enabled browser submission.
 HeadHunter and LinkedIn search do not use job-seeker APIs.
 
+Current stable version: **1.0.0**.
+
 Workflow tasks can be persisted with `JsonTaskRepository` for the dependency-free local slice. The
 Compose runtime uses PostgreSQL skip-locked claims and Redis leases for multi-worker-safe dispatch;
 domain code does not depend on either persistence implementation.
 
-## Verified local usage
+## Install on a new Windows machine
+
+### Requirements
+
+1. Windows 10/11 with WSL 2 enabled.
+2. [Docker Desktop](https://www.docker.com/products/docker-desktop/) with the WSL 2 engine.
+3. [Git for Windows](https://git-scm.com/download/win).
+4. At least 8 GB RAM and 10 GB free disk space for the standard application.
+
+The optional local detailed-matching models need at least 16 GB RAM and approximately 12 GB of
+additional free disk space. They are disabled by default because loading them together with
+PostgreSQL, OpenSearch, Chromium, and Docker Desktop can exhaust smaller machines.
+
+### Automatic installation
+
+Open PowerShell and run:
+
+```powershell
+git clone https://github.com/Sa1avatus/job-searching-assistant.git
+cd job-searching-assistant
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+```
+
+The script:
+
+1. checks Docker Desktop and Docker Compose;
+2. creates `.env` from `.env.example`;
+3. generates the encryption key used for browser sessions and saved LLM keys;
+4. builds and starts PostgreSQL, Redis, OpenSearch, the API, dispatcher, and browser worker;
+5. waits for health checks and verifies the API;
+6. prints the dashboard address.
+
+Open `http://127.0.0.1:8000/dashboard`, then:
+
+1. create a user in **Access**;
+2. choose an LLM provider/model and save its API key in **Model**;
+3. upload and analyse one or more resumes in **Resume**;
+4. sign in to hh.ru and LinkedIn from **Site sessions**;
+5. select a resume and start a search.
+
+To stop or start the standard application later:
+
+```powershell
+docker compose --profile browser stop
+docker compose --profile browser up -d
+```
+
+To update an existing installation:
+
+```powershell
+git pull
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+```
+
+### Optional detailed matching
+
+Only enable the bundled BGE models on a sufficiently powerful machine:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -EnableDetailedMatching
+```
+
+The first run downloads several gigabytes and can take a long time. The standard browser search,
+resume analysis, cover letters, status management, and application workflow do not require these
+local models.
+
+### Manual installation
+
+If you do not use the setup script:
+
+```powershell
+Copy-Item .env.example .env
+# Set APP_BROWSER_STATE_ENCRYPTION_KEY in .env to a Fernet-compatible random key.
+docker compose --profile browser up --build -d --wait
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+Docker volumes preserve PostgreSQL, Redis, OpenSearch, and downloaded model data across normal
+container rebuilds. Do not run `docker compose down -v` unless you intentionally want to delete
+all locally stored application data.
+
+## Development and verified local usage
 
 Python 3.12+ is required. Install the project dependencies before running commands and tests:
 
@@ -24,8 +107,7 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 playwright install chromium
-Copy-Item .env.example .env
-docker compose --profile browser up --build -d
+python -m pytest -q
 ```
 
 ## Safety defaults

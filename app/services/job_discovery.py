@@ -31,7 +31,11 @@ from app.domain.vacancy_attributes import detect_employment_types
 from app.matching.jobs import MatchingJobService
 from app.services.company_blacklist import CompanyBlacklistService
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError, RecruitmentService
-from app.services.vacancy_metadata import detect_work_format, summarize_vacancy
+from app.services.vacancy_metadata import (
+    detect_work_format,
+    extract_key_skills,
+    summarize_vacancy,
+)
 from app.storage.tables import ApplicationRow, CvFileRow, UserRow, VacancyRow
 
 
@@ -46,6 +50,10 @@ _MAX_SEARCH_QUERIES = 8
 
 def _normalize_skill(skill: str) -> str:
     return " ".join(skill.casefold().split())
+
+
+def _normalize_duplicate_key(value: str) -> str:
+    return " ".join(value.casefold().split())
 
 
 def _contains_skill(text: str, normalized_skill: str) -> bool:
@@ -90,6 +98,7 @@ class DiscoveryOutcome:
     work_format: str
     salary_text: str = ""
     employment_types: tuple[str, ...] = ()
+    key_skills: tuple[str, ...] = ()
 
 
 def build_search_queries(search_text: str) -> list[str]:
@@ -186,6 +195,36 @@ class JobDiscoveryService:
         vacancy: VacancyRow | None = self._session.scalar(
             select(VacancyRow).where(VacancyRow.source_url == source_url)
         )
+        if vacancy is not None and (
+            vacancy.work_format == "unspecified" or not vacancy.location
+        ):
+            try:
+                refreshed = await headhunter_adapter.extract_vacancy(source_url)
+            except Exception:  # noqa: BLE001 - keep the previously saved vacancy available
+                pass
+            else:
+                vacancy.location = refreshed.location or vacancy.location
+                vacancy.description_text = refreshed.description_text or vacancy.description_text
+                vacancy.required_skills = list(refreshed.required_skills) or vacancy.required_skills
+                vacancy.salary_text = refreshed.salary_text or vacancy.salary_text
+                vacancy.published_at = refreshed.published_at or vacancy.published_at
+                refreshed_work_format = _detect_extracted_work_format(
+                    title=refreshed.title,
+                    location=refreshed.location,
+                    description_text=refreshed.description_text,
+                    employment_text=refreshed.employment_text,
+                )
+                if refreshed_work_format != "unspecified":
+                    vacancy.work_format = refreshed_work_format
+                refreshed_employment_types = detect_employment_types(
+                    refreshed.employment_text,
+                    refreshed.title,
+                    refreshed.location,
+                    refreshed.description_text,
+                )
+                if refreshed_employment_types:
+                    vacancy.employment_types = list(refreshed_employment_types)
+                self._session.commit()
         if vacancy is None:
             try:
                 extracted = await headhunter_adapter.extract_vacancy(source_url)
@@ -263,6 +302,9 @@ class JobDiscoveryService:
                 work_format=vacancy.work_format,
                 salary_text=vacancy.salary_text,
                 employment_types=tuple(vacancy.employment_types or ()),
+                key_skills=extract_key_skills(
+                    vacancy.description_text, vacancy.required_skills or ()
+                ),
             )
 
         try:
@@ -283,6 +325,9 @@ class JobDiscoveryService:
             work_format=vacancy.work_format,
             salary_text=vacancy.salary_text,
             employment_types=tuple(vacancy.employment_types or ()),
+            key_skills=extract_key_skills(
+                vacancy.description_text, vacancy.required_skills or ()
+            ),
         )
 
     async def discover_linkedin_vacancies(
@@ -347,15 +392,45 @@ class JobDiscoveryService:
         source_url: str,
         cv_file_id: str | None,
     ) -> DiscoveryOutcome | None:
+        application_submitted = False
         vacancy: VacancyRow | None = self._session.scalar(
             select(VacancyRow).where(VacancyRow.source_url == source_url)
         )
+        if vacancy is not None:
+            try:
+                refreshed = await linkedin_adapter.extract_vacancy(source_url)
+            except Exception:  # noqa: BLE001 - keep the previously saved vacancy available
+                pass
+            else:
+                application_submitted = refreshed.application_submitted
+                vacancy.location = refreshed.location or vacancy.location
+                vacancy.description_text = refreshed.description_text or vacancy.description_text
+                vacancy.salary_text = refreshed.salary_text or vacancy.salary_text
+                vacancy.published_at = refreshed.published_at or vacancy.published_at
+                refreshed_work_format = _detect_extracted_work_format(
+                    title=refreshed.title,
+                    location=refreshed.location,
+                    description_text=refreshed.description_text,
+                    employment_text=refreshed.employment_text,
+                )
+                if refreshed_work_format != "unspecified":
+                    vacancy.work_format = refreshed_work_format
+                refreshed_employment_types = detect_employment_types(
+                    refreshed.employment_text,
+                    refreshed.title,
+                    refreshed.location,
+                    refreshed.description_text,
+                )
+                if refreshed_employment_types:
+                    vacancy.employment_types = list(refreshed_employment_types)
+                self._session.commit()
         if vacancy is None:
             try:
                 extracted = await linkedin_adapter.extract_vacancy(source_url)
             except Exception:  # noqa: BLE001 - a single unreadable search hit should not abort the run
                 return None
             try:
+                application_submitted = extracted.application_submitted
                 work_format = _detect_extracted_work_format(
                     title=extracted.title,
                     location=extracted.location,
@@ -403,6 +478,9 @@ class JobDiscoveryService:
         if existing_application is not None:
             if existing_application.status in {"rejected", "skipped"}:
                 return None
+            if application_submitted:
+                existing_application.status = "submitted"
+                self._mark_linkedin_duplicates_submitted(user_id, vacancy)
             existing_application.selected_cv_file_id = cv_file_id
             self._rescore_from_text(existing_application, vacancy, cv_file_id)
             return DiscoveryOutcome(
@@ -418,12 +496,19 @@ class JobDiscoveryService:
                 work_format=vacancy.work_format,
                 salary_text=vacancy.salary_text,
                 employment_types=tuple(vacancy.employment_types or ()),
+                key_skills=extract_key_skills(
+                    vacancy.description_text, vacancy.required_skills or ()
+                ),
             )
         try:
             application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
         except (EntityNotFoundError, DuplicateEntityError):
             return None
         self._rescore_from_text(application, vacancy, cv_file_id)
+        if application_submitted:
+            application.status = "submitted"
+            self._mark_linkedin_duplicates_submitted(user_id, vacancy)
+            self._session.commit()
         return DiscoveryOutcome(
             application_id=application.id,
             vacancy_id=vacancy.id,
@@ -437,7 +522,39 @@ class JobDiscoveryService:
             work_format=vacancy.work_format,
             salary_text=vacancy.salary_text,
             employment_types=tuple(vacancy.employment_types or ()),
+            key_skills=extract_key_skills(
+                vacancy.description_text, vacancy.required_skills or ()
+            ),
         )
+
+    def _mark_linkedin_duplicates_submitted(
+        self, user_id: str, submitted_vacancy: VacancyRow
+    ) -> None:
+        """Keep exact LinkedIn reposts from appearing actionable after submission."""
+        submitted_key = tuple(
+            _normalize_duplicate_key(value)
+            for value in (
+                submitted_vacancy.title,
+                submitted_vacancy.company,
+                submitted_vacancy.location,
+            )
+        )
+        duplicate_rows = self._session.execute(
+            select(ApplicationRow, VacancyRow)
+            .join(VacancyRow, VacancyRow.id == ApplicationRow.vacancy_id)
+            .where(
+                ApplicationRow.user_id == user_id,
+                VacancyRow.adapter_name == "linkedin-reference",
+            )
+        ).all()
+        for application, vacancy in duplicate_rows:
+            vacancy_key = tuple(
+                _normalize_duplicate_key(value)
+                for value in (vacancy.title, vacancy.company, vacancy.location)
+            )
+            if vacancy_key == submitted_key:
+                application.status = "submitted"
+        self._session.commit()
 
     async def discover_greenhouse_vacancies(
         self,
@@ -598,6 +715,9 @@ class JobDiscoveryService:
                 work_format=vacancy.work_format,
                 salary_text=vacancy.salary_text,
                 employment_types=tuple(vacancy.employment_types or ()),
+                key_skills=extract_key_skills(
+                    vacancy.description_text, vacancy.required_skills or ()
+                ),
             )
         try:
             application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
@@ -617,6 +737,9 @@ class JobDiscoveryService:
             work_format=vacancy.work_format,
             salary_text=vacancy.salary_text,
             employment_types=tuple(vacancy.employment_types or ()),
+            key_skills=extract_key_skills(
+                vacancy.description_text, vacancy.required_skills or ()
+            ),
         )
 
     def known_greenhouse_board_urls(self) -> list[str]:

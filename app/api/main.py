@@ -40,6 +40,7 @@ from app.api.schemas import (
     ApplicationMaterialsResponse,
     ApplicationMaterialsUpdateRequest,
     ApplicationResponse,
+    ApplicationStatusUpdateRequest,
     AssessmentRequest,
     AssessmentResponse,
     BrowserApplySubmitRequest,
@@ -128,6 +129,8 @@ from app.services.materials_generation import (
     MaterialsGenerationService,
     MaterialsLanguageMismatchError,
     NoVerifiedFactsError,
+    cover_letter_matches_vacancy_language,
+    detect_vacancy_language,
 )
 from app.services.recruitment import (
     DuplicateEntityError,
@@ -136,7 +139,11 @@ from app.services.recruitment import (
 )
 from app.services.resume_intake import ResumeIntakeService
 from app.services.vacancy_catalog import VacancyCatalogService
-from app.services.vacancy_metadata import summarize_vacancy
+from app.services.vacancy_metadata import (
+    detect_work_format,
+    extract_key_skills,
+    summarize_vacancy,
+)
 from app.storage.database import SessionFactory, session_scope
 from app.storage.documents import DocumentStorage, InvalidDocumentError
 from app.storage.evidence_artifacts import EvidenceArtifactStorage, InvalidEvidenceArtifact
@@ -150,6 +157,7 @@ from app.storage.tables import (
     RequirementMatchRow,
     UserRow,
     VacancyRequirementRow,
+    VacancyRow,
     WorkerHeartbeatRow,
     WorkflowTaskRow,
 )
@@ -157,7 +165,7 @@ from app.workers.browser_tasks import _restore_browser_session
 from app.workers.browser_worker import create_session_store
 
 configure_logging()
-app = FastAPI(title="Job Searching Assistant", version="0.1.0")
+app = FastAPI(title="Job Searching Assistant", version="1.0.0")
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
 BROWSER_AUTHORIZATION_MANAGER = BrowserAuthorizationManager()
@@ -207,6 +215,7 @@ def required_api_scope(method: str, path: str) -> str:
         return "applications:submit_real"
     if path.startswith("/v1/applications/") and (
         path.endswith("/decision")
+        or path.endswith("/status")
         or path.endswith("/reject-vacancy")
         or path.endswith("/retry")
         or path.endswith("/materials")
@@ -928,6 +937,24 @@ def list_cv_files(
     return [serialize_cv_file(cv_file, active_cv_file_id=active_cv_file_id) for cv_file in cv_files]
 
 
+@app.delete(
+    "/v1/users/{user_id}/cv-files/{cv_file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_cv_file(
+    user_id: str,
+    cv_file_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    storage: Annotated[DocumentStorage, Depends(document_storage)],
+) -> Response:
+    try:
+        stored_path = RecruitmentService(session).delete_cv_file(user_id, cv_file_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    storage.delete(stored_path)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @app.put("/v1/users/{user_id}/active-cv-file", response_model=CvFileResponse)
 def select_active_cv_file(
     user_id: str,
@@ -1632,6 +1659,7 @@ def _active_human_action(
 @app.get("/v1/review-queue", response_model=list[ReviewItemResponse])
 def list_review_queue(
     session: Annotated[Session, Depends(session_scope)],
+    application_id: str | None = None,
 ) -> list[ReviewItemResponse]:
     return [
         ReviewItemResponse(
@@ -1659,7 +1687,13 @@ def list_review_queue(
             ],
             active_human_action=_active_human_action(workflow_task),
             vacancy_summary=summarize_vacancy(vacancy.description_text),
-            work_format=vacancy.work_format,
+            work_format=(
+                vacancy.work_format
+                if vacancy.work_format != "unspecified"
+                else detect_work_format(
+                    vacancy.title, vacancy.location, vacancy.description_text
+                )
+            ),
             salary_text=vacancy.salary_text,
             employment_types=list(vacancy.employment_types or ()),
             missing_required_skills=[
@@ -1667,10 +1701,13 @@ def list_review_queue(
                 for warning in application.warnings
                 if warning.startswith("Missing required skill: ")
             ],
+            key_skills=list(
+                extract_key_skills(vacancy.description_text, vacancy.required_skills or ())
+            ),
         )
         for application, vacancy, cv_file, workflow_task in RecruitmentService(
             session
-        ).list_review_queue()
+        ).list_review_queue(application_id)
     ]
 
 
@@ -1688,6 +1725,24 @@ def decide_application(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    return ApplicationResponse.model_validate(application, from_attributes=True)
+
+
+@app.patch(
+    "/v1/applications/{application_id}/status",
+    response_model=ApplicationResponse,
+)
+def update_application_status(
+    application_id: str,
+    request: ApplicationStatusUpdateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationResponse:
+    try:
+        application = RecruitmentService(session).update_application_status(
+            application_id, request.status
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
     return ApplicationResponse.model_validate(application, from_attributes=True)
 
 
@@ -1744,7 +1799,7 @@ def update_application_materials(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return _materials_response(application)
+    return _materials_response(session, application)
 
 
 @app.get(
@@ -1757,12 +1812,32 @@ def get_application_materials(
     application = session.get(ApplicationRow, application_id)
     if application is None:
         raise HTTPException(status_code=404, detail="Application not found")
-    return _materials_response(application)
+    return _materials_response(session, application)
 
 
-def _materials_response(application: ApplicationRow) -> ApplicationMaterialsResponse:
+def _materials_response(
+    session: Session, application: ApplicationRow
+) -> ApplicationMaterialsResponse:
+    vacancy = session.get(VacancyRow, application.vacancy_id)
+    if vacancy is None:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
     return ApplicationMaterialsResponse(
         application_id=application.id,
+        application_status=application.status,
+        vacancy_language=detect_vacancy_language(vacancy),
+        cover_letter_language_matches=cover_letter_matches_vacancy_language(
+            vacancy, application.cover_letter_text
+        ),
+        vacancy_summary=summarize_vacancy(vacancy.description_text),
+        work_format=(
+            vacancy.work_format
+            if vacancy.work_format != "unspecified"
+            else detect_work_format(vacancy.title, vacancy.location, vacancy.description_text)
+        ),
+        employment_types=list(vacancy.employment_types or ()),
+        key_skills=list(
+            extract_key_skills(vacancy.description_text, vacancy.required_skills or ())
+        ),
         cover_letter_text=application.cover_letter_text,
         screening_answers=[
             ScreeningAnswerResponse.model_validate(answer, from_attributes=True)
@@ -1815,7 +1890,8 @@ async def generate_application_materials(
         )
     try:
         await MaterialsGenerationService(session, ModelRouter(providers)).draft_materials(
-            application_id
+            application_id,
+            replace_mismatched_cover_letter=True,
         )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -1827,7 +1903,7 @@ async def generate_application_materials(
         raise HTTPException(
             status_code=502, detail=f"Materials drafting failed: {error}"
         ) from error
-    return _materials_response(application)
+    return _materials_response(session, application)
 
 
 @app.post("/v1/applications/{application_id}/resume", response_model=WorkflowTaskResponse)

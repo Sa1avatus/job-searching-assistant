@@ -11,6 +11,24 @@ from pydantic import BaseModel, ConfigDict, Field
 _MAX_TEXTS = 128
 _MAX_TEXT_CHARACTERS = 8_000
 _MAX_PAIRS = 128
+_EMBEDDING_MODEL_FILES = (
+    "config.json",
+    "pytorch_model.bin",
+    "sentencepiece.bpe.model",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "colbert_linear.pt",
+    "sparse_linear.pt",
+)
+_RERANKER_MODEL_FILES = (
+    "config.json",
+    "model.safetensors",
+    "sentencepiece.bpe.model",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+)
 
 
 class StrictModel(BaseModel):
@@ -64,15 +82,29 @@ class ModelRuntime:
 
     def load(self) -> None:
         from FlagEmbedding import BGEM3FlagModel, FlagReranker
+        from huggingface_hub import snapshot_download
 
         use_fp16 = self.device != "cpu"
+        cache_dir = os.getenv("HF_HUB_CACHE")
+        embedding_model_path = snapshot_download(
+            repo_id=self.embedding_model_name,
+            revision=self.embedding_model_revision,
+            cache_dir=cache_dir,
+            allow_patterns=list(_EMBEDDING_MODEL_FILES),
+        )
+        reranker_model_path = snapshot_download(
+            repo_id=self.reranker_model_name,
+            revision=self.reranker_model_revision,
+            cache_dir=cache_dir,
+            allow_patterns=list(_RERANKER_MODEL_FILES),
+        )
         self.embedding_model = BGEM3FlagModel(
-            self.embedding_model_name,
+            embedding_model_path,
             devices=self.device,
             use_fp16=use_fp16,
         )
         self.reranker_model = FlagReranker(
-            self.reranker_model_name,
+            reranker_model_path,
             devices=self.device,
             use_fp16=use_fp16,
         )

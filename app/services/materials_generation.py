@@ -52,7 +52,13 @@ class GeneratedMaterials:
 
 
 def detect_vacancy_language(vacancy: VacancyRow) -> str:
-    vacancy_text = f"{vacancy.title}\n{vacancy.description_text or ''}"
+    title_cyrillic = len(re.findall(r"[А-Яа-яЁё]", vacancy.title))
+    title_latin = len(re.findall(r"[A-Za-z]", vacancy.title))
+    if title_latin >= 10 and title_cyrillic < 3:
+        return "en"
+    if title_cyrillic >= 3 and title_cyrillic >= title_latin / 2:
+        return "ru"
+    vacancy_text = vacancy.description_text or ""
     cyrillic_count = len(re.findall(r"[А-Яа-яЁё]", vacancy_text))
     latin_count = len(re.findall(r"[A-Za-z]", vacancy_text))
     if cyrillic_count >= 10 or (cyrillic_count >= 3 and cyrillic_count >= latin_count / 3):
@@ -74,6 +80,10 @@ def _matches_language(text: str, language: str) -> bool:
     return latin_count >= 10 and (
         cyrillic_count < 3 or latin_count >= cyrillic_count * 3
     )
+
+
+def cover_letter_matches_vacancy_language(vacancy: VacancyRow, text: str) -> bool:
+    return not text.strip() or _matches_language(text, detect_vacancy_language(vacancy))
 
 
 def _build_prompt(

@@ -19,7 +19,7 @@ from app.services.job_discovery import (
 )
 from app.services.recruitment import RecruitmentService
 from app.storage.database import Base
-from app.storage.tables import ApplicationRow, CvFileRow
+from app.storage.tables import ApplicationRow, CvFileRow, VacancyRow
 
 
 class _FakeAdapter:
@@ -54,6 +54,9 @@ class _FakeAdapter:
 
 
 class _FakeLinkedInAdapter:
+    def __init__(self, *, application_submitted: bool = False) -> None:
+        self.application_submitted = application_submitted
+
     async def search(
         self, *, text: str, location_names: list[str], limit: int
     ) -> list[LinkedInSearchHit]:
@@ -76,6 +79,19 @@ class _FakeLinkedInAdapter:
             has_easy_apply=False,
             salary_text="$120,000 - $150,000",
             employment_text="Remote, Full-time",
+            application_submitted=self.application_submitted,
+        )
+
+
+class _EmptyMetadataLinkedInAdapter(_FakeLinkedInAdapter):
+    async def extract_vacancy(self, url: str) -> ExtractedLinkedInVacancy:
+        return ExtractedLinkedInVacancy(
+            source_url=url,
+            title="Backend Engineer",
+            company="Example Co",
+            location="",
+            description_text="Build reliable software.",
+            has_easy_apply=False,
         )
 
 
@@ -352,6 +368,143 @@ def test_linkedin_discovery_keeps_jobs_without_easy_apply() -> None:
         assert outcomes[0].vacancy_summary == "Python services"
         assert outcomes[0].work_format == "remote"
         assert outcomes[0].salary_text == "$120,000 - $150,000"
+        assert outcomes[0].employment_types == ("full_time",)
+
+    asyncio.run(run())
+
+
+def test_linkedin_discovery_refreshes_stale_saved_metadata() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            service = RecruitmentService(session)
+            user = service.create_user("Candidate")
+            service.add_profile_fact(
+                user.id, category="skill", name="Python", value="", is_verified=True
+            )
+            vacancy = service.create_vacancy(
+                source_url="https://www.linkedin.com/jobs/view/2",
+                title="Backend Engineer",
+                company="Example Co",
+                required_skills=[],
+                preferred_skills=[],
+                description_text="Job search smarter with Premium",
+                adapter_name="linkedin-reference",
+            )
+            application = service.prepare_application(user.id, vacancy.id)
+            user_id = user.id
+            application_id = application.id
+
+        with session_factory() as session:
+            outcomes = await JobDiscoveryService(session).discover_linkedin_vacancies(
+                user_id,
+                linkedin_adapter=_FakeLinkedInAdapter(),  # type: ignore[arg-type]
+                locations=[],
+            )
+
+        assert len(outcomes) == 1
+        assert outcomes[0].application_id == application_id
+        assert outcomes[0].status == "already_existed"
+        assert outcomes[0].vacancy_summary == "Python services"
+        assert outcomes[0].work_format == "remote"
+        assert outcomes[0].employment_types == ("full_time",)
+        assert outcomes[0].key_skills == ("Python",)
+
+    asyncio.run(run())
+
+
+def test_linkedin_discovery_syncs_externally_submitted_status() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            service = RecruitmentService(session)
+            user = service.create_user("Candidate")
+            service.add_profile_fact(
+                user.id, category="skill", name="Python", value="", is_verified=True
+            )
+            user_id = user.id
+
+        with session_factory() as session:
+            outcomes = await JobDiscoveryService(session).discover_linkedin_vacancies(
+                user_id,
+                linkedin_adapter=_FakeLinkedInAdapter(application_submitted=True),
+                locations=[],
+            )
+
+        assert outcomes[0].application_status == "submitted"
+
+    asyncio.run(run())
+
+
+def test_linkedin_discovery_syncs_exact_duplicate_status() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            service = RecruitmentService(session)
+            user = service.create_user("Candidate")
+            service.add_profile_fact(
+                user.id, category="skill", name="Python", value="", is_verified=True
+            )
+            duplicate = service.create_vacancy(
+                source_url="https://www.linkedin.com/jobs/view/duplicate",
+                title="Backend Engineer",
+                company="Example Co",
+                required_skills=[],
+                preferred_skills=[],
+                location="Remote",
+                adapter_name="linkedin-reference",
+            )
+            duplicate_application = service.prepare_application(user.id, duplicate.id)
+            user_id = user.id
+            duplicate_vacancy_id = duplicate.id
+            duplicate_application_id = duplicate_application.id
+
+        with session_factory() as session:
+            await JobDiscoveryService(session).discover_linkedin_vacancies(
+                user_id,
+                linkedin_adapter=_FakeLinkedInAdapter(application_submitted=True),
+                locations=[],
+            )
+
+        with session_factory() as session:
+            duplicate_application = session.get(ApplicationRow, duplicate_application_id)
+            duplicate_vacancy = session.get(VacancyRow, duplicate_vacancy_id)
+            assert duplicate_application is not None
+            assert duplicate_vacancy is not None
+            assert duplicate_application.status == "submitted"
+
+    asyncio.run(run())
+
+
+def test_linkedin_refresh_does_not_erase_saved_work_attributes() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            service = RecruitmentService(session)
+            user = service.create_user("Candidate")
+            service.add_profile_fact(
+                user.id, category="skill", name="Python", value="", is_verified=True
+            )
+            vacancy = service.create_vacancy(
+                source_url="https://www.linkedin.com/jobs/view/2",
+                title="Backend Engineer",
+                company="Example Co",
+                required_skills=[],
+                preferred_skills=[],
+                work_format="hybrid",
+                employment_types=["full_time"],
+            )
+            service.prepare_application(user.id, vacancy.id)
+            user_id = user.id
+
+        with session_factory() as session:
+            outcomes = await JobDiscoveryService(session).discover_linkedin_vacancies(
+                user_id,
+                linkedin_adapter=_EmptyMetadataLinkedInAdapter(),
+                locations=[],
+            )
+
+        assert outcomes[0].work_format == "hybrid"
         assert outcomes[0].employment_types == ("full_time",)
 
     asyncio.run(run())

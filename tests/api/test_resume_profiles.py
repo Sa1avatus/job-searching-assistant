@@ -111,5 +111,26 @@ def test_multiple_resume_profiles_are_stored_and_selected_independently(tmp_path
             assert python_application["match_score"] > java_application["match_score"]
             assert python_application["selected_cv_file_id"] == python_cv["id"]
             assert java_application["selected_cv_file_id"] == java_cv["id"]
+
+            deleted = client.delete(
+                f"/v1/users/{user['id']}/cv-files/{python_cv['id']}"
+            )
+            remaining = client.get(f"/v1/users/{user['id']}/cv-files").json()
+            selected_materials = client.get(
+                "/v1/review-queue",
+                params={"application_id": python_application["id"]},
+            ).json()
+
+            assert deleted.status_code == 204
+            assert [item["id"] for item in remaining] == [java_cv["id"]]
+            assert remaining[0]["is_active"] is True
+            assert selected_materials[0]["selected_cv_filename"] is None
+            assert len(list((tmp_path / "documents").glob("*.txt"))) == 1
+            assert (
+                client.delete(
+                    f"/v1/users/{user['id']}/cv-files/{python_cv['id']}"
+                ).status_code
+                == 404
+            )
     finally:
         app.dependency_overrides.clear()

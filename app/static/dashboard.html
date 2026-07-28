@@ -53,8 +53,19 @@
     .empty { border: 1px dashed #344166; border-radius: 18px; padding: 40px; text-align: center; color: #aab5d6; }
     .badge { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #223056; color: #aab5d6; }
     .attribute-tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+    .key-skills { margin-top: 10px; }
+    .key-skills__label { color: #aab5d6; font-size: 13px; margin-bottom: 7px; }
+    .status-editor { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .status-editor select { width: auto; min-width: 170px; }
     .badge.salary { background: #173f35; border: 1px solid #2b725e; color: #9ff3cf; }
-    .language-toggle { min-width: 52px; padding: 8px 11px; font-size: 22px; line-height: 1; }
+    .language-selector { position: relative; flex: 0 0 auto; }
+    .language-toggle { min-width: 132px; display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 8px 11px; line-height: 1; }
+    .language-flag { width: 24px; height: 16px; flex: 0 0 auto; border-radius: 2px; box-shadow: 0 0 0 1px #ffffff40; }
+    .language-name { flex: 1; text-align: left; }
+    .language-chevron { color: #aab5d6; font-size: 13px; }
+    .language-menu { position: absolute; z-index: 20; top: calc(100% + 7px); right: 0; width: max-content; min-width: 180px; padding: 6px; border: 1px solid #303b60; border-radius: 12px; background: #101831; box-shadow: 0 18px 45px #02061799; }
+    .language-option { width: 100%; display: flex; align-items: center; gap: 10px; border-color: transparent; background: transparent; text-align: left; }
+    .language-option[aria-selected="true"] { border-color: #5065a8; background: #1d294d; }
     .skill-add-row { display: flex; gap: 8px; margin-top: 10px; max-width: 620px; }
     .skill-add-row input { min-width: 0; }
     .task-state { margin-top: 8px; font-size: 13px; color: #aab5d6; }
@@ -92,7 +103,20 @@
       <div class="eyebrow">Личный кабинет</div>
       <h1>Поиск и отклик на вакансии</h1>
     </div>
-    <button id="language-toggle" class="language-toggle" type="button" title="Switch to English" aria-label="Switch to English">🇬🇧</button>
+    <div id="language-selector" class="language-selector">
+      <button id="language-toggle" class="language-toggle" type="button"
+              aria-haspopup="listbox" aria-expanded="false" aria-controls="language-menu"
+              title="Текущий язык: Русский" aria-label="Текущий язык: Русский">
+        <svg class="language-flag" viewBox="0 0 3 2" aria-hidden="true" focusable="false">
+          <rect width="3" height="2" fill="#fff"></rect>
+          <rect y="0.6667" width="3" height="0.6667" fill="#0039a6"></rect>
+          <rect y="1.3333" width="3" height="0.6667" fill="#d52b1e"></rect>
+        </svg>
+        <span class="language-name">Русский</span>
+        <span class="language-chevron" aria-hidden="true">▾</span>
+      </button>
+      <div id="language-menu" class="language-menu" role="listbox" aria-label="Язык интерфейса" hidden></div>
+    </div>
   </header>
   <main class="dashboard-shell">
     <nav class="sidebar" aria-label="Разделы личного кабинета">
@@ -207,6 +231,7 @@
       <div class="row" style="margin-top:16px;">
         <div><label for="resume-selector">Мои резюме</label><select id="resume-selector"></select></div>
         <div style="flex:0"><label>&nbsp;</label><button id="analyze-resume" type="button">Проанализировать выбранное</button></div>
+        <div style="flex:0"><label>&nbsp;</label><button id="delete-resume" type="button" class="danger">Удалить выбранное</button></div>
       </div>
       <div id="resume-state" class="hint"></div>
       <div id="draft-block" style="display:none; margin-top:16px;">
@@ -333,6 +358,7 @@
       'Можно хранить несколько резюме. Навыки, ключевые слова и сводка опыта сохраняются отдельно для каждого файла. Выбранное резюме используется для поиска, оценки и сопроводительных писем.': 'You can store multiple resumes. Skills, keywords, and experience summaries are saved per file. The selected resume is used for search, matching, and cover letters.',
       'Мои резюме': 'My resumes',
       'Проанализировать выбранное': 'Analyze selected resume',
+      'Удалить выбранное': 'Delete selected resume',
       'Найденные навыки (снимите галочку, если что-то лишнее)': 'Detected skills (uncheck anything irrelevant)',
       'Добавить навык вручную': 'Add a skill manually',
       'Краткое summary опыта': 'Experience summary',
@@ -369,8 +395,101 @@
       'уже был в списке ранее': 'already appeared in the list'
     };
     let currentLanguage = localStorage.getItem('dashboardLanguage') === 'en' ? 'en' : 'ru';
+    const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+    const LANGUAGE_OPTIONS = [
+      {code: 'ru', names: {ru: 'Русский', en: 'Russian'}},
+      {code: 'en', names: {ru: 'Английский', en: 'English'}}
+    ];
     const originalTextNodes = new WeakMap();
     const originalAttributes = new WeakMap();
+
+    function createSvgNode(name, attributes) {
+      const node = document.createElementNS(SVG_NAMESPACE, name);
+      Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, value));
+      return node;
+    }
+
+    function createLanguageFlag(languageCode) {
+      const svg = createSvgNode('svg', {
+        class: 'language-flag',
+        viewBox: languageCode === 'ru' ? '0 0 3 2' : '0 0 60 36',
+        'aria-hidden': 'true',
+        focusable: 'false'
+      });
+      if (languageCode === 'ru') {
+        svg.append(
+          createSvgNode('rect', {width: '3', height: '2', fill: '#fff'}),
+          createSvgNode('rect', {y: '0.6667', width: '3', height: '0.6667', fill: '#0039a6'}),
+          createSvgNode('rect', {y: '1.3333', width: '3', height: '0.6667', fill: '#d52b1e'})
+        );
+        return svg;
+      }
+      svg.append(
+        createSvgNode('rect', {width: '60', height: '36', fill: '#012169'}),
+        createSvgNode('path', {d: 'M0 0 60 36M60 0 0 36', stroke: '#fff', 'stroke-width': '8'}),
+        createSvgNode('path', {d: 'M0 0 60 36M60 0 0 36', stroke: '#c8102e', 'stroke-width': '4'}),
+        createSvgNode('path', {d: 'M30 0V36M0 18H60', stroke: '#fff', 'stroke-width': '11'}),
+        createSvgNode('path', {d: 'M30 0V36M0 18H60', stroke: '#c8102e', 'stroke-width': '6'})
+      );
+      return svg;
+    }
+
+    function setLanguageMenuOpen(isOpen, {focusSelected = false} = {}) {
+      const toggle = document.querySelector('#language-toggle');
+      const menu = document.querySelector('#language-menu');
+      toggle.setAttribute('aria-expanded', String(isOpen));
+      menu.hidden = !isOpen;
+      if (isOpen && focusSelected) {
+        menu.querySelector('[aria-selected="true"]')?.focus();
+      }
+    }
+
+    function focusAdjacentLanguageOption(currentOption, direction) {
+      const options = Array.from(document.querySelectorAll('#language-menu .language-option'));
+      const currentIndex = options.indexOf(currentOption);
+      options[(currentIndex + direction + options.length) % options.length]?.focus();
+    }
+
+    function renderLanguageSelector() {
+      const toggle = document.querySelector('#language-toggle');
+      const menu = document.querySelector('#language-menu');
+      const selectedLanguage = LANGUAGE_OPTIONS.find(option => option.code === currentLanguage) || LANGUAGE_OPTIONS[0];
+      const selectedName = selectedLanguage.names[selectedLanguage.code];
+      const name = document.createElement('span');
+      name.className = 'language-name';
+      name.textContent = selectedName;
+      const chevron = document.createElement('span');
+      chevron.className = 'language-chevron';
+      chevron.setAttribute('aria-hidden', 'true');
+      chevron.textContent = '▾';
+      toggle.replaceChildren(createLanguageFlag(selectedLanguage.code), name, chevron);
+      toggle.title = currentLanguage === 'en'
+        ? `Current language: ${selectedName}`
+        : `Текущий язык: ${selectedName}`;
+      toggle.setAttribute('aria-label', toggle.title);
+      menu.setAttribute('aria-label', currentLanguage === 'en' ? 'Interface language' : 'Язык интерфейса');
+      menu.replaceChildren();
+      LANGUAGE_OPTIONS.forEach(language => {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'language-option';
+        option.dataset.languageCode = language.code;
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', String(language.code === currentLanguage));
+        const optionName = document.createElement('span');
+        optionName.textContent = language.names[currentLanguage];
+        option.append(createLanguageFlag(language.code), optionName);
+        option.addEventListener('click', () => selectLanguage(language.code));
+        option.addEventListener('keydown', event => {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            focusAdjacentLanguageOption(option, event.key === 'ArrowDown' ? 1 : -1);
+          }
+        });
+        menu.append(option);
+      });
+      setLanguageMenuOpen(false);
+    }
 
     function translatedStaticText(text) {
       const leading = text.match(/^\s*/)?.[0] || '';
@@ -412,21 +531,41 @@
       document.documentElement.lang = currentLanguage;
     }
 
-    function updateLanguageToggle() {
-      const button = document.querySelector('#language-toggle');
-      const switchToEnglish = currentLanguage === 'ru';
-      button.textContent = switchToEnglish ? '🇬🇧' : '🇷🇺';
-      button.title = switchToEnglish ? 'Switch to English' : 'Переключить на русский';
-      button.setAttribute('aria-label', button.title);
+    function selectLanguage(languageCode) {
+      if (!LANGUAGE_OPTIONS.some(option => option.code === languageCode)) return;
+      if (currentLanguage === languageCode) {
+        setLanguageMenuOpen(false);
+        return;
+      }
+      currentLanguage = languageCode;
+      localStorage.setItem('dashboardLanguage', currentLanguage);
+      translateTree();
+      renderLanguageSelector();
+      loadSavedVacancies(vacancyPage).catch(showError);
+      restoreSearchResults();
     }
 
     document.querySelector('#language-toggle').addEventListener('click', () => {
-      currentLanguage = currentLanguage === 'ru' ? 'en' : 'ru';
-      localStorage.setItem('dashboardLanguage', currentLanguage);
-      translateTree();
-      updateLanguageToggle();
-      loadSavedVacancies(vacancyPage).catch(showError);
-      restoreSearchResults();
+      const isOpen = document.querySelector('#language-toggle').getAttribute('aria-expanded') !== 'true';
+      setLanguageMenuOpen(isOpen);
+    });
+    document.querySelector('#language-toggle').addEventListener('keydown', event => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setLanguageMenuOpen(true, {focusSelected: true});
+      }
+    });
+    document.querySelector('#language-menu').addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setLanguageMenuOpen(false);
+        document.querySelector('#language-toggle').focus();
+      }
+    });
+    document.addEventListener('click', event => {
+      if (!document.querySelector('#language-selector').contains(event.target)) {
+        setLanguageMenuOpen(false);
+      }
     });
     const translationObserver = new MutationObserver(mutations => {
       if (currentLanguage !== 'en') return;
@@ -822,6 +961,25 @@
       } catch (error) { showError(error); }
     });
 
+    document.querySelector('#delete-resume').addEventListener('click', async () => {
+      try {
+        const userId = userIdInput.value.trim();
+        const cvFileId = document.querySelector('#resume-selector').value;
+        const cvFile = cvFiles.find(item => item.id === cvFileId);
+        if (!userId || !cvFile) throw new Error('Выберите загруженное резюме');
+        const question = currentLanguage === 'en'
+          ? `Delete resume "${cvFile.original_filename}"? Applications using it will no longer have a selected resume.`
+          : `Удалить резюме «${cvFile.original_filename}»? В откликах, где оно выбрано, резюме будет сброшено.`;
+        if (!window.confirm(question)) return;
+        const response = await fetch(`/v1/users/${userId}/cv-files/${cvFileId}`, {
+          method: 'DELETE', headers: headers(false)
+        });
+        if (!response.ok) await asJson(response);
+        await loadCvFiles();
+        showStatus(currentLanguage === 'en' ? 'Resume deleted.' : 'Резюме удалено.');
+      } catch (error) { showError(error); }
+    });
+
     document.querySelector('#confirm-facts').addEventListener('click', async () => {
       try {
         const userId = userIdInput.value.trim();
@@ -938,6 +1096,70 @@
       return tags;
     }
 
+    function createKeySkillTags(skills) {
+      const normalizedSkills = Array.from(skills || []).map(String).filter(Boolean);
+      if (!normalizedSkills.length) return null;
+      const block = element('div', undefined, 'key-skills');
+      block.append(element(
+        'div',
+        currentLanguage === 'en' ? 'Key skills' : 'Ключевые навыки',
+        'key-skills__label'
+      ));
+      const tags = element('div', undefined, 'chips');
+      normalizedSkills.forEach(skill => tags.append(element('span', skill, 'chip')));
+      block.append(tags);
+      return block;
+    }
+
+    const editableApplicationStatuses = [
+      'draft', 'saved', 'awaiting_review', 'approved',
+      'rejected', 'skipped', 'submitted', 'interview'
+    ];
+
+    async function setApplicationStatus(applicationId, newStatus) {
+      const application = await asJson(await fetch(`/v1/applications/${applicationId}/status`, {
+        method: 'PATCH',
+        headers: headers(true),
+        body: JSON.stringify({status: newStatus})
+      }));
+      updateCachedSearchResultStatus(applicationId, application.status);
+      return application.status;
+    }
+
+    function createStatusEditor(item, statusProperty, onChanged) {
+      const editor = element('div', undefined, 'status-editor');
+      const select = element('select');
+      select.setAttribute(
+        'aria-label',
+        currentLanguage === 'en' ? 'Application status' : 'Статус отклика'
+      );
+      editableApplicationStatuses.forEach(status => {
+        const option = element(
+          'option',
+          vacancyStatusLabels[currentLanguage][status] || status
+        );
+        option.value = status;
+        option.selected = item[statusProperty] === status;
+        select.append(option);
+      });
+      const save = element(
+        'button',
+        currentLanguage === 'en' ? 'Change status' : 'Изменить статус'
+      );
+      save.type = 'button';
+      save.addEventListener('click', async () => {
+        save.disabled = true;
+        try {
+          item[statusProperty] = await setApplicationStatus(item.application_id, select.value);
+          await onChanged(item[statusProperty]);
+        } finally {
+          save.disabled = false;
+        }
+      });
+      editor.append(select, save);
+      return editor;
+    }
+
     function createSummaryAffordance(text) {
       if (!text) return null;
       const truncated = text.length > 120 ? text.substring(0, 120) + '…' : text;
@@ -956,6 +1178,8 @@
       card.append(top);
       if (item.status === 'already_existed') card.append(element('span', 'уже был в списке ранее', 'badge'));
       card.append(createVacancyAttributeTags(item));
+      const keySkills = createKeySkillTags(item.key_skills);
+      if (keySkills) card.append(keySkills);
       const summaryNode = createSummaryAffordance(item.vacancy_summary);
       if (summaryNode) card.append(summaryNode);
       const meta = element('div', undefined, 'meta');
@@ -1009,6 +1233,8 @@
             item.application_status = 'submitted';
             accept.textContent = 'Отклик отправлен';
             updateCachedSearchResultStatus(item.application_id, 'submitted');
+            card.replaceWith(renderResult(item));
+            loadSavedVacancies(vacancyPage).catch(showError);
             return;
           }
         } catch (error) {
@@ -1021,17 +1247,91 @@
       reject.addEventListener('click', () => rejectVacancy(item.application_id, card).catch(showError));
       const blacklist = element('button', 'Компания в чёрный список'); blacklist.type = 'button';
       blacklist.addEventListener('click', () => blacklistCompany(item.company, true).catch(showError));
-      actions.append(accept, reject, blacklist, link);
-      card.append(actions, taskState);
+      const manualSubmitted = element(
+        'button',
+        currentLanguage === 'en' ? 'I applied manually' : 'Я откликнулся вручную'
+      );
+      manualSubmitted.type = 'button';
+      manualSubmitted.addEventListener('click', async () => {
+        manualSubmitted.disabled = true;
+        try {
+          item.application_status = await setApplicationStatus(
+            item.application_id, 'submitted'
+          );
+          card.replaceWith(renderResult(item));
+          loadSavedVacancies(vacancyPage).catch(showError);
+        } catch (error) {
+          manualSubmitted.disabled = false;
+          showError(error);
+        }
+      });
+      const regenerateLetter = element(
+        'button',
+        currentLanguage === 'en' ? 'Regenerate cover letter' : 'Перегенерировать письмо'
+      );
+      regenerateLetter.type = 'button';
+      regenerateLetter.addEventListener('click', async () => {
+        regenerateLetter.disabled = true;
+        taskState.textContent = currentLanguage === 'en'
+          ? 'Generating a cover letter in the vacancy language…'
+          : 'Генерируем письмо на языке вакансии…';
+        try {
+          const materials = await asJson(await fetch(
+            `/v1/applications/${item.application_id}/generate-materials`,
+            {method: 'POST', headers: headers(false)}
+          ));
+          coverText.value = materials.cover_letter_text || '';
+          taskState.textContent = currentLanguage === 'en'
+            ? 'Cover letter regenerated.'
+            : 'Сопроводительное письмо перегенерировано.';
+        } catch (error) {
+          taskState.textContent = error.message;
+        } finally {
+          regenerateLetter.disabled = false;
+        }
+      });
+      const isSubmitted = ['submitted', 'interview'].includes(item.application_status);
+      actions.append(accept);
+      if (!isSubmitted) actions.append(regenerateLetter, manualSubmitted, reject, blacklist);
+      actions.append(link);
+      const statusEditor = createStatusEditor(item, 'application_status', async () => {
+        card.replaceWith(renderResult(item));
+        await loadSavedVacancies(vacancyPage);
+      });
+      card.append(actions, statusEditor, taskState);
       // Load current materials (cover letter) for this application.
       fetch(`/v1/applications/${item.application_id}/materials`, {headers: headers(false)})
         .then(response => response.ok ? response.json() : null)
-        .then(materials => { if (materials) coverText.value = materials.cover_letter_text || ''; });
+        .then(materials => {
+          if (!materials) return;
+          coverText.value = materials.cover_letter_text || '';
+          if (!materials.cover_letter_language_matches && materials.cover_letter_text) {
+            taskState.textContent = currentLanguage === 'en'
+              ? `The cover letter does not match the vacancy language (${materials.vacancy_language}). Regenerate it.`
+              : `Язык письма не совпадает с языком вакансии (${materials.vacancy_language}). Перегенерируйте письмо.`;
+          }
+          const metadataChanged = (
+            materials.work_format !== item.work_format
+            || materials.vacancy_summary !== item.vacancy_summary
+            || JSON.stringify(materials.employment_types || []) !== JSON.stringify(item.employment_types || [])
+            || JSON.stringify(materials.key_skills || []) !== JSON.stringify(item.key_skills || [])
+          );
+          item.work_format = materials.work_format;
+          item.vacancy_summary = materials.vacancy_summary;
+          item.employment_types = materials.employment_types || [];
+          item.key_skills = materials.key_skills || [];
+          if (materials.application_status !== item.application_status || metadataChanged) {
+            item.application_status = materials.application_status;
+            updateCachedSearchResultStatus(item.application_id, item.application_status);
+            persistSearchResults(searchResults);
+            card.replaceWith(renderResult(item));
+          }
+        });
       return card;
     }
 
     const SEARCH_RESULTS_STORAGE_PREFIX = 'dashboardSearchResults:';
-    const SEARCH_RESULTS_VERSION = 3;
+    const SEARCH_RESULTS_VERSION = 4;
 
     function searchResultsStorageKey() {
       const userId = userIdInput.value.trim();
@@ -1055,6 +1355,9 @@
         salary_text: String(item?.salary_text || ''),
         employment_types: Array.isArray(item?.employment_types)
           ? item.employment_types.map(String)
+          : [],
+        key_skills: Array.isArray(item?.key_skills)
+          ? item.key_skills.map(String)
           : []
       };
       if (
@@ -1187,6 +1490,8 @@
       top.append(title, createMatchMeter(item.match_score));
       card.append(top);
       card.append(createVacancyAttributeTags(item));
+      const keySkills = createKeySkillTags(item.key_skills);
+      if (keySkills) card.append(keySkills);
       const summaryNode = createSummaryAffordance(item.vacancy_summary);
       if (summaryNode) card.append(summaryNode);
       const actions = element('div', undefined, 'actions');
@@ -1204,9 +1509,15 @@
       detailsButton.addEventListener('click', () => {
         loadMatchDetails(item.application_id, details, detailsButton).catch(showError);
       });
-      if (!['submitted', 'interview'].includes(item.status)) actions.append(reject);
-      actions.append(blacklist, detailsButton, applicationLink, link);
-      card.append(top, actions, details);
+      if (!['submitted', 'interview'].includes(item.status)) {
+        actions.append(reject, blacklist);
+      }
+      actions.append(detailsButton, applicationLink, link);
+      const statusEditor = createStatusEditor(item, 'status', async () => {
+        await loadSavedVacancies(vacancyPage);
+        restoreSearchResults();
+      });
+      card.append(top, actions, statusEditor, details);
       return card;
     }
 
@@ -1224,7 +1535,17 @@
           headers: headers(false)
         });
         if (response.status === 404) {
-          container.replaceChildren(element('div', 'Подробный расчёт ещё не выполнен.', 'task-state'));
+          const emptyState = element('div', undefined, 'task-state');
+          emptyState.append(element('div', 'Подробный расчёт ещё не выполнен.'));
+          const calculate = element('button', 'Рассчитать подробно');
+          calculate.type = 'button';
+          calculate.addEventListener('click', () => {
+            calculateDetailedMatch(applicationId, container, button).catch(error => {
+              container.replaceChildren(element('div', error.message, 'error'));
+            });
+          });
+          emptyState.append(calculate);
+          container.replaceChildren(emptyState);
           return;
         }
         const payload = await asJson(response);
@@ -1268,6 +1589,41 @@
       } finally {
         button.disabled = false;
       }
+    }
+
+    async function calculateDetailedMatch(applicationId, container, button) {
+      container.replaceChildren(element('div', 'Запускаем подробный расчёт…', 'task-state'));
+      await asJson(await fetch(`/v1/applications/${applicationId}/recalculate-match`, {
+        method: 'POST', headers: headers(false)
+      }));
+      const deadline = Date.now() + 180000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        const response = await fetch(`/v1/applications/${applicationId}/match-details`, {
+          headers: headers(false)
+        });
+        if (!response.ok) {
+          if (response.status === 404) continue;
+          await asJson(response);
+        }
+        const payload = await response.json();
+        if (payload.status === 'scored' || payload.status === 'failed') {
+          container.hidden = true;
+          button.textContent = 'Почему подходит';
+          await loadMatchDetails(applicationId, container, button);
+          return;
+        }
+        container.replaceChildren(element(
+          'div',
+          `Подробный расчёт выполняется: ${payload.status}.`,
+          'task-state'
+        ));
+      }
+      container.replaceChildren(element(
+        'div',
+        'Расчёт продолжается в фоне. Откройте «Почему подходит» немного позже.',
+        'task-state'
+      ));
     }
 
     function appendMatchDetailList(container, title, items, textForItem) {
@@ -1490,8 +1846,14 @@
       loadUserWorkspace().then(() => showStatus('Профиль загружен.')).catch(showError);
     });
     translateTree();
-    updateLanguageToggle();
-    activatePanel(localStorage.getItem('dashboardActivePanel') || 'vacancies');
+    renderLanguageSelector();
+    const requestedPanel = new URLSearchParams(window.location.search).get('panel');
+    const initialPanel = [
+      'vacancies', 'search', 'blacklist', 'resume', 'sessions', 'model', 'access'
+    ].includes(requestedPanel)
+      ? requestedPanel
+      : (localStorage.getItem('dashboardActivePanel') || 'vacancies');
+    activatePanel(initialPanel);
     restoreSearchResults();
     loadSavedLlmPreference();
     loadBrowserSessionStatuses(true).catch(showError);

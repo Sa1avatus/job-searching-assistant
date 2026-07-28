@@ -7,7 +7,11 @@ from sqlalchemy import Select, String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError
-from app.services.vacancy_metadata import detect_work_format, summarize_vacancy
+from app.services.vacancy_metadata import (
+    detect_work_format,
+    extract_key_skills,
+    summarize_vacancy,
+)
 from app.storage.tables import ApplicationRow, CompanyBlacklistRow, UserRow, VacancyRow
 
 
@@ -28,6 +32,7 @@ class SavedVacancy:
     work_format: str
     salary_text: str
     employment_types: tuple[str, ...]
+    key_skills: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +133,9 @@ class VacancyCatalogService:
                     ),
                     salary_text=vacancy.salary_text,
                     employment_types=tuple(vacancy.employment_types or ()),
+                    key_skills=extract_key_skills(
+                        vacancy.description_text, vacancy.required_skills or ()
+                    ),
                 )
                 for application, vacancy in rows
             ],

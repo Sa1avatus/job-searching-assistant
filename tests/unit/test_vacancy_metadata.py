@@ -1,6 +1,10 @@
 import pytest
 
-from app.services.vacancy_metadata import detect_work_format, summarize_vacancy
+from app.services.vacancy_metadata import (
+    detect_work_format,
+    extract_key_skills,
+    summarize_vacancy,
+)
 
 
 class TestSummarizeVacancy:
@@ -164,6 +168,16 @@ class TestDetectWorkFormat:
     def test_office_english_in_office(self) -> None:
         assert detect_work_format("", "", "In-office role, Monday to Friday") == "office"
 
+    def test_office_headhunter_employer_location(self) -> None:
+        assert (
+            detect_work_format(
+                "",
+                "",
+                "Full-time employment. Work format: at the employer's location.",
+            )
+            == "office"
+        )
+
     def test_office_russian_ofis(self) -> None:
         assert detect_work_format("", "Москва, офис", "") == "office"
 
@@ -203,3 +217,20 @@ class TestDetectWorkFormat:
             detect_work_format("", "", "Администрация компании")
             == "unspecified"
         )
+
+
+def test_extract_key_skills_combines_declared_and_description_skills() -> None:
+    result = extract_key_skills(
+        "Build Python services with Docker, Kubernetes, TensorFlow and CI/CD.",
+        declared_skills=["Python", "PostgreSQL", "python"],
+    )
+
+    assert result[:2] == ("Python", "PostgreSQL")
+    assert set(result) >= {
+        "Python",
+        "PostgreSQL",
+        "Docker",
+        "Kubernetes",
+        "TensorFlow",
+        "CI/CD",
+    }
