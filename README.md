@@ -1,31 +1,55 @@
 # Job Searching Assistant
 
-Recruitment assistant MVP with a personal dashboard, resume analysis, browser-based vacancy search,
-matching, individual cover-letter drafts, review, and explicitly enabled browser submission.
-HeadHunter and LinkedIn search do not use job-seeker APIs.
+[Русский](README.ru.md) | **English**
+
+A recruitment assistant with a personal dashboard for resume analysis, vacancy discovery, candidate matching, cover-letter drafting, application review, and explicitly enabled browser submission. HeadHunter and LinkedIn search uses the user's saved browser sessions rather than job-seeker APIs.
 
 Current stable version: **1.0.0**.
 
-Workflow tasks can be persisted with `JsonTaskRepository` for the dependency-free local slice. The
-Compose runtime uses PostgreSQL skip-locked claims and Redis leases for multi-worker-safe dispatch;
-domain code does not depend on either persistence implementation.
+## Features
 
-## Install on a new Windows machine
+- Searches HeadHunter and LinkedIn through isolated Playwright browser sessions and imports public Greenhouse boards.
+- Analyses multiple resumes and uses the selected resume for discovery, matching, and application materials.
+- Shows discovered vacancies progressively while matching scores and cover letters are generated.
+- Keeps higher-scoring vacancies at the top and filters previously rejected, submitted, or blacklisted results.
+- Supports review, editing, manual continuation, audited retries, and explicit submission controls.
+- Persists application state in PostgreSQL, coordinates workers through Redis, and uses OpenSearch as a rebuildable matching index.
 
-### Requirements
+## Architecture
 
-1. Windows 10/11 with WSL 2 enabled.
-2. [Docker Desktop](https://www.docker.com/products/docker-desktop/) with the WSL 2 engine.
-3. [Git for Windows](https://git-scm.com/download/win).
-4. At least 8 GB RAM and 10 GB free disk space for the standard application.
+```mermaid
+flowchart LR
+    User["User"] --> Dashboard["Dashboard and review queue"]
+    Dashboard --> API["FastAPI"]
+    API --> Postgres[("PostgreSQL\nprofiles, vacancies, applications")]
+    API --> Redis[("Redis\ntasks and leases")]
+    Redis --> Dispatcher["Dispatcher"]
+    Dispatcher --> Browser["Playwright browser worker"]
+    Browser --> HH["HeadHunter"]
+    Browser --> LinkedIn["LinkedIn"]
+    API --> Greenhouse["Greenhouse public boards"]
+    API --> LLM["Configured LLM provider"]
+    API --> OpenSearch[("OpenSearch\nderived matching index")]
+    Browser -->|"status and evidence"| Postgres
+    LLM -->|"scores and drafts"| API
+```
 
-The optional local detailed-matching models need at least 16 GB RAM and approximately 12 GB of
-additional free disk space. They are disabled by default because loading them together with
-PostgreSQL, OpenSearch, Chromium, and Docker Desktop can exhaust smaller machines.
+PostgreSQL is the source of truth. Redis provides dispatch coordination and leases. OpenSearch contains derived matching data and can be rebuilt without losing business data. Browser sessions are stored in root-confined encrypted files; PostgreSQL keeps only their lifecycle metadata.
 
-### Automatic installation
+## Quick start with Docker Compose
 
-Open PowerShell and run:
+### 1. Requirements
+
+- Windows 10 or 11 with WSL 2;
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) with the WSL 2 engine;
+- [Git for Windows](https://git-scm.com/download/win);
+- at least 8 GB RAM and 10 GB free disk space.
+
+Optional local detailed-matching models require at least 16 GB RAM and approximately 12 GB of additional disk space.
+
+### 2. Install and start
+
+Open PowerShell:
 
 ```powershell
 git clone https://github.com/Sa1avatus/job-searching-assistant.git
@@ -33,24 +57,19 @@ cd job-searching-assistant
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```
 
-The script:
-
-1. checks Docker Desktop and Docker Compose;
-2. creates `.env` from `.env.example`;
-3. generates the encryption key used for browser sessions and saved LLM keys;
-4. builds and starts PostgreSQL, Redis, OpenSearch, the API, dispatcher, and browser worker;
-5. waits for health checks and verifies the API;
-6. prints the dashboard address.
+The setup script creates `.env`, generates encryption material for browser sessions and saved LLM keys, builds the containers, waits for their health checks, and prints the dashboard address.
 
 Open `http://127.0.0.1:8000/dashboard`, then:
 
-1. create a user in **Access**;
-2. choose an LLM provider/model and save its API key in **Model**;
-3. upload and analyse one or more resumes in **Resume**;
-4. sign in to hh.ru and LinkedIn from **Site sessions**;
-5. select a resume and start a search.
+1. Create a user in **Access**.
+2. Select an LLM provider and model in **Model**.
+3. Upload and analyse one or more resumes in **Resume**.
+4. Sign in to hh.ru and LinkedIn in **Site sessions**.
+5. Select a resume and start a search.
 
-To stop or start the standard application later:
+Never commit `.env`: it contains secrets.
+
+### 3. Stop, restart, or update
 
 ```powershell
 docker compose --profile browser stop
@@ -64,7 +83,9 @@ git pull
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```
 
-### Optional detailed matching
+Docker volumes preserve PostgreSQL, Redis, OpenSearch, and downloaded models during normal rebuilds. Do not run `docker compose down -v` unless you intentionally want to delete all local application data.
+
+### 4. Optionally enable detailed matching
 
 Only enable the bundled BGE models on a sufficiently powerful machine:
 
@@ -72,13 +93,9 @@ Only enable the bundled BGE models on a sufficiently powerful machine:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -EnableDetailedMatching
 ```
 
-The first run downloads several gigabytes and can take a long time. The standard browser search,
-resume analysis, cover letters, status management, and application workflow do not require these
-local models.
+The first run downloads several gigabytes. Standard browser search, resume analysis, cover letters, status management, and application review do not require these local models.
 
-### Manual installation
-
-If you do not use the setup script:
+### 5. Manual start
 
 ```powershell
 Copy-Item .env.example .env
@@ -87,154 +104,65 @@ docker compose --profile browser up --build -d --wait
 Invoke-RestMethod http://127.0.0.1:8000/health
 ```
 
-Docker volumes preserve PostgreSQL, Redis, OpenSearch, and downloaded model data across normal
-container rebuilds. Do not run `docker compose down -v` unless you intentionally want to delete
-all locally stored application data.
+## Dashboard and review flow
 
-## Development and verified local usage
+The dashboard is available at `http://127.0.0.1:8000/dashboard`; the detailed review queue is at `http://127.0.0.1:8000/review`. Set `APP_HTTP_PORT` in `.env` to use another host port.
 
-Python 3.12+ is required. Install the project dependencies before running commands and tests:
+The dashboard contains saved vacancies, search, the company blacklist, resumes, browser sessions, LLM configuration, and local access settings. Search results appear progressively. Matching and cover-letter generation continue in the background, and vacancy cards are reordered as scores become available.
 
-```powershell
-python -m app.cli assess --profile examples/profile.json --vacancy examples/vacancy.json
-python -m pytest -q
-```
+Real submission is disabled by default. Set `APP_ENABLE_LINKEDIN_APPLY=true` to enable LinkedIn Easy Apply. Set `APP_ENABLE_HEADHUNTER_APPLY=true` only when final hh.ru submission should be available. CAPTCHA, SMS, 2FA, legal declarations, and unknown required questions always require human action.
 
-For the API, PostgreSQL, migrations, and Playwright worker:
+## Main API routes
+
+| Route | Purpose |
+| --- | --- |
+| `GET /health`, `GET /ready` | Check service health and readiness. |
+| `GET /metrics` | Read application metrics. |
+| `POST /v1/assessments` | Assess a vacancy against a profile. |
+| `POST /v1/users` | Create a local user. |
+| `GET /v1/users/{user_id}/vacancies` | List filtered and paginated saved vacancies. |
+| `GET /v1/users/{user_id}/cv-files` | List uploaded resumes. |
+| `POST /v1/users/{user_id}/cv-files` | Upload a validated resume. |
+| `GET /v1/users/{user_id}/browser-sessions` | Inspect saved site-session state. |
+| `POST /v1/vacancies/import-greenhouse` | Import a public Greenhouse vacancy. |
+| `POST /v1/vacancies/import-headhunter` | Import a vacancy through the hh.ru browser session. |
+| `POST /v1/vacancies/import-linkedin-reference` | Save a policy-safe LinkedIn reference. |
+| `GET /v1/review-queue` | List applications awaiting review. |
+| `POST /v1/applications/{application_id}/decision` | Record a review decision. |
+| `POST /v1/applications/{application_id}/retry` | Retry a recoverable task with audit history. |
+| `GET /v1/applications/{application_id}/match-details` | Read explainable matching evidence. |
+
+See [`docs/commands.md`](docs/commands.md), [`docs/architecture.md`](docs/architecture.md), [`docs/security.md`](docs/security.md), [`docs/compliance-matrix.md`](docs/compliance-matrix.md), and [`docs/known-limitations.md`](docs/known-limitations.md) for the complete verified behavior.
+
+## Local development without Docker
+
+Python 3.12 or newer is required:
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 playwright install chromium
+python -m app.cli assess --profile examples/profile.json --vacancy examples/vacancy.json
+```
+
+## Verification
+
+```powershell
 python -m pytest -q
 ```
 
-## Safety defaults
+## Current limitations
 
-- Submission mode defaults to `review`.
-- Unverified profile facts never influence matching or answers.
-- Missing required facts block automatic submission.
-- Sensitive declarations always require human review.
-- Automated tests use only `example.test` and never submit externally.
-- Browser cookies/localStorage are stored only in root-confined Fernet-encrypted files; the database
-  contains lifecycle metadata, not session secrets.
+- Real submission requires both a feature flag and explicit confirmation in the dashboard.
+- LinkedIn automation can trigger platform restrictions and should only be used with an account whose risk the user accepts.
+- External-site selectors may require maintenance after site redesigns.
+- Scanned or image-only resumes require OCR before upload.
+- Matching v2 remains in shadow mode by default and does not replace the dashboard score until its services are deliberately enabled.
 
-## API
+## Security
 
-With the supplied Docker configuration, the personal dashboard is available at
-`http://127.0.0.1:8000/dashboard`; the detailed review queue is available at
-`http://127.0.0.1:8000/review`. Set `APP_HTTP_PORT` in `.env` to choose another host port.
-The dashboard uses separate menu sections for saved vacancies, search, the company blacklist,
-resumes, browser sessions, the LLM, and local access. Multiple resume files can be uploaded at
-once. Each resume keeps its own reviewed skills, experience summary, years of experience, and
-search keywords in PostgreSQL. Selecting a resume makes it active for discovery, matching,
-screening-answer grounding, cover-letter generation, and application file selection. **Saved
-vacancies** lists the selected user's
-active applications with server-side text/source/status/location/score filters and 20-item
-pagination, ordered by match score. Rejected/skipped vacancies and blacklisted companies are hidden
-from the default view and from later discovery runs.
-
-### Enable browser search and submission
-
-Create a Fernet key and place it in `.env` as `APP_BROWSER_STATE_ENCRYPTION_KEY`:
-
-```powershell
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-Set `APP_ENABLE_LINKEDIN_APPLY=true` to enable LinkedIn browser search and Easy Apply. Set
-`APP_ENABLE_HEADHUNTER_APPLY=true` only if the final hh.ru submission button should be enabled.
-After creating a user, use the **Site sessions** cards in `/dashboard`: click the sign-in button,
-complete sign-in in the visible Chromium window, then click **I signed in — save**. The dashboard
-shows whether an encrypted session exists for both hh.ru and LinkedIn. The application never asks
-for a password or verification code; you enter them directly on the site. CAPTCHA and verification
-checkpoints are never bypassed automatically.
-
-### Choose an LLM in the dashboard
-
-After creating a user, select Google Gemini or Anthropic Claude in `/dashboard`, paste the
-provider API key, and click **Get models**. The list is loaded from the provider's official model
-API. Select a model and save it. The API key is encrypted with
-`APP_BROWSER_STATE_ENCRYPTION_KEY` before PostgreSQL persistence and is never returned to the
-browser. Environment-based LLM settings remain a fallback for users without a saved preference.
-
-Resume upload accepts PDF, DOCX, legacy DOC (best-effort text recovery), TXT, RTF, ODT, HTML/HTM,
-and Markdown. Scanned/image-only documents still require OCR before upload.
-
-- `GET /health` and `GET /ready`
-- `GET /metrics`
-- `GET /v1/connectors` for explicit capabilities and safety limitations
-- `POST /v1/connectors/browser-handoff` for manual hh.ru/LinkedIn browser continuation
-- `POST /v1/assessments`
-- `POST /v1/users` and `POST /v1/users/{user_id}/facts`
-- `GET /v1/users/{user_id}/vacancies` for filtered, paginated saved vacancies
-- `GET/POST/DELETE /v1/users/{user_id}/company-blacklist` for company exclusions
-- `GET/POST /v1/users/{user_id}/cv-files` for listing and validated resume uploads
-- `PUT /v1/users/{user_id}/cv-files/{cv_file_id}/profile` for per-resume reviewed analysis
-- `PUT /v1/users/{user_id}/active-cv-file` for choosing the resume used by later searches
-- `POST /v1/llm/models` and `GET/PUT /v1/users/{user_id}/llm-preference` for user LLM setup
-- `GET /v1/users/{user_id}/browser-sessions` plus `POST` to its per-site `start`, `confirm`, and
-  `cancel` routes for dashboard-driven hh.ru/LinkedIn sign-in
-- `DELETE /v1/users/{user_id}` for profile/application/task deletion
-- `POST /v1/vacancies` and `POST /v1/applications/prepare`
-- `GET /v1/applications/{application_id}/task` for durable dispatch evidence
-- `PATCH /v1/applications/{application_id}/materials` for user-reviewed cover letters and answers
-- `POST /v1/applications/{application_id}/retry` for an audited retry of recoverable tasks
-- `GET /v1/applications/{application_id}/match-details` for the versioned shadow score,
-  requirement evidence, component scores, blockers, and model provenance
-- `POST /v1/applications/{application_id}/recalculate-match` to enqueue an idempotent matching
-  calculation without holding the HTTP request open
-- `POST /v1/applications/{application_id}/resume` for an active human-action checkpoint
-- `POST /v1/applications/{application_id}/reject-vacancy` to hide a saved vacancy permanently
-- `POST /v1/applications/{application_id}/prepare-browser-review` for validated, non-submitting
-  Greenhouse form preparation in the isolated Chromium worker
-- `GET /v1/evidence/{artifact_id}` for root-confined, no-store screenshot evidence
-- `POST /v1/vacancies/import-greenhouse` for strict public read-only extraction
-- `POST /v1/vacancies/import-headhunter` for browser-based hh.ru extraction
-- `POST /v1/vacancies/import-linkedin-reference` for policy-safe manual LinkedIn references
-- `POST /v1/users/{user_id}/discover-greenhouse-vacancies` for known/supplied company boards
-- `GET /v1/review-queue` and `POST /v1/applications/{application_id}/decision`
-
-Browser discovery expands a multi-word search into a bounded set of queries: the complete phrase,
-comma/semicolon-separated phrases, and individual words. Results are deduplicated by source URL
-before extraction, which improves recall without allowing an unbounded number of site requests.
-LinkedIn vacancies without Easy Apply remain visible for manual continuation. Cover-letter drafts
-follow the detected vacancy language, including a validated Russian-language path.
-
-The review interface displays answer provenance, missing facts, legal declarations, and active
-human-action instructions. Draft edits are stored separately from verified profile facts and never
-enable automatic submission.
-
-See `docs/commands.md`, `docs/architecture.md`, `docs/security.md`,
-`docs/compliance-matrix.md`, and `docs/known-limitations.md` for verified commands and current
-boundaries.
-
-## Current boundaries
-
-Real submission is disabled by default and requires both a feature flag and an explicit confirmation
-from the dashboard. LinkedIn automation can trigger platform restrictions; use it only with an
-account whose risk you accept. Selectors are fixture-tested but may need maintenance when either site
-changes its markup. CAPTCHA, SMS, 2FA, legal declarations, and unknown required questions always stop
-for human action.
-
-## Matching v2 development services
-
-PostgreSQL is the source of truth for requirements, candidate evidence, embedding metadata, and
-explainable match results. OpenSearch is a disposable derived index. The new calculation defaults
-to shadow mode and leaves the existing dashboard score unchanged:
-
-```powershell
-docker compose up -d --wait opensearch
-python -m scripts.opensearch_smoke
-```
-
-Keep `APP_MATCHING_V2_SHADOW_MODE=true` until backfill and evaluation are complete. Deleting the
-OpenSearch volume does not delete business data; the index is rebuilt from PostgreSQL.
-
-`APP_MATCHING_MODEL_SERVICE_URL` is an HTTP contract, not a requirement to run models on this
-machine. Point it at an approved hosted embedding/reranking service. The optional
-`matching-models` Compose profile is disabled by default and is not started by the normal stack.
-Enable `APP_MATCHING_V2_ENABLED=true` only after OpenSearch, the external model endpoint, and the
-dispatcher are healthy. Failed v2 runs retain the legacy score and expose `degraded` plus a
-fallback reason through `match-details`.
+- Never commit `.env`, browser-session files, credentials, API keys, or real application evidence.
+- Saved LLM keys and browser state are encrypted with `APP_BROWSER_STATE_ENCRYPTION_KEY`.
+- Automated tests use controlled fixtures and never submit real applications.
+- Unverified profile facts, sensitive declarations, CAPTCHA, 2FA, and unknown required answers cannot be silently submitted.
