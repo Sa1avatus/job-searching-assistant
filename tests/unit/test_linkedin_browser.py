@@ -8,7 +8,11 @@ from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 import adapters.job_boards.linkedin_browser as linkedin_browser_module
-from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
+from adapters.job_boards.linkedin_browser import (
+    LinkedInBrowserAdapter,
+    clean_linkedin_description_text,
+    is_meaningful_linkedin_description,
+)
 from app.browser.engine import BrowserActionResult, PlaywrightEngine
 from app.domain.failures import FailureCategory
 
@@ -28,6 +32,33 @@ def _navigation_result(
         error_category=category,
         should_retry=should_retry,
     )
+
+
+def test_linkedin_description_cleaner_removes_premium_chrome() -> None:
+    raw = """Job search smarter with Premium
+See jobs where you'd be a top applicant
+About the job
+About The Role
+Build secure distributed systems.
+Requirements
+Experience with AWS, PostgreSQL and Kubernetes."""
+
+    cleaned = clean_linkedin_description_text(raw)
+
+    assert cleaned.startswith("About The Role")
+    assert "Premium" not in cleaned
+    assert "Experience with AWS" in cleaned
+    assert is_meaningful_linkedin_description(cleaned)
+
+
+def test_linkedin_premium_stub_is_not_a_meaningful_description() -> None:
+    stub = (
+        "Job search smarter with Premium "
+        "See jobs where you'd be a top applicant "
+        "Message hiring managers with InMail"
+    )
+
+    assert not is_meaningful_linkedin_description(stub)
 
 
 class _NavigationEngine:

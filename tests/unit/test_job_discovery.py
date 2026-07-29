@@ -1,6 +1,6 @@
 import asyncio
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -431,7 +431,11 @@ def test_linkedin_discovery_syncs_externally_submitted_status() -> None:
                 locations=[],
             )
 
-        assert outcomes[0].application_status == "submitted"
+        assert outcomes == []
+        with session_factory() as session:
+            application = session.scalar(select(ApplicationRow))
+            assert application is not None
+            assert application.status == "submitted"
 
     asyncio.run(run())
 

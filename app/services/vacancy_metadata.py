@@ -51,7 +51,15 @@ _KEY_SKILL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("TypeScript", re.compile(r"(?<!\w)typescript(?!\w)", re.IGNORECASE)),
     ("C#", re.compile(r"(?<!\w)c#(?!\w)", re.IGNORECASE)),
     ("C++", re.compile(r"(?<!\w)c\+\+(?!\w)", re.IGNORECASE)),
-    ("Go", re.compile(r"(?<!\w)golang(?!\w)|(?<!\w)go(?!\w)", re.IGNORECASE)),
+    (
+        "Go",
+        re.compile(
+            r"(?<!\w)golang(?!\w)"
+            r"|(?<!\w)go\s+(?:programming(?:\s+language)?|developers?|engineers?|backend|development|code|services?|microservices?)(?!\w)"
+            r"|(?<!\w)(?:experience\s+with|proficiency\s+in|development\s+in|written\s+in|using)\s+go(?!\w)",
+            re.IGNORECASE,
+        ),
+    ),
     ("SQL", re.compile(r"(?<!\w)sql(?!\w)", re.IGNORECASE)),
     ("PostgreSQL", re.compile(r"(?<!\w)postgres(?:ql)?(?!\w)", re.IGNORECASE)),
     ("MySQL", re.compile(r"(?<!\w)mysql(?!\w)", re.IGNORECASE)),
@@ -88,6 +96,28 @@ _KEY_SKILL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("Data Governance", re.compile(r"\bdata\s+governance\b", re.IGNORECASE)),
     ("Enterprise Architecture", re.compile(r"\benterprise\s+architecture\b", re.IGNORECASE)),
     ("Distributed Systems", re.compile(r"\bdistributed\s+systems?\b", re.IGNORECASE)),
+    ("APIs", re.compile(r"(?<!\w)apis?(?!\w)", re.IGNORECASE)),
+    ("Message Queues", re.compile(r"\bmessage\s+queues?\b", re.IGNORECASE)),
+    (
+        "Event-driven Architecture",
+        re.compile(r"\bevent[- ]driven\s+architectures?\b", re.IGNORECASE),
+    ),
+    ("Data Modeling", re.compile(r"\bdata\s+modelling\b|\bdata\s+modeling\b", re.IGNORECASE)),
+    (
+        "Cloud Architecture",
+        re.compile(r"\bcloud[- ]native\b|\bcloud\s+architectures?\b", re.IGNORECASE),
+    ),
+    ("DevSecOps", re.compile(r"(?<!\w)devsecops(?!\w)", re.IGNORECASE)),
+    (
+        "Infrastructure as Code",
+        re.compile(
+            r"\binfrastructure[- ]as[- ]code\b|(?<!\w)iac(?!\w)",
+            re.IGNORECASE,
+        ),
+    ),
+    ("Observability", re.compile(r"(?<!\w)observability(?!\w)", re.IGNORECASE)),
+    ("OWASP", re.compile(r"(?<!\w)owasp(?!\w)", re.IGNORECASE)),
+    ("Spring", re.compile(r"\bspring(?:\s+ecosystem|\s+framework|\s+boot)?\b", re.IGNORECASE)),
     ("Information Security", re.compile(r"\binformation\s+security\b", re.IGNORECASE)),
     ("TOGAF", re.compile(r"(?<!\w)togaf(?!\w)", re.IGNORECASE)),
 )
@@ -121,13 +151,15 @@ def summarize_vacancy(description_text: str, max_characters: int = 360) -> str:
     if max_characters <= 0:
         raise ValueError("max_characters must be positive")
 
-    normalized = _normalize_whitespace(description_text)
+    requirement_text = _extract_requirement_section(description_text)
+    normalized = _normalize_whitespace(requirement_text or description_text)
     if not normalized:
         return ""
 
     first = _first_sentence(normalized)
     if (
-        first is not None
+        not requirement_text
+        and first is not None
         and len(first) >= _INFORMATIVE_MIN_LENGTH
         and len(first) <= max_characters
     ):
@@ -146,6 +178,50 @@ def summarize_vacancy(description_text: str, max_characters: int = 360) -> str:
         if last_space > 0:
             truncated = truncated[:last_space]
     return truncated.rstrip() + ellipsis
+
+
+def _extract_requirement_section(description_text: str) -> str:
+    """Extract the useful requirement block from a structured vacancy."""
+    lines = [re.sub(r"\s+", " ", line).strip() for line in description_text.splitlines()]
+    lines = [line for line in lines if line]
+    start_markers = {
+        "requirements",
+        "what we're looking for",
+        "what we’re looking for",
+        "qualifications",
+        "required qualifications",
+        "требования",
+    }
+    stop_markers = {
+        "benefits",
+        "what we offer",
+        "our engineering principles",
+        "about us",
+        "о компании",
+        "условия",
+    }
+    start = next(
+        (index for index, line in enumerate(lines) if line.casefold() in start_markers),
+        None,
+    )
+    if start is None:
+        return ""
+    selected: list[str] = []
+    ignored_headings = {
+        "engineering foundation :",
+        "engineering foundation:",
+        "product & leadership:",
+        "nice-to-have",
+        "nice to have",
+    }
+    for line in lines[start + 1 :]:
+        folded = line.casefold()
+        if folded in stop_markers:
+            break
+        if folded in start_markers or folded in ignored_headings:
+            continue
+        selected.append(line)
+    return " ".join(selected)
 
 
 def detect_work_format(

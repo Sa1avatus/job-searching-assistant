@@ -234,3 +234,77 @@ def test_extract_key_skills_combines_declared_and_description_skills() -> None:
         "TensorFlow",
         "CI/CD",
     }
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Work with GO TymeX platform daily",
+        "Go Premium plan available for users",
+        "Go to jobs section to find openings",
+        "Get ready to go and start your career",
+        "Our go to market strategy is solid",
+    ],
+)
+def test_go_is_not_inferred_from_branded_or_prose_uses(description: str) -> None:
+    assert "Go" not in extract_key_skills(description)
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "We use Golang for backend services",
+        "Looking for a Go developer",
+        "Hiring a Go engineer",
+        "Go backend services",
+        "Go programming language",
+        "Experience with Go",
+        "Development in Go",
+        "Services written in Go",
+        "Using Go for APIs",
+    ],
+)
+def test_go_is_inferred_only_from_technical_context(description: str) -> None:
+    assert "Go" in extract_key_skills(description)
+
+
+def test_declared_go_skill_is_preserved_without_description_evidence() -> None:
+    assert extract_key_skills("Build scalable systems", ["Go"]) == ("Go",)
+
+
+def test_requirement_summary_prefers_requirements_section() -> None:
+    text = """About The Role
+Shape pragmatic architecture with product teams.
+Requirements
+What We're Looking For
+Engineering Foundation :
+8+ years in backend systems, APIs, databases, message queues and distributed systems.
+Cloud-native experience with AWS, Azure or GCP.
+Benefits
+Meal allowance."""
+
+    result = summarize_vacancy(text)
+
+    assert result.startswith("8+ years in backend systems")
+    assert "AWS, Azure or GCP" in result
+    assert "Meal allowance" not in result
+
+
+def test_extended_requirement_tags_are_extracted() -> None:
+    text = (
+        "APIs, message queues, event-driven architectures, data modeling, cloud-native systems, "
+        "DevSecOps, infrastructure-as-code, observability, OWASP and Spring ecosystem."
+    )
+
+    assert set(extract_key_skills(text)) >= {
+        "APIs",
+        "Message Queues",
+        "Event-driven Architecture",
+        "Data Modeling",
+        "Cloud Architecture",
+        "DevSecOps",
+        "Infrastructure as Code",
+        "Observability",
+        "OWASP",
+        "Spring",
+    }

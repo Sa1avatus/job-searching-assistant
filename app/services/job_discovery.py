@@ -291,7 +291,7 @@ class JobDiscoveryService:
             )
         )
         if existing_application is not None:
-            if existing_application.status in {"rejected", "skipped"}:
+            if existing_application.status in {"rejected", "skipped", "submitted", "interview"}:
                 return None
             existing_application.selected_cv_file_id = cv_file_id
             self._rescore_from_text(existing_application, vacancy, cv_file_id)
@@ -485,11 +485,12 @@ class JobDiscoveryService:
             )
         )
         if existing_application is not None:
-            if existing_application.status in {"rejected", "skipped"}:
+            if existing_application.status in {"rejected", "skipped", "submitted", "interview"}:
                 return None
             if application_submitted:
                 existing_application.status = "submitted"
                 self._mark_linkedin_duplicates_submitted(user_id, vacancy)
+                return None
             existing_application.selected_cv_file_id = cv_file_id
             self._rescore_from_text(existing_application, vacancy, cv_file_id)
             return DiscoveryOutcome(
@@ -518,6 +519,7 @@ class JobDiscoveryService:
             application.status = "submitted"
             self._mark_linkedin_duplicates_submitted(user_id, vacancy)
             self._session.commit()
+            return None
         return DiscoveryOutcome(
             application_id=application.id,
             vacancy_id=vacancy.id,
@@ -710,7 +712,7 @@ class JobDiscoveryService:
             )
         )
         if existing_application is not None:
-            if existing_application.status in {"rejected", "skipped"}:
+            if existing_application.status in {"rejected", "skipped", "submitted", "interview"}:
                 return None
             existing_application.selected_cv_file_id = cv_file_id
             self._rescore_from_text(existing_application, vacancy, cv_file_id)

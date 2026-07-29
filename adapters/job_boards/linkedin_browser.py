@@ -46,6 +46,47 @@ _LINKEDIN_INSIGHT_SELECTORS: tuple[str, ...] = (
     ".job-details-jobs-unified-top-card__job-insight",
     ".jobs-unified-top-card__job-insight",
 )
+_LINKEDIN_DESCRIPTION_SELECTORS = (
+    "#job-details",
+    ".jobs-description-content__text",
+    ".jobs-box__html-content",
+    ".jobs-description__content",
+)
+_LINKEDIN_PROMO_FRAGMENTS = (
+    "job search smarter with premium",
+    "see jobs where you'd be a top applicant",
+    "message hiring managers with inmail",
+    "get personalized job recommendations",
+)
+
+
+def clean_linkedin_description_text(raw_text: str) -> str:
+    """Keep the vacancy body while removing LinkedIn chrome and Premium promos."""
+    lines = [re.sub(r"\s+", " ", line).strip() for line in raw_text.splitlines()]
+    lines = [line for line in lines if line]
+    about_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.casefold() in {"about the job", "о вакансии"}
+        ),
+        None,
+    )
+    if about_index is not None:
+        lines = lines[about_index + 1 :]
+    cleaned = [
+        line
+        for line in lines
+        if not any(fragment in line.casefold() for fragment in _LINKEDIN_PROMO_FRAGMENTS)
+    ]
+    return "\n".join(cleaned).strip()[:20_000]
+
+
+def is_meaningful_linkedin_description(text: str) -> bool:
+    normalized = " ".join(text.casefold().split())
+    if len(normalized) < 80:
+        return False
+    return not all(fragment in normalized for fragment in _LINKEDIN_PROMO_FRAGMENTS[:3])
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,24 +391,33 @@ class LinkedInBrowserAdapter:
             if await location_locator.count() > 0
             else ""
         )
-        description_locator = page.locator(".jobs-description__content").first
-        if await description_locator.count() == 0:
-            description_locator = page.locator("#job-details, .jobs-box__html-content").first
-        if await description_locator.count() == 0:
+        description_text = ""
+        for selector in _LINKEDIN_DESCRIPTION_SELECTORS:
+            candidate = page.locator(selector).first
+            if await candidate.count() == 0:
+                continue
+            candidate_text = clean_linkedin_description_text(await candidate.inner_text())
+            if is_meaningful_linkedin_description(candidate_text):
+                description_text = candidate_text
+                break
+        if not description_text:
             about_heading = page.get_by_role(
                 "heading", name=re.compile(r"^(?:About the job|О вакансии)$", re.IGNORECASE)
             ).first
             if await about_heading.count() > 0:
-                description_locator = about_heading.locator("..").locator("..")
-        description_text = (
-            (await description_locator.inner_text()).strip()
-            if await description_locator.count() > 0
-            else ""
-        )
+                candidate_text = clean_linkedin_description_text(
+                    await about_heading.locator("..").locator("..").inner_text()
+                )
+                if is_meaningful_linkedin_description(candidate_text):
+                    description_text = candidate_text
         if not description_text:
             main_content = page.locator("main").first
             if await main_content.count() > 0:
-                description_text = (await main_content.inner_text()).strip()[:20_000]
+                candidate_text = clean_linkedin_description_text(
+                    await main_content.inner_text()
+                )
+                if is_meaningful_linkedin_description(candidate_text):
+                    description_text = candidate_text
         publication_locator = page.locator(
             "time[datetime],.jobs-unified-top-card__posted-date"
         ).first
