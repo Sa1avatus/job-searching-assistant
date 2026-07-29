@@ -238,6 +238,14 @@ class HeadHunterBrowserAdapter:
                 "The submit control was not found; this vacancy likely requires a test"
             )
 
+        cross_country_action = await self._handle_cross_country_dialog(page)
+        if cross_country_action is not None:
+            actions.append(cross_country_action)
+            if not cross_country_action.is_successful:
+                raise ApplyBlocked(
+                    "The cross-country warning could not be confirmed"
+                )
+
         await self._raise_if_captcha(page)
         confirmation = page.locator(
             "[data-qa='vacancy-response-popup-form-done'],"
@@ -518,6 +526,68 @@ class HeadHunterBrowserAdapter:
         raise CaptchaChallenge(
             "hh.ru presented a CAPTCHA/verification checkpoint",
             screenshot_path=checkpoint.screenshot_path,
+        )
+
+    async def _handle_cross_country_dialog(
+        self, page: Page
+    ) -> BrowserActionResult | None:
+        heading_pattern = re.compile(
+            r"^(?:You are applying from another country|"
+            r"Вы откликаетесь из другой страны)$",
+            re.IGNORECASE,
+        )
+        continue_pattern = re.compile(
+            r"^(?:Still apply|Всё равно откликнуться|Все равно откликнуться)$",
+            re.IGNORECASE,
+        )
+
+        dialog: Locator | None = None
+        for _ in range(6):
+            dialogs = page.get_by_role("dialog")
+            for index in range(await dialogs.count()):
+                candidate = dialogs.nth(index)
+                try:
+                    if (
+                        await candidate.is_visible()
+                        and await candidate.get_by_text(heading_pattern).count() > 0
+                    ):
+                        dialog = candidate
+                        break
+                except Exception:
+                    continue
+            if dialog is not None:
+                break
+            await page.wait_for_timeout(250)
+
+        if dialog is None:
+            return None
+
+        continue_button = dialog.get_by_role("button", name=continue_pattern).first
+        try:
+            button_is_available = (
+                await continue_button.count() > 0
+                and await continue_button.is_visible()
+            )
+        except Exception:
+            button_is_available = False
+        if not button_is_available:
+            error = ApplyBlocked(
+                "The cross-country warning is visible, but its continue button was not found"
+            )
+            await capture_browser_failure(
+                page,
+                artifact_directory=self._browser_engine.artifact_directory,
+                action_name="click",
+                target="continue-cross-country-application",
+                error=error,
+            )
+            raise error
+
+        return await self._click(
+            page,
+            continue_button,
+            "continue-cross-country-application",
+            already_ok=False,
         )
 
     async def _click(

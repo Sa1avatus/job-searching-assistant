@@ -80,3 +80,63 @@ async def test_search_closes_page_on_navigation_failure() -> None:
         await adapter.search(text="python")
 
     mock_page.close.assert_awaited_once()
+
+
+def _cross_country_page(*, dialog_present: bool) -> tuple[MagicMock, MagicMock]:
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+
+    heading = MagicMock()
+    heading.count = AsyncMock(return_value=1)
+
+    continue_button = MagicMock()
+    continue_button.count = AsyncMock(return_value=1)
+    continue_button.is_visible = AsyncMock(return_value=True)
+
+    dialog = MagicMock()
+    dialog.is_visible = AsyncMock(return_value=True)
+    dialog.get_by_text.return_value = heading
+    dialog.get_by_role.return_value.first = continue_button
+
+    dialogs = MagicMock()
+    dialogs.count = AsyncMock(return_value=1 if dialog_present else 0)
+    dialogs.nth.return_value = dialog
+    page.get_by_role.return_value = dialogs
+    return page, continue_button
+
+
+@pytest.mark.asyncio
+async def test_cross_country_dialog_clicks_continue_inside_dialog() -> None:
+    page, continue_button = _cross_country_page(dialog_present=True)
+    action = MagicMock()
+    action.is_successful = True
+    adapter = HeadHunterBrowserAdapter(AsyncMock())
+    adapter._click = AsyncMock(return_value=action)
+
+    result = await adapter._handle_cross_country_dialog(page)
+
+    assert result is action
+    adapter._click.assert_awaited_once_with(
+        page,
+        continue_button,
+        "continue-cross-country-application",
+        already_ok=False,
+    )
+    dialog = page.get_by_role.return_value.nth.return_value
+    dialog.get_by_role.assert_called_once()
+    _, role_kwargs = dialog.get_by_role.call_args
+    assert role_kwargs["name"].fullmatch("Still apply")
+    assert role_kwargs["name"].fullmatch("Cancel") is None
+
+
+@pytest.mark.asyncio
+async def test_cross_country_dialog_absent_does_not_click() -> None:
+    page, _ = _cross_country_page(dialog_present=False)
+    adapter = HeadHunterBrowserAdapter(AsyncMock())
+    adapter._click = AsyncMock()
+
+    result = await adapter._handle_cross_country_dialog(page)
+
+    assert result is None
+    adapter._click.assert_not_awaited()
+    assert page.wait_for_timeout.await_count == 6
