@@ -466,6 +466,17 @@ class DiscoverGreenhouseVacanciesRequest(BaseModel):
     cv_file_id: str | None = None
 
 
+class DiscoverVacanciesStreamRequest(BaseModel):
+    sources: list[Literal["headhunter", "linkedin", "greenhouse"]] = Field(
+        min_length=1, max_length=3
+    )
+    board_urls: list[HttpUrl] = Field(default_factory=list, max_length=20)
+    locations: list[str] = Field(default_factory=list, max_length=20)
+    limit: int = Field(default=15, ge=1, le=50)
+    search_text: str | None = Field(default=None, max_length=300)
+    cv_file_id: str | None = None
+
+
 class CompanyBlacklistRequest(BaseModel):
     company: str = Field(min_length=1, max_length=300)
 

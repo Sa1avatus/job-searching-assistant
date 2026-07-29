@@ -1,4 +1,5 @@
 import asyncio
+import json
 import secrets
 import sys
 import uuid
@@ -23,7 +24,7 @@ if sys.platform == "win32":
 
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import SecretStr
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -59,7 +60,9 @@ from app.api.schemas import (
     DiscoverGreenhouseVacanciesRequest,
     DiscoverHeadHunterVacanciesRequest,
     DiscoverLinkedInVacanciesRequest,
+    DiscoverVacanciesStreamRequest,
     DiscoveryOutcomeResponse,
+    EmploymentTypeName,
     EvidenceArtifactResponse,
     ExtractedProfileResponse,
     GreenhouseImportRequest,
@@ -88,6 +91,7 @@ from app.api.schemas import (
     VacancyRequest,
     VacancyResponse,
     WorkflowTaskResponse,
+    WorkFormat,
 )
 from app.browser.engine import PlaywrightEngine
 from app.browser.selector_library import SelectorLibrary
@@ -98,6 +102,7 @@ from app.config import Settings, get_settings
 from app.domain.models import ProfileFact, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy
 from app.domain.resume_text import UnreadableResumeError, extract_resume_text
+from app.domain.vacancy_attributes import EMPLOYMENT_TYPE_ORDER
 from app.llm.preferences import (
     InvalidLlmPreference,
     LlmModelDiscoveryError,
@@ -165,7 +170,7 @@ from app.workers.browser_tasks import _restore_browser_session
 from app.workers.browser_worker import create_session_store
 
 configure_logging()
-app = FastAPI(title="Job Searching Assistant", version="1.0.0")
+app = FastAPI(title="Job Searching Assistant", version="1.1.0-dev")
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
 BROWSER_AUTHORIZATION_MANAGER = BrowserAuthorizationManager()
@@ -175,6 +180,29 @@ def serialize_discovery_outcomes(
     outcomes: list[DiscoveryOutcome],
 ) -> list[DiscoveryOutcomeResponse]:
     return [DiscoveryOutcomeResponse(**asdict(outcome)) for outcome in outcomes]
+
+
+def serialize_discovery_outcome(outcome: DiscoveryOutcome) -> dict[str, object]:
+    return DiscoveryOutcomeResponse(**asdict(outcome)).model_dump(mode="json")
+
+
+def response_work_format(vacancy: VacancyRow) -> WorkFormat:
+    if vacancy.work_format == "remote":
+        return "remote"
+    if vacancy.work_format == "hybrid":
+        return "hybrid"
+    if vacancy.work_format == "office":
+        return "office"
+    return detect_work_format(vacancy.title, vacancy.location, vacancy.description_text)
+
+
+def response_employment_types(vacancy: VacancyRow) -> list[EmploymentTypeName]:
+    stored_employment_types = set(vacancy.employment_types or ())
+    return [
+        employment_type
+        for employment_type in EMPLOYMENT_TYPE_ORDER
+        if employment_type in stored_employment_types
+    ]
 
 
 def serialize_cv_file(cv_file: CvFileRow, *, active_cv_file_id: str | None) -> CvFileResponse:
@@ -1263,6 +1291,256 @@ async def discover_greenhouse_vacancies(
     return serialize_discovery_outcomes(outcomes)
 
 
+@app.post("/v1/users/{user_id}/discover-vacancies-stream")
+async def discover_vacancies_stream(
+    user_id: str,
+    request: DiscoverVacanciesStreamRequest,
+) -> StreamingResponse:
+    """Stream each persisted vacancy as newline-delimited JSON."""
+    with SessionFactory() as session:
+        if session.get(UserRow, user_id) is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+    settings = get_settings()
+    requested_sources = tuple(dict.fromkeys(request.sources))
+    queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    enrichment_semaphore = asyncio.Semaphore(1)
+
+    async def publish_outcome(source: str, outcome: DiscoveryOutcome) -> None:
+        await queue.put(
+            {
+                "event": "vacancy",
+                "source": source,
+                "item": serialize_discovery_outcome(outcome),
+            }
+        )
+
+    async def enrich_outcome(source: str, application_id: str) -> None:
+        async with enrichment_semaphore:
+            await queue.put(
+                {
+                    "event": "enrichment_started",
+                    "source": source,
+                    "application_id": application_id,
+                }
+            )
+            matching_was_scheduled = False
+            if settings.matching_v2_enabled:
+                try:
+                    with SessionFactory() as matching_session:
+                        MatchingJobService(matching_session).schedule(application_id)
+                    matching_was_scheduled = True
+                except Exception as error:  # noqa: BLE001 - legacy score remains available
+                    await queue.put(
+                        {
+                            "event": "matching_error",
+                            "source": source,
+                            "application_id": application_id,
+                            "error": str(error),
+                        }
+                    )
+
+            try:
+                async with httpx.AsyncClient(
+                    timeout=60, follow_redirects=False, trust_env=False
+                ) as client:
+                    with SessionFactory() as materials_session:
+                        providers = build_user_model_providers(
+                            client, materials_session, user_id, settings
+                        )
+                        if not providers:
+                            raise RuntimeError("LLM is not configured")
+                        materials_service = MaterialsGenerationService(
+                            materials_session, ModelRouter(providers)
+                        )
+                        if materials_service.needs_material_refresh(application_id):
+                            generated = await materials_service.draft_materials(
+                                application_id,
+                                replace_mismatched_cover_letter=True,
+                            )
+                            cover_letter_text = generated.cover_letter_text
+                        else:
+                            application = materials_session.get(ApplicationRow, application_id)
+                            cover_letter_text = (
+                                application.cover_letter_text if application is not None else ""
+                            )
+                await queue.put(
+                    {
+                        "event": "materials_ready",
+                        "source": source,
+                        "application_id": application_id,
+                        "cover_letter_text": cover_letter_text,
+                    }
+                )
+            except Exception as error:  # noqa: BLE001 - matching and search must continue
+                await queue.put(
+                    {
+                        "event": "materials_error",
+                        "source": source,
+                        "application_id": application_id,
+                        "error": str(error),
+                    }
+                )
+
+            if matching_was_scheduled:
+                for _ in range(60):
+                    with SessionFactory() as poll_session:
+                        aggregate = poll_session.get(ApplicationMatchResultRow, application_id)
+                        application = poll_session.get(ApplicationRow, application_id)
+                        if (
+                            aggregate is not None
+                            and aggregate.status in {"scored", "degraded", "failed"}
+                        ):
+                            score = (
+                                round(aggregate.final_score)
+                                if aggregate.status == "scored"
+                                else application.match_score if application is not None else 0
+                            )
+                            await queue.put(
+                                {
+                                    "event": "matching_ready",
+                                    "source": source,
+                                    "application_id": application_id,
+                                    "match_score": score,
+                                    "matching_status": aggregate.status,
+                                }
+                            )
+                            break
+                    await asyncio.sleep(1)
+                else:
+                    await queue.put(
+                        {
+                            "event": "matching_error",
+                            "source": source,
+                            "application_id": application_id,
+                            "error": "Detailed matching is still queued",
+                        }
+                    )
+            else:
+                with SessionFactory() as score_session:
+                    application = score_session.get(ApplicationRow, application_id)
+                    score = application.match_score if application is not None else 0
+                await queue.put(
+                    {
+                        "event": "matching_ready",
+                        "source": source,
+                        "application_id": application_id,
+                        "match_score": score,
+                        "matching_status": "legacy",
+                    }
+                )
+
+    async def run_source(source: str) -> None:
+        enrichment_tasks: list[asyncio.Task[None]] = []
+        try:
+            with SessionFactory() as source_session:
+                service = JobDiscoveryService(source_session)
+
+                async def on_outcome(outcome: DiscoveryOutcome) -> None:
+                    await publish_outcome(source, outcome)
+                    enrichment_tasks.append(
+                        asyncio.create_task(enrich_outcome(source, outcome.application_id))
+                    )
+
+                if source == "greenhouse":
+                    async with httpx.AsyncClient(
+                        timeout=30, follow_redirects=False, trust_env=False
+                    ) as client:
+                        await service.discover_greenhouse_vacancies(
+                            user_id,
+                            greenhouse_adapter=GreenhouseJobBoardApi(client),
+                            board_urls=[str(board_url) for board_url in request.board_urls],
+                            locations=request.locations,
+                            limit=request.limit,
+                            search_text=request.search_text,
+                            cv_file_id=request.cv_file_id,
+                            on_outcome=on_outcome,
+                        )
+                else:
+                    if source == "linkedin" and not settings.enable_linkedin_apply:
+                        raise LinkedInSessionRequiredError(
+                            "LinkedIn browser automation is disabled"
+                        )
+                    store = create_session_store(settings)
+                    state = _restore_browser_session(
+                        SessionFactory, store, user_id=user_id, site_key=source
+                    )
+                    if state is None:
+                        raise LinkedInSessionRequiredError(
+                            f"Authorize {source} in Site sessions before searching"
+                        )
+                    artifact_prefix = "hh" if source == "headhunter" else "li"
+                    artifact_directory = (
+                        settings.artifact_directory
+                        / "browser-worker"
+                        / f"{artifact_prefix}-discover-{user_id}"
+                    )
+                    async with PlaywrightEngine(
+                        headless=settings.browser_headless,
+                        timeout_ms=settings.browser_timeout_ms,
+                        artifact_directory=artifact_directory,
+                        storage_state=state,
+                        selector_library=SelectorLibrary(settings.artifact_directory),
+                    ) as browser_engine:
+                        if source == "headhunter":
+                            await service.discover_headhunter_vacancies(
+                                user_id,
+                                headhunter_adapter=HeadHunterBrowserAdapter(browser_engine),
+                                locations=request.locations,
+                                limit=request.limit,
+                                search_text=request.search_text,
+                                cv_file_id=request.cv_file_id,
+                                on_outcome=on_outcome,
+                            )
+                        else:
+                            await service.discover_linkedin_vacancies(
+                                user_id,
+                                linkedin_adapter=LinkedInBrowserAdapter(browser_engine),
+                                locations=request.locations,
+                                limit=request.limit,
+                                search_text=request.search_text,
+                                cv_file_id=request.cv_file_id,
+                                on_outcome=on_outcome,
+                            )
+        except Exception as error:  # noqa: BLE001 - one source must not end the whole stream
+            await queue.put({"event": "source_error", "source": source, "error": str(error)})
+        finally:
+            await queue.put({"event": "source_complete", "source": source})
+            if enrichment_tasks:
+                await asyncio.gather(*enrichment_tasks, return_exceptions=True)
+            await queue.put({"event": "_source_finished", "source": source})
+
+    async def event_stream() -> AsyncIterator[bytes]:
+        tasks = [asyncio.create_task(run_source(source)) for source in requested_sources]
+        finished_sources = 0
+        try:
+            while finished_sources < len(tasks):
+                event = await queue.get()
+                if event["event"] == "_source_finished":
+                    finished_sources += 1
+                    continue
+                yield (json.dumps(event, ensure_ascii=False) + "\n").encode()
+            await asyncio.gather(*tasks)
+            yield (
+                json.dumps(
+                    {"event": "complete", "sources_completed": finished_sources},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            ).encode()
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.post("/v1/vacancies", response_model=VacancyResponse, status_code=status.HTTP_201_CREATED)
 def create_vacancy(
     request: VacancyRequest, session: Annotated[Session, Depends(session_scope)]
@@ -1687,15 +1965,9 @@ def list_review_queue(
             ],
             active_human_action=_active_human_action(workflow_task),
             vacancy_summary=summarize_vacancy(vacancy.description_text),
-            work_format=(
-                vacancy.work_format
-                if vacancy.work_format != "unspecified"
-                else detect_work_format(
-                    vacancy.title, vacancy.location, vacancy.description_text
-                )
-            ),
+            work_format=response_work_format(vacancy),
             salary_text=vacancy.salary_text,
-            employment_types=list(vacancy.employment_types or ()),
+            employment_types=response_employment_types(vacancy),
             missing_required_skills=[
                 warning.removeprefix("Missing required skill: ").strip()
                 for warning in application.warnings
@@ -1829,12 +2101,8 @@ def _materials_response(
             vacancy, application.cover_letter_text
         ),
         vacancy_summary=summarize_vacancy(vacancy.description_text),
-        work_format=(
-            vacancy.work_format
-            if vacancy.work_format != "unspecified"
-            else detect_work_format(vacancy.title, vacancy.location, vacancy.description_text)
-        ),
-        employment_types=list(vacancy.employment_types or ()),
+        work_format=response_work_format(vacancy),
+        employment_types=response_employment_types(vacancy),
         key_skills=list(
             extract_key_skills(vacancy.description_text, vacancy.required_skills or ())
         ),

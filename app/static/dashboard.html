@@ -1171,11 +1171,22 @@
 
     function renderResult(item) {
       const card = element('article');
+      card.dataset.searchResultKey = item.application_id || item.source_url;
+      card.dataset.matchScore = String(Number(item.match_score) || 0);
       const top = element('div', undefined, 'topline');
       const title = element('div');
       title.append(element('div', item.company, 'company'), element('h3', item.title));
       top.append(title, createMatchMeter(item.match_score));
       card.append(top);
+      if (item.matching_status === 'processing') {
+        card.append(element(
+          'span',
+          currentLanguage === 'en' ? 'Calculating detailed match…' : 'Рассчитываем соответствие…',
+          'badge'
+        ));
+      } else if (item.matching_error) {
+        card.append(element('span', item.matching_error, 'badge'));
+      }
       if (item.status === 'already_existed') card.append(element('span', 'уже был в списке ранее', 'badge'));
       card.append(createVacancyAttributeTags(item));
       const keySkills = createKeySkillTags(item.key_skills);
@@ -1194,9 +1205,23 @@
       const coverBlock = element('div', undefined, 'cover-letter');
       coverBlock.append(element('label', 'Сопроводительное письмо (можно отредактировать)'));
       const coverText = element('textarea'); coverText.id = `cover-${item.application_id}`;
+      coverText.value = item.cover_letter_text || '';
+      coverText.readOnly = item.materials_status === 'processing';
+      if (coverText.readOnly) {
+        coverText.placeholder = currentLanguage === 'en'
+          ? 'Generating a tailored cover letter…'
+          : 'Генерируем индивидуальное сопроводительное письмо…';
+      }
       coverBlock.append(coverText);
       card.append(coverBlock);
       const taskState = element('div', '', 'task-state'); taskState.id = `state-${item.application_id}`;
+      if (item.materials_status === 'processing') {
+        taskState.textContent = currentLanguage === 'en'
+          ? 'Cover letter generation is in progress.'
+          : 'Сейчас идёт генерация сопроводительного письма.';
+      } else if (item.materials_error) {
+        taskState.textContent = item.materials_error;
+      }
       const actions = element('div', undefined, 'actions');
       const accept = element(
         'button',
@@ -1328,6 +1353,20 @@
           }
         });
       return card;
+    }
+
+    function insertProgressiveSearchResult(results, item) {
+      const score = Number(item.match_score) || 0;
+      const resultKey = item.application_id || item.source_url;
+      Array.from(results.children).find(
+        candidate => candidate.dataset.searchResultKey === resultKey
+      )?.remove();
+      const card = renderResult(item);
+      const nextLowerScoredCard = Array.from(results.children).find(
+        candidate => candidate.matches('article')
+          && Number(candidate.dataset.matchScore || 0) < score
+      );
+      results.insertBefore(card, nextLowerScoredCard || null);
     }
 
     const SEARCH_RESULTS_STORAGE_PREFIX = 'dashboardSearchResults:';
@@ -1807,28 +1846,104 @@
         }
         const greenhouseBoards = document.querySelector('#greenhouse-boards').value
           .split(/[\n,]+/).map(value => value.trim()).filter(Boolean);
-        const settled = await Promise.allSettled(sources.map(async ({source, route}) => {
-          const body = {locations, limit: 15, search_text: searchText, cv_file_id: cvFileId};
-          if (source === 'greenhouse') body.board_urls = greenhouseBoards;
-          const items = await asJson(await fetch(`/v1/users/${userId}/${route}`, {
-            method: 'POST', headers: headers(true), body: JSON.stringify(body)
-          }));
-          return items.map(item => ({...item, source}));
-        }));
-        const outcomes = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []);
-        const failures = settled
-          .map((result, index) => result.status === 'rejected' ? `${vacancySourceLabels[currentLanguage][sources[index].source]}: ${result.reason.message}` : null)
-          .filter(Boolean);
+        const outcomes = [];
+        const failures = [];
+        const seenResults = new Set();
+        let completedSources = 0;
+        const updateSearchProgress = () => {
+          const progress = currentLanguage === 'en'
+            ? `Found: ${outcomes.length}. Sources completed: ${completedSources}/${sources.length}`
+            : `Найдено: ${outcomes.length}. Источников завершено: ${completedSources}/${sources.length}`;
+          showStatus(failures.length ? `${progress}. ${failures.join('; ')}` : progress);
+        };
+        updateSearchProgress();
+        const response = await fetch(`/v1/users/${userId}/discover-vacancies-stream`, {
+          method: 'POST',
+          headers: headers(true),
+          body: JSON.stringify({
+            sources: sources.map(({source}) => source),
+            board_urls: greenhouseBoards,
+            locations,
+            limit: 15,
+            search_text: searchText,
+            cv_file_id: cvFileId
+          })
+        });
+        if (!response.ok) throw new Error(await response.text());
+        if (!response.body) throw new Error('Поток поиска не поддерживается браузером');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let bufferedText = '';
+        const handleStreamEvent = event => {
+          if (event.event === 'vacancy') {
+            const item = {
+              ...event.item,
+              source: event.source,
+              matching_status: 'processing',
+              materials_status: 'processing'
+            };
+            const resultKey = item.application_id || item.source_url;
+            if (!resultKey || seenResults.has(resultKey)) return;
+            seenResults.add(resultKey);
+            outcomes.push(item);
+            insertProgressiveSearchResult(results, item);
+            outcomes.sort((left, right) => right.match_score - left.match_score);
+            persistSearchResults(outcomes);
+            updateSearchProgress();
+          } else if (event.application_id) {
+            const item = outcomes.find(
+              candidate => candidate.application_id === event.application_id
+            );
+            if (!item) return;
+            if (event.event === 'enrichment_started') {
+              item.matching_status = 'processing';
+              item.materials_status = 'processing';
+            } else if (event.event === 'materials_ready') {
+              item.materials_status = 'ready';
+              item.cover_letter_text = event.cover_letter_text || '';
+              delete item.materials_error;
+            } else if (event.event === 'materials_error') {
+              item.materials_status = 'error';
+              item.materials_error = event.error;
+            } else if (event.event === 'matching_ready') {
+              item.matching_status = event.matching_status || 'ready';
+              item.match_score = Number(event.match_score) || 0;
+              delete item.matching_error;
+              outcomes.sort((left, right) => right.match_score - left.match_score);
+            } else if (event.event === 'matching_error') {
+              item.matching_status = 'error';
+              item.matching_error = event.error;
+            } else {
+              return;
+            }
+            insertProgressiveSearchResult(results, item);
+            persistSearchResults(outcomes);
+          } else if (event.event === 'source_error') {
+            failures.push(
+              `${vacancySourceLabels[currentLanguage][event.source] || event.source}: ${event.error}`
+            );
+            updateSearchProgress();
+          } else if (event.event === 'source_complete') {
+            completedSources += 1;
+            updateSearchProgress();
+          }
+        };
+        while (true) {
+          const {value, done} = await reader.read();
+          bufferedText += decoder.decode(value || new Uint8Array(), {stream: !done});
+          const lines = bufferedText.split('\n');
+          bufferedText = lines.pop() || '';
+          lines.filter(Boolean).forEach(line => handleStreamEvent(JSON.parse(line)));
+          if (done) break;
+        }
+        if (bufferedText.trim()) handleStreamEvent(JSON.parse(bufferedText));
+        loadSavedVacancies(1).catch(() => {});
         if (!outcomes.length) {
           persistSearchResults([]);
           results.append(element('div', failures.length ? 'Поиск не выполнен: проверьте настройку браузерных сессий.' : 'Ничего не найдено. Попробуйте другие ключевые слова или локации.', 'empty'));
           showStatus(failures.length ? failures.join('; ') : '0 результатов');
           return;
         }
-        outcomes.sort((left, right) => right.match_score - left.match_score);
-        persistSearchResults(outcomes);
-        outcomes.forEach(item => results.append(renderResult(item)));
-        loadSavedVacancies(1).catch(() => {});
         showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
       } catch (error) { showError(error); }
     });

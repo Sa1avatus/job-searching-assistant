@@ -202,86 +202,97 @@ class LinkedInBrowserAdapter:
         if location:
             query += f"&location={quote(location)}"
         page = await self._browser_engine.new_page()
-        search_url = f"https://www.linkedin.com/jobs/search/?{query}"
-        navigation = await self._navigate_search_with_retry(page, search_url)
-        if not navigation.is_successful:
-            raise RuntimeError(f"LinkedIn search navigation failed: {navigation.error_category}")
-        await self._raise_if_challenge_url(page)
-
-        cards = page.locator("[data-job-id]")
-        result_targets = page.locator('[data-job-id], a[href*="/jobs/view/"]')
         try:
-            await result_targets.first.wait_for(state="attached", timeout=10_000)
-        except PlaywrightTimeoutError as error:
-            await capture_browser_failure(
-                page,
-                artifact_directory=self._browser_engine.artifact_directory,
-                action_name="search",
-                target="linkedin-results-not-found",
-                error=error,
-            )
-            return []
-        count = min(await cards.count(), limit)
-        hits: list[LinkedInSearchHit] = []
-        seen_job_ids: set[str] = set()
-        for index in range(count):
-            card = cards.nth(index)
-            raw_job_id = await card.get_attribute("data-job-id")
-            job_id_match = re.search(r"(\d{5,})", raw_job_id or "")
-            if job_id_match is None:
-                continue
-            job_id = job_id_match.group(1)
-            seen_job_ids.add(job_id)
-            title_locator = card.locator(".job-card-list__title, .job-card-container__link").first
-            title = (
-                (await title_locator.inner_text()).strip()
-                if await title_locator.count() > 0
-                else ""
-            )
-            company_locator = card.locator(".job-card-container__company-name").first
-            company = (
-                (await company_locator.inner_text()).strip()
-                if await company_locator.count() > 0
-                else ""
-            )
-            hits.append(
-                LinkedInSearchHit(
-                    job_id=job_id,
-                    source_url=f"https://www.linkedin.com/jobs/view/{job_id}",
-                    title=title,
-                    company=company,
+            search_url = f"https://www.linkedin.com/jobs/search/?{query}"
+            navigation = await self._navigate_search_with_retry(page, search_url)
+            if not navigation.is_successful:
+                raise RuntimeError(
+                    f"LinkedIn search navigation failed: {navigation.error_category}"
                 )
-            )
-        if len(hits) < limit:
-            links = page.locator('a[href*="/jobs/view/"]')
-            link_count = await links.count()
-            for index in range(link_count):
-                link = links.nth(index)
-                href = await link.get_attribute("href")
-                job_id_match = re.search(r"/jobs/view/(?:[^/?#-]+-)*(\d{5,})", href or "")
-                if job_id_match is None or job_id_match.group(1) in seen_job_ids:
+            await self._raise_if_challenge_url(page)
+
+            cards = page.locator("[data-job-id]")
+            result_targets = page.locator('[data-job-id], a[href*="/jobs/view/"]')
+            try:
+                await result_targets.first.wait_for(state="attached", timeout=10_000)
+            except PlaywrightTimeoutError as error:
+                await capture_browser_failure(
+                    page,
+                    artifact_directory=self._browser_engine.artifact_directory,
+                    action_name="search",
+                    target="linkedin-results-not-found",
+                    error=error,
+                )
+                return []
+            count = min(await cards.count(), limit)
+            hits: list[LinkedInSearchHit] = []
+            seen_job_ids: set[str] = set()
+            for index in range(count):
+                card = cards.nth(index)
+                raw_job_id = await card.get_attribute("data-job-id")
+                job_id_match = re.search(r"(\d{5,})", raw_job_id or "")
+                if job_id_match is None:
                     continue
                 job_id = job_id_match.group(1)
                 seen_job_ids.add(job_id)
+                title_locator = card.locator(
+                    ".job-card-list__title, .job-card-container__link"
+                ).first
+                title = (
+                    (await title_locator.inner_text()).strip()
+                    if await title_locator.count() > 0
+                    else ""
+                )
+                company_locator = card.locator(".job-card-container__company-name").first
+                company = (
+                    (await company_locator.inner_text()).strip()
+                    if await company_locator.count() > 0
+                    else ""
+                )
                 hits.append(
                     LinkedInSearchHit(
                         job_id=job_id,
                         source_url=f"https://www.linkedin.com/jobs/view/{job_id}",
-                        title=(await link.inner_text()).strip(),
-                        company="",
+                        title=title,
+                        company=company,
                     )
                 )
-                if len(hits) == limit:
-                    break
-        if not hits:
-            await capture_browser_failure(
-                page,
-                artifact_directory=self._browser_engine.artifact_directory,
-                action_name="search",
-                target="linkedin-result-identifiers-not-parsed",
-                error=RuntimeError("LinkedIn result elements did not expose parseable job ids"),
+            if len(hits) < limit:
+                links = page.locator('a[href*="/jobs/view/"]')
+                link_count = await links.count()
+                for index in range(link_count):
+                    link = links.nth(index)
+                    href = await link.get_attribute("href")
+                    job_id_match = re.search(
+                        r"/jobs/view/(?:[^/?#-]+-)*(\d{5,})", href or ""
+                    )
+                    if job_id_match is None or job_id_match.group(1) in seen_job_ids:
+                        continue
+                    job_id = job_id_match.group(1)
+                    seen_job_ids.add(job_id)
+                    hits.append(
+                        LinkedInSearchHit(
+                            job_id=job_id,
+                            source_url=f"https://www.linkedin.com/jobs/view/{job_id}",
+                            title=(await link.inner_text()).strip(),
+                            company="",
+                        )
+                    )
+                    if len(hits) == limit:
+                        break
+            if not hits:
+                await capture_browser_failure(
+                    page,
+                    artifact_directory=self._browser_engine.artifact_directory,
+                    action_name="search",
+                    target="linkedin-result-identifiers-not-parsed",
+                    error=RuntimeError(
+                        "LinkedIn result elements did not expose parseable job ids"
+                    ),
                 )
-        return hits
+            return hits
+        finally:
+            await page.close()
 
     async def _navigate_search_with_retry(
         self, page: Page, search_url: str

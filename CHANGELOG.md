@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 (Unreleased)
+
+- Search results now appear as soon as each selected source completes instead of
+  waiting for every source.
+- Partial results remain sorted by match score and are saved while slower sources
+  continue searching.
+- Search progress shows how many selected sources have completed.
+
 ## 1.0.0 — 2026-07-28
 
 - Personal dashboard with Russian and English interfaces.

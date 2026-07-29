@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -51,7 +52,7 @@ class GeneratedMaterials:
     skipped_sensitive_field_ids: tuple[str, ...]
 
 
-def detect_vacancy_language(vacancy: VacancyRow) -> str:
+def detect_vacancy_language(vacancy: VacancyRow) -> Literal["ru", "en"]:
     title_cyrillic = len(re.findall(r"[А-Яа-яЁё]", vacancy.title))
     title_latin = len(re.findall(r"[A-Za-z]", vacancy.title))
     if title_latin >= 10 and title_cyrillic < 3:

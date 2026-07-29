@@ -13,6 +13,7 @@ submission.
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -100,6 +101,8 @@ class DiscoveryOutcome:
     employment_types: tuple[str, ...] = ()
     key_skills: tuple[str, ...] = ()
 
+DiscoveryOutcomeCallback = Callable[[DiscoveryOutcome], Awaitable[None]]
+
 
 def build_search_queries(search_text: str) -> list[str]:
     """Expand a candidate-entered phrase into a small, site-friendly query set."""
@@ -142,6 +145,7 @@ class JobDiscoveryService:
         limit: int = _DEFAULT_LIMIT,
         search_text: str | None = None,
         cv_file_id: str | None = None,
+        on_outcome: DiscoveryOutcomeCallback | None = None,
     ) -> list[DiscoveryOutcome]:
         recruitment = RecruitmentService(self._session)
         user = self._session.get(UserRow, user_id)
@@ -182,6 +186,8 @@ class JobDiscoveryService:
             )
             if outcome is not None:
                 outcomes.append(outcome)
+                if on_outcome is not None:
+                    await on_outcome(outcome)
         return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
 
     async def _stage_one(
@@ -339,6 +345,7 @@ class JobDiscoveryService:
         limit: int = _DEFAULT_LIMIT,
         search_text: str | None = None,
         cv_file_id: str | None = None,
+        on_outcome: DiscoveryOutcomeCallback | None = None,
     ) -> list[DiscoveryOutcome]:
         recruitment = RecruitmentService(self._session)
         user = self._session.get(UserRow, user_id)
@@ -382,6 +389,8 @@ class JobDiscoveryService:
             )
             if outcome is not None:
                 outcomes.append(outcome)
+                if on_outcome is not None:
+                    await on_outcome(outcome)
         return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
 
     async def _stage_linkedin(
@@ -566,6 +575,7 @@ class JobDiscoveryService:
         limit: int = _DEFAULT_LIMIT,
         search_text: str | None = None,
         cv_file_id: str | None = None,
+        on_outcome: DiscoveryOutcomeCallback | None = None,
     ) -> list[DiscoveryOutcome]:
         recruitment = RecruitmentService(self._session)
         user = self._session.get(UserRow, user_id)
@@ -625,6 +635,8 @@ class JobDiscoveryService:
             )
             if outcome is not None:
                 outcomes.append(outcome)
+                if on_outcome is not None:
+                    await on_outcome(outcome)
         return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
 
     async def _stage_greenhouse(

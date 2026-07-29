@@ -512,6 +512,11 @@ def test_linkedin_refresh_does_not_erase_saved_work_attributes() -> None:
 
 def test_greenhouse_discovery_searches_supplied_board() -> None:
     async def run() -> None:
+        published_outcomes = []
+
+        async def publish_outcome(outcome) -> None:
+            published_outcomes.append(outcome)
+
         session_factory = _session_factory()
         with session_factory() as session:
             service = RecruitmentService(session)
@@ -526,9 +531,11 @@ def test_greenhouse_discovery_searches_supplied_board() -> None:
                 greenhouse_adapter=_FakeGreenhouseAdapter(),  # type: ignore[arg-type]
                 board_urls=["https://boards.greenhouse.io/example"],
                 locations=[],
+                on_outcome=publish_outcome,
             )
 
         assert len(outcomes) == 1
+        assert published_outcomes == outcomes
         assert outcomes[0].company == "Green Example"
         assert outcomes[0].application_status == "awaiting_review"
         assert outcomes[0].vacancy_summary == "Build Python services"

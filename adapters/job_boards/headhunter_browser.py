@@ -37,8 +37,6 @@ logger = structlog.get_logger(__name__)
 
 _HOST_SUFFIX = "hh.ru"
 
-# hh.ru renders a captcha checkpoint page/iframe at these well-known markers when it flags
-# automated-looking activity (also used by the manual browser-handoff flow's own docs).
 _CAPTCHA_MARKERS = ("checkcaptcha", "captcha-page", "hh.ru/account/blocked")
 
 _COVER_LETTER_EDITABLE_SELECTORS: tuple[str, ...] = (
@@ -74,11 +72,6 @@ _EMPLOYMENT_DETAIL_SELECTORS: tuple[str, ...] = (
     "[data-qa='vacancy-view-work-format']",
 )
 
-# hh.ru's `area` filter uses the same small set of numeric region ids as its (now avoided) public
-# API, but there is no network-free way to look up an arbitrary name, so only the common cases are
-# built in here. Unknown location names are ignored (search falls back to "anywhere") rather than
-# making an HTTP call to resolve them, since this adapter intentionally has zero non-browser
-# network dependency. Extend this table if you search other regions often.
 KNOWN_AREA_IDS: dict[str, str] = {
     "москва": "1",
     "moscow": "1",
@@ -158,12 +151,6 @@ class HeadHunterBrowserAdapter:
         cover_letter: str | None,
         resume_title: str | None = None,
     ) -> HeadHunterApplyResult:
-        """Open the vacancy with the restored session and submit a real response.
-
-        Raises ``LoginRequired`` if the session is not authenticated, ``CaptchaChallenge`` if hh.ru
-        presents a verification checkpoint, and ``ApplyBlocked`` if the vacancy cannot be safely
-        auto-applied to (already responded, requires a test/assignment, external apply link).
-        """
         if not self.supports_url(url):
             raise ValueError("URL is not a supported hh.ru host")
         page = await self._browser_engine.new_page()
@@ -222,7 +209,7 @@ class HeadHunterBrowserAdapter:
                 raise ApplyBlocked("The cover letter field could not be filled")
             try:
                 actual_value = await letter_field.input_value(timeout=10_000)
-            except Exception as error:  # noqa: BLE001 - converted to a safe apply failure
+            except Exception as error:
                 raise ApplyBlocked("The filled cover letter could not be verified") from error
             if actual_value != cover_letter:
                 raise ApplyBlocked(
@@ -279,79 +266,69 @@ class HeadHunterBrowserAdapter:
     async def _has_visible_candidate(locator: Locator) -> bool:
         try:
             return await locator.count() > 0 and await locator.first.is_visible()
-        except Exception:  # noqa: BLE001 - stale confirmation candidates are treated as absent
+        except Exception:
             return False
 
     async def search(
         self, *, text: str, location_names: list[str] | None = None, limit: int = 15
     ) -> list[HeadHunterSearchHit]:
-        """Search hh.ru's public results page (no login required) instead of api.hh.ru.
-
-        Only public search-result pages are visited; no session is required for this method
-        (only ``apply`` needs a captured session). CAPTCHA still routes to ``CaptchaChallenge``.
-        """
         area_ids = resolve_known_area_ids(location_names or [])
         query = "&".join([f"text={quote(text)}", *[f"area={area_id}" for area_id in area_ids]])
         page = await self._browser_engine.new_page()
-        navigation = await self._browser_engine.navigate(
-            page, f"https://hh.ru/search/vacancy?{query}"
-        )
-        if not navigation.is_successful:
-            raise RuntimeError(f"hh.ru search navigation failed: {navigation.error_category}")
-        await self._raise_if_captcha(page)
+        try:
+            navigation = await self._browser_engine.navigate(
+                page, f"https://hh.ru/search/vacancy?{query}"
+            )
+            if not navigation.is_successful:
+                raise RuntimeError(f"hh.ru search navigation failed: {navigation.error_category}")
+            await self._raise_if_captcha(page)
 
-        # hh.ru has used more than one data-qa naming scheme for search-result cards over time;
-        # try known variants in order and log which (if any) actually matched, so a zero-result
-        # search can be told apart from "these selectors are stale" instead of just returning [].
-        card_selector_candidates = (
-            "[data-qa='vacancy-serp__vacancy']",
-            "[data-qa='vacancy-serp__vacancy_redesigned']",
-            "[data-qa='serp-item']",
-        )
-        cards = page.locator(", ".join(card_selector_candidates))
-        raw_count = await cards.count()
-        count = min(raw_count, limit)
-        if raw_count == 0:
-            checkpoint = await self._browser_engine.capture_review_checkpoint(
-                page, target="search-zero-results"
+            card_selector_candidates = (
+                "[data-qa='vacancy-serp__vacancy']",
+                "[data-qa='vacancy-serp__vacancy_redesigned']",
+                "[data-qa='serp-item']",
             )
-            logger.warning(
-                "headhunter_search_zero_results",
-                url=page.url,
-                page_title=await page.title(),
-                screenshot_path=checkpoint.screenshot_path,
-            )
-        hits: list[HeadHunterSearchHit] = []
-        for index in range(count):
-            card = cards.nth(index)
-            title_link = card.locator(
-                "[data-qa='serp-item__title'], a[data-qa='vacancy-serp__vacancy-title']"
-            ).first
-            if await title_link.count() == 0:
-                continue
-            href = await title_link.get_attribute("href") or ""
-            vacancy_id = _vacancy_id_from_href(href)
-            if vacancy_id is None:
-                continue
-            title = (await title_link.inner_text()).strip()
-            company_locator = card.locator("[data-qa='vacancy-serp__vacancy-employer']").first
-            company = (
-                (await company_locator.inner_text()).strip()
-                if await company_locator.count() > 0
-                else ""
-            )
-            hits.append(
-                HeadHunterSearchHit(
-                    vacancy_id=vacancy_id,
-                    source_url=f"https://hh.ru/vacancy/{vacancy_id}",
-                    title=title,
-                    company=company,
+            cards = page.locator(", ".join(card_selector_candidates))
+            raw_count = await cards.count()
+            count = min(raw_count, limit)
+            if raw_count == 0:
+                logger.warning(
+                    "headhunter_search_zero_results",
+                    url=page.url,
+                    page_title=await page.title(),
                 )
-            )
-        return hits
+            hits: list[HeadHunterSearchHit] = []
+            for index in range(count):
+                card = cards.nth(index)
+                title_link = card.locator(
+                    "[data-qa='serp-item__title'], a[data-qa='vacancy-serp__vacancy-title']"
+                ).first
+                if await title_link.count() == 0:
+                    continue
+                href = await title_link.get_attribute("href") or ""
+                vacancy_id = _vacancy_id_from_href(href)
+                if vacancy_id is None:
+                    continue
+                title = (await title_link.inner_text()).strip()
+                company_locator = card.locator("[data-qa='vacancy-serp__vacancy-employer']").first
+                company = (
+                    (await company_locator.inner_text()).strip()
+                    if await company_locator.count() > 0
+                    else ""
+                )
+                hits.append(
+                    HeadHunterSearchHit(
+                        vacancy_id=vacancy_id,
+                        source_url=f"https://hh.ru/vacancy/{vacancy_id}",
+                        title=title,
+                        company=company,
+                    )
+                )
+            return hits
+        finally:
+            await page.close()
 
     async def extract_vacancy(self, url: str) -> ExtractedHeadHunterVacancy:
-        """Read a public vacancy page (no login required) instead of api.hh.ru/vacancies/{id}."""
         if not self.supports_url(url):
             raise ValueError("URL is not a supported hh.ru host")
         page = await self._browser_engine.new_page()
@@ -418,7 +395,7 @@ class HeadHunterBrowserAdapter:
                     if raw:
                         salary_text = re.sub(r"\s+", " ", raw)
                         break
-            except Exception:  # noqa: BLE001 - stale salary candidates are skipped
+            except Exception:
                 continue
 
         seen_fragments: set[str] = set()
@@ -434,7 +411,7 @@ class HeadHunterBrowserAdapter:
                         if normalized and normalized not in seen_fragments:
                             seen_fragments.add(normalized)
                             employment_fragments.append(normalized)
-                except Exception:  # noqa: BLE001 - stale detail candidates are skipped
+                except Exception:
                     continue
         employment_text = ", ".join(employment_fragments)
 
@@ -476,27 +453,25 @@ class HeadHunterBrowserAdapter:
         )
 
     async def _find_cover_letter_field(self, page: Page) -> Locator | None:
-        """Return the first known cover-letter control that is actually editable."""
         selectors = (*_COVER_LETTER_EDITABLE_SELECTORS, _COVER_LETTER_INFORMER_SELECTOR)
         for selector in selectors:
             candidate = page.locator(selector).first
             try:
                 if await candidate.count() > 0 and await candidate.is_editable():
                     return candidate
-            except Exception:  # noqa: BLE001 - stale/non-form candidates are skipped
+            except Exception:
                 continue
         return None
 
     async def _reveal_cover_letter_field(
         self, page: Page, actions: list[BrowserActionResult]
     ) -> Locator | None:
-        """Open hh.ru's optional cover-letter editor when the textarea starts collapsed."""
         for selector in _COVER_LETTER_REVEAL_SELECTORS:
             reveal_button = page.locator(selector).first
             try:
                 if await reveal_button.count() == 0 or not await reveal_button.is_visible():
                     continue
-            except Exception:  # noqa: BLE001 - stale candidates are skipped
+            except Exception:
                 continue
             reveal_action = await self._click(
                 page, reveal_button, "reveal-cover-letter", already_ok=False
@@ -512,7 +487,6 @@ class HeadHunterBrowserAdapter:
         return None
 
     async def _wait_for_response_form(self, page: Page, response_button: Locator) -> None:
-        """Wait until hh.ru finishes the async request started by the response button."""
         loading_indicator = response_button.locator("[role='status']").first
         try:
             if await loading_indicator.count() > 0:
@@ -559,7 +533,7 @@ class HeadHunterBrowserAdapter:
                 duration_ms=round((time.monotonic() - started_at) * 1000),
                 resulting_url=page.url,
             )
-        except Exception as error:  # noqa: BLE001 - normalised into a typed failure below
+        except Exception as error:
             evidence = await capture_browser_failure(
                 page,
                 artifact_directory=self._browser_engine.artifact_directory,
@@ -588,7 +562,7 @@ class HeadHunterBrowserAdapter:
                 duration_ms=round((time.monotonic() - started_at) * 1000),
                 resulting_url="",
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             return BrowserActionResult(
                 action_name="fill",
                 target="cover-letter",

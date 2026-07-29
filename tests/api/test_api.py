@@ -1,5 +1,10 @@
+import json
+
 import httpx
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.api.main import (
     app,
@@ -9,7 +14,9 @@ from app.api.main import (
     serialize_discovery_outcomes,
 )
 from app.config import Settings, get_settings
-from app.services.job_discovery import DiscoveryOutcome
+from app.services.job_discovery import DiscoveryOutcome, JobDiscoveryService
+from app.storage.database import Base
+from app.storage.tables import UserRow
 
 client = TestClient(app)
 
@@ -64,9 +71,27 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert "dashboardSearchResults:" in response.text
     assert "persistSearchResults(outcomes)" in response.text
     assert "restoreSearchResults()" in response.text
+    assert "insertProgressiveSearchResult" in response.text
+    assert "discover-vacancies-stream" in response.text
+    assert "response.body.getReader()" in response.text
+    assert "event.event === 'vacancy'" in response.text
+    assert "event.event === 'materials_ready'" in response.text
+    assert "event.event === 'matching_ready'" in response.text
+    assert "coverText.readOnly = item.materials_status === 'processing'" in response.text
+    assert "completedSources" in response.text
+    assert "Sources completed" in response.text
+    assert "Promise.allSettled" not in response.text
+    assert "Promise.all(sources.map" not in response.text
     assert "job-assistant-login-" in response.text
     assert ":7900/vnc.html" in response.text
     assert "autoconnect" in response.text
+
+
+def test_openapi_reports_development_version() -> None:
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    assert response.json()["info"]["version"] == "1.1.0-dev"
 
 
 def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:
@@ -92,6 +117,67 @@ def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:
     assert response[0].work_format == "hybrid"
     assert response[0].salary_text == ""
     assert response[0].employment_types == []
+
+
+def test_discovery_stream_emits_vacancy_before_completion(monkeypatch) -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr("app.api.main.SessionFactory", session_factory)
+    monkeypatch.setattr(
+        "app.api.main.get_settings",
+        lambda: Settings(_env_file=None, matching_v2_enabled=False),
+    )
+    user_id = "stream-test-user"
+    with session_factory() as session:
+        session.add(UserRow(id=user_id, display_name="Stream Test Candidate"))
+        session.commit()
+    outcome = DiscoveryOutcome(
+        application_id="application-stream-1",
+        vacancy_id="vacancy-stream-1",
+        title="Streaming Engineer",
+        company="Example",
+        source_url="https://boards.greenhouse.io/example/jobs/1",
+        match_score=91,
+        status="created",
+        application_status="awaiting_review",
+        vacancy_summary="Build streaming APIs.",
+        work_format="remote",
+    )
+
+    async def discover_greenhouse(*_args, on_outcome=None, **_kwargs):
+        assert on_outcome is not None
+        await on_outcome(outcome)
+        return [outcome]
+
+    monkeypatch.setattr(
+        JobDiscoveryService, "discover_greenhouse_vacancies", discover_greenhouse
+    )
+
+    with client.stream(
+        "POST",
+        f"/v1/users/{user_id}/discover-vacancies-stream",
+        json={
+            "sources": ["greenhouse"],
+            "board_urls": ["https://boards.greenhouse.io/example"],
+            "search_text": "streaming",
+        },
+    ) as response:
+        events = [json.loads(line) for line in response.iter_lines() if line]
+
+    assert response.status_code == 200
+    event_names = [event["event"] for event in events]
+    assert event_names[0] == "vacancy"
+    assert event_names[-1] == "complete"
+    assert "enrichment_started" in event_names
+    assert "matching_ready" in event_names
+    assert {"materials_ready", "materials_error"} & set(event_names)
+    assert event_names.index("vacancy") < event_names.index("source_complete")
+    assert events[0]["item"]["title"] == "Streaming Engineer"
 
 
 def test_assessment_returns_grounded_gap() -> None:

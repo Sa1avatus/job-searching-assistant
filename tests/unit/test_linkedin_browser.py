@@ -1,9 +1,13 @@
 from collections.abc import Iterable
+from pathlib import Path
 from typing import cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from playwright.async_api import Page
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
+import adapters.job_boards.linkedin_browser as linkedin_browser_module
 from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
 from app.browser.engine import BrowserActionResult, PlaywrightEngine
 from app.domain.failures import FailureCategory
@@ -95,3 +99,52 @@ async def test_linkedin_search_navigation_does_not_retry_other_failures() -> Non
 
     assert result.is_successful is False
     assert len(engine.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_closes_page_on_zero_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = MagicMock()
+    page.url = "https://www.linkedin.com/jobs/search/?keywords=missing"
+    page.close = AsyncMock()
+    cards = MagicMock()
+    cards.count = AsyncMock(return_value=0)
+    result_targets = MagicMock()
+    result_targets.first.wait_for = AsyncMock(
+        side_effect=PlaywrightTimeoutError("no results")
+    )
+    page.locator.side_effect = [cards, result_targets]
+    engine = MagicMock()
+    engine.artifact_directory = Path(".artifacts")
+    engine.new_page = AsyncMock(return_value=page)
+    engine.navigate = AsyncMock(return_value=_navigation_result(successful=True))
+    capture_failure = AsyncMock()
+    monkeypatch.setattr(linkedin_browser_module, "capture_browser_failure", capture_failure)
+    adapter = LinkedInBrowserAdapter(cast(PlaywrightEngine, engine))
+
+    result = await adapter.search(text="missing")
+
+    assert result == []
+    page.close.assert_awaited_once()
+    capture_failure.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_search_closes_page_on_navigation_failure() -> None:
+    page = MagicMock()
+    page.close = AsyncMock()
+    engine = MagicMock()
+    engine.new_page = AsyncMock(return_value=page)
+    engine.navigate = AsyncMock(
+        return_value=_navigation_result(
+            successful=False,
+            category=FailureCategory.AUTHENTICATION_FAILURE,
+        )
+    )
+    adapter = LinkedInBrowserAdapter(cast(PlaywrightEngine, engine))
+
+    with pytest.raises(RuntimeError, match="LinkedIn search navigation failed"):
+        await adapter.search(text="test")
+
+    page.close.assert_awaited_once()
