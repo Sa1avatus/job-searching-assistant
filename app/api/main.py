@@ -170,7 +170,7 @@ from app.workers.browser_tasks import _restore_browser_session
 from app.workers.browser_worker import create_session_store
 
 configure_logging()
-app = FastAPI(title="Job Searching Assistant", version="1.1.0-dev")
+app = FastAPI(title="Job Searching Assistant", version="1.1.100")
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
 BROWSER_AUTHORIZATION_MANAGER = BrowserAuthorizationManager()
@@ -266,6 +266,15 @@ async def greenhouse_http_client() -> AsyncIterator[httpx.AsyncClient]:
 
 async def headhunter_http_client() -> AsyncIterator[httpx.AsyncClient]:
     async with httpx.AsyncClient(timeout=30, follow_redirects=False, trust_env=False) as client:
+        yield client
+
+
+async def llm_http_client() -> AsyncIterator[httpx.AsyncClient]:
+    settings = get_settings()
+    timeout = httpx.Timeout(settings.materials_generation_timeout_seconds + 10)
+    async with httpx.AsyncClient(
+        timeout=timeout, follow_redirects=False, trust_env=False
+    ) as client:
         yield client
 
 
@@ -2096,6 +2105,7 @@ def _materials_response(
     return ApplicationMaterialsResponse(
         application_id=application.id,
         application_status=application.status,
+        location=vacancy.location,
         vacancy_language=detect_vacancy_language(vacancy),
         cover_letter_language_matches=cover_letter_matches_vacancy_language(
             vacancy, application.cover_letter_text
@@ -2131,7 +2141,7 @@ def _materials_response(
 async def generate_application_materials(
     application_id: str,
     session: Annotated[Session, Depends(session_scope)],
-    http_client: Annotated[httpx.AsyncClient, Depends(headhunter_http_client)],
+    http_client: Annotated[httpx.AsyncClient, Depends(llm_http_client)],
 ) -> ApplicationMaterialsResponse:
     """Draft a cover letter and open screening answers from the candidate's verified facts.
 
@@ -2160,6 +2170,8 @@ async def generate_application_materials(
         await MaterialsGenerationService(session, ModelRouter(providers)).draft_materials(
             application_id,
             replace_mismatched_cover_letter=True,
+            force_replace_cover_letter=True,
+            timeout_seconds=settings.materials_generation_timeout_seconds,
         )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error

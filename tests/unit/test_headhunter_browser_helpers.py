@@ -96,13 +96,22 @@ def _cross_country_page(*, dialog_present: bool) -> tuple[MagicMock, MagicMock]:
     dialog = MagicMock()
     dialog.is_visible = AsyncMock(return_value=True)
     dialog.get_by_text.return_value = heading
-    dialog.get_by_role.return_value.first = continue_button
+    dialog.locator.return_value.first = continue_button
 
     dialogs = MagicMock()
     dialogs.count = AsyncMock(return_value=1 if dialog_present else 0)
     dialogs.nth.return_value = dialog
-    page.get_by_role.return_value = dialogs
+    page.locator.return_value = dialogs
     return page, continue_button
+
+
+def test_headhunter_apply_checks_cross_country_dialog_before_cover_letter() -> None:
+    source = HeadHunterBrowserAdapter.apply.__code__
+    names = source.co_names
+
+    assert names.index("_handle_cross_country_dialog") < names.index(
+        "_find_cover_letter_field"
+    )
 
 
 @pytest.mark.asyncio
@@ -122,11 +131,11 @@ async def test_cross_country_dialog_clicks_continue_inside_dialog() -> None:
         "continue-cross-country-application",
         already_ok=False,
     )
-    dialog = page.get_by_role.return_value.nth.return_value
-    dialog.get_by_role.assert_called_once()
-    _, role_kwargs = dialog.get_by_role.call_args
-    assert role_kwargs["name"].fullmatch("Still apply")
-    assert role_kwargs["name"].fullmatch("Cancel") is None
+    dialog = page.locator.return_value.nth.return_value
+    dialog.locator.assert_called_once_with(
+        "[data-qa='relocation-warning-confirm']"
+    )
+    dialog.get_by_role.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -140,3 +149,33 @@ async def test_cross_country_dialog_absent_does_not_click() -> None:
     assert result is None
     adapter._click.assert_not_awaited()
     assert page.wait_for_timeout.await_count == 6
+
+
+@pytest.mark.asyncio
+async def test_reveal_cover_letter_uses_current_headhunter_toggle() -> None:
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+
+    toggle = MagicMock()
+    toggle.count = AsyncMock(return_value=1)
+    toggle.is_visible = AsyncMock(return_value=True)
+    page.locator.return_value.first = toggle
+
+    letter_field = MagicMock()
+    action = MagicMock()
+    action.is_successful = True
+    adapter = HeadHunterBrowserAdapter(AsyncMock())
+    adapter._click = AsyncMock(return_value=action)
+    adapter._find_cover_letter_field = AsyncMock(return_value=letter_field)
+    actions: list[MagicMock] = []
+
+    result = await adapter._reveal_cover_letter_field(page, actions)
+
+    assert result is letter_field
+    page.locator.assert_called_once_with(
+        "[data-qa='vacancy-response-letter-toggle']"
+    )
+    adapter._click.assert_awaited_once_with(
+        page, toggle, "reveal-cover-letter", already_ok=False
+    )
+    assert actions == [action]

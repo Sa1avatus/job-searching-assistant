@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.0 (Unreleased)
+## 1.1.100 — 2026-07-29
 
 - Search results now appear as soon as each selected source completes instead of
   waiting for every source.

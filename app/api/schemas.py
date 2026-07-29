@@ -272,6 +272,7 @@ class ApplicationMaterialsUpdateRequest(BaseModel):
 class ApplicationMaterialsResponse(BaseModel):
     application_id: str
     application_status: str
+    location: str
     vacancy_language: Literal["ru", "en"]
     cover_letter_language_matches: bool
     vacancy_summary: str
@@ -404,6 +405,7 @@ class DiscoveryOutcomeResponse(BaseModel):
     title: str
     company: str
     source_url: str
+    location: str
     match_score: int
     status: str
     application_status: str

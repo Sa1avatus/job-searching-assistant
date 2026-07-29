@@ -46,8 +46,22 @@
     .match-meter__track { height: 9px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: #27304d; }
     .match-meter__fill { width: calc(var(--match) * 1%); height: 100%; border-radius: inherit; background: hsl(calc(var(--match) * 1.2), 72%, 46%); transition: width .2s ease; }
     .cover-letter { margin-top: 14px; }
+    .cover-letter__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+    .cover-letter__header label { margin: 0; }
     .cover-letter textarea { min-height: 120px; }
     .actions { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 14px; }
+    .card-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 44px; gap: 9px; align-items: stretch; }
+    .card-actions > button, .card-actions > .link-btn { min-width: 0; min-height: 44px; display: flex; align-items: center; justify-content: center; text-align: center; }
+    .icon-button { width: 38px; height: 38px; padding: 8px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+    .icon-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .icon-button.is-spinning svg { animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .more-actions { position: relative; min-width: 0; }
+    .more-actions__toggle { width: 44px; height: 44px; padding: 0; font-size: 24px; line-height: 1; }
+    .more-actions__menu, .status-popup { position: absolute; z-index: 30; right: 0; bottom: calc(100% + 8px); width: min(290px, calc(100vw - 48px)); padding: 7px; border: 1px solid #3a4772; border-radius: 12px; background: #101831; box-shadow: 0 18px 45px #020617cc; }
+    .more-actions__menu button, .status-popup button { width: 100%; background: transparent; border-color: transparent; text-align: left; }
+    .more-actions__menu button:hover, .status-popup button:hover { background: #1d294d; border-color: #5065a8; }
+    .status-popup { right: calc(100% + 8px); bottom: 0; }
     a.link-btn { color: #a9baff; text-decoration: none; border: 1px solid #303b60; border-radius: 10px; padding: 10px 13px; font-weight: 700; }
     a.link-btn:hover { border-color: #8da2fb; }
     .empty { border: 1px dashed #344166; border-radius: 18px; padding: 40px; text-align: center; color: #aab5d6; }
@@ -93,6 +107,9 @@
       .sidebar { position: static; display: flex; overflow-x: auto; }
       .menu-button { width: auto; white-space: nowrap; }
       .vacancy-filters { grid-template-columns: 1fr 1fr; }
+      .card-actions { display: flex; overflow-x: auto; padding-bottom: 3px; }
+      .card-actions > button, .card-actions > .link-btn { flex: 0 0 190px; }
+      .card-actions > .more-actions { flex: 0 0 44px; }
     }
     @media (max-width: 520px) { .vacancy-filters { grid-template-columns: 1fr; } }
   </style>
@@ -284,12 +301,32 @@
     const statusNode = document.querySelector('#status');
     const keyInput = document.querySelector('#api-key');
     const userIdInput = document.querySelector('#user-id');
+    const greenhouseBoardsInput = document.querySelector('#greenhouse-boards');
+    const GREENHOUSE_BOARDS_STORAGE_KEY = 'dashboardGreenhouseBoards';
     keyInput.value = sessionStorage.getItem('dashboardApiKey') || '';
     userIdInput.value = localStorage.getItem('dashboardUserId') || '';
+    greenhouseBoardsInput.value = localStorage.getItem(GREENHOUSE_BOARDS_STORAGE_KEY) || '';
+    const saveGreenhouseBoards = () => {
+      localStorage.setItem(GREENHOUSE_BOARDS_STORAGE_KEY, greenhouseBoardsInput.value);
+    };
     const headers = (json) => {
       const h = keyInput.value ? {'X-API-Key': keyInput.value} : {};
       if (json) h['Content-Type'] = 'application/json';
       return h;
+    };
+    const fetchWithTimeout = async (url, options = {}, timeoutMs = 15000) => {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(url, {...options, signal: controller.signal});
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          throw new Error('Сервер не ответил вовремя. Проверьте Docker и повторите действие.');
+        }
+        throw error;
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
     };
     const element = (name, text, className) => {
       const node = document.createElement(name);
@@ -1085,6 +1122,7 @@
 
     function createVacancyAttributeTags(item) {
       const tags = element('div', undefined, 'attribute-tags');
+      if (item.location) tags.append(element('span', item.location, 'badge location'));
       tags.append(createWorkFormatBadge(item.work_format));
       Array.from(item.employment_types || []).forEach(employmentType => {
         const label = employmentTypeLabels[currentLanguage][employmentType];
@@ -1117,7 +1155,7 @@
     ];
 
     async function setApplicationStatus(applicationId, newStatus) {
-      const application = await asJson(await fetch(`/v1/applications/${applicationId}/status`, {
+      const application = await asJson(await fetchWithTimeout(`/v1/applications/${applicationId}/status`, {
         method: 'PATCH',
         headers: headers(true),
         body: JSON.stringify({status: newStatus})
@@ -1203,7 +1241,8 @@
       ); link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
       card.append(meta);
       const coverBlock = element('div', undefined, 'cover-letter');
-      coverBlock.append(element('label', 'Сопроводительное письмо (можно отредактировать)'));
+      const coverHeader = element('div', undefined, 'cover-letter__header');
+      coverHeader.append(element('label', 'Сопроводительное письмо (можно отредактировать)'));
       const coverText = element('textarea'); coverText.id = `cover-${item.application_id}`;
       coverText.value = item.cover_letter_text || '';
       coverText.readOnly = item.materials_status === 'processing';
@@ -1212,7 +1251,7 @@
           ? 'Generating a tailored cover letter…'
           : 'Генерируем индивидуальное сопроводительное письмо…';
       }
-      coverBlock.append(coverText);
+      coverBlock.append(coverHeader, coverText);
       card.append(coverBlock);
       const taskState = element('div', '', 'task-state'); taskState.id = `state-${item.application_id}`;
       if (item.materials_status === 'processing') {
@@ -1222,7 +1261,7 @@
       } else if (item.materials_error) {
         taskState.textContent = item.materials_error;
       }
-      const actions = element('div', undefined, 'actions');
+      const actions = element('div', undefined, 'actions card-actions');
       const accept = element(
         'button',
         item.source === 'greenhouse' ? 'Открыть для рассмотрения' : 'Принять и откликнуться',
@@ -1271,7 +1310,9 @@
       const reject = element('button', 'Отклонить', 'danger'); reject.type = 'button';
       reject.addEventListener('click', () => rejectVacancy(item.application_id, card).catch(showError));
       const blacklist = element('button', 'Компания в чёрный список'); blacklist.type = 'button';
-      blacklist.addEventListener('click', () => blacklistCompany(item.company, true).catch(showError));
+      blacklist.addEventListener('click', () => {
+        blacklistCompany(item.company, true).catch(showError);
+      });
       const manualSubmitted = element(
         'button',
         currentLanguage === 'en' ? 'I applied manually' : 'Я откликнулся вручную'
@@ -1279,31 +1320,46 @@
       manualSubmitted.type = 'button';
       manualSubmitted.addEventListener('click', async () => {
         manualSubmitted.disabled = true;
+        taskState.textContent = currentLanguage === 'en'
+          ? 'Saving the manual application status…'
+          : 'Сохраняем отметку о ручном отклике…';
         try {
           item.application_status = await setApplicationStatus(
             item.application_id, 'submitted'
           );
+          taskState.textContent = currentLanguage === 'en'
+            ? 'Manual application marked as submitted.'
+            : 'Ручной отклик отмечен как отправленный.';
           card.replaceWith(renderResult(item));
           loadSavedVacancies(vacancyPage).catch(showError);
         } catch (error) {
-          manualSubmitted.disabled = false;
-          showError(error);
+          taskState.textContent = currentLanguage === 'en'
+            ? `Could not save the manual application status: ${error.message}`
+            : `Не удалось сохранить ручной отклик: ${error.message}`;
+        } finally {
+          if (item.application_status !== 'submitted') {
+            manualSubmitted.disabled = false;
+          }
         }
       });
-      const regenerateLetter = element(
-        'button',
-        currentLanguage === 'en' ? 'Regenerate cover letter' : 'Перегенерировать письмо'
-      );
+      const regenerateLetter = element('button', undefined, 'icon-button');
       regenerateLetter.type = 'button';
+      regenerateLetter.title = currentLanguage === 'en'
+        ? 'Regenerate cover letter'
+        : 'Перегенерировать письмо';
+      regenerateLetter.setAttribute('aria-label', regenerateLetter.title);
+      regenerateLetter.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg>';
       regenerateLetter.addEventListener('click', async () => {
         regenerateLetter.disabled = true;
+        regenerateLetter.classList.add('is-spinning');
         taskState.textContent = currentLanguage === 'en'
           ? 'Generating a cover letter in the vacancy language…'
           : 'Генерируем письмо на языке вакансии…';
         try {
-          const materials = await asJson(await fetch(
+          const materials = await asJson(await fetchWithTimeout(
             `/v1/applications/${item.application_id}/generate-materials`,
-            {method: 'POST', headers: headers(false)}
+            {method: 'POST', headers: headers(false)},
+            150000
           ));
           coverText.value = materials.cover_letter_text || '';
           taskState.textContent = currentLanguage === 'en'
@@ -1313,17 +1369,62 @@
           taskState.textContent = error.message;
         } finally {
           regenerateLetter.disabled = false;
+          regenerateLetter.classList.remove('is-spinning');
         }
       });
+      coverHeader.append(regenerateLetter);
       const isSubmitted = ['submitted', 'interview'].includes(item.application_status);
-      actions.append(accept);
-      if (!isSubmitted) actions.append(regenerateLetter, manualSubmitted, reject, blacklist);
-      actions.append(link);
-      const statusEditor = createStatusEditor(item, 'application_status', async () => {
-        card.replaceWith(renderResult(item));
-        await loadSavedVacancies(vacancyPage);
+      const moreActions = element('div', undefined, 'more-actions');
+      const moreToggle = element('button', '⋯', 'more-actions__toggle');
+      moreToggle.type = 'button';
+      moreToggle.title = currentLanguage === 'en' ? 'More actions' : 'Другие действия';
+      moreToggle.setAttribute('aria-label', moreToggle.title);
+      moreToggle.setAttribute('aria-haspopup', 'menu');
+      moreToggle.setAttribute('aria-expanded', 'false');
+      const moreMenu = element('div', undefined, 'more-actions__menu');
+      moreMenu.hidden = true;
+      moreMenu.setAttribute('role', 'menu');
+      const changeStatus = element(
+        'button',
+        currentLanguage === 'en' ? 'Change status' : 'Изменить статус'
+      );
+      changeStatus.type = 'button';
+      const statusPopup = element('div', undefined, 'status-popup');
+      statusPopup.hidden = true;
+      statusPopup.setAttribute('role', 'menu');
+      editableApplicationStatuses.forEach(status => {
+        const statusButton = element(
+          'button',
+          vacancyStatusLabels[currentLanguage][status] || status
+        );
+        statusButton.type = 'button';
+        statusButton.disabled = item.application_status === status;
+        statusButton.addEventListener('click', async () => {
+          statusButton.disabled = true;
+          try {
+            item.application_status = await setApplicationStatus(item.application_id, status);
+            card.replaceWith(renderResult(item));
+            await loadSavedVacancies(vacancyPage);
+          } catch (error) {
+            taskState.textContent = error.message;
+            statusButton.disabled = false;
+          }
+        });
+        statusPopup.append(statusButton);
       });
-      card.append(actions, statusEditor, taskState);
+      changeStatus.addEventListener('click', () => {
+        statusPopup.hidden = !statusPopup.hidden;
+      });
+      moreToggle.addEventListener('click', () => {
+        moreMenu.hidden = !moreMenu.hidden;
+        statusPopup.hidden = true;
+        moreToggle.setAttribute('aria-expanded', String(!moreMenu.hidden));
+      });
+      if (!isSubmitted) moreMenu.append(manualSubmitted);
+      moreMenu.append(blacklist, changeStatus);
+      moreActions.append(moreToggle, moreMenu, statusPopup);
+      actions.append(accept, reject, link, moreActions);
+      card.append(actions, taskState);
       // Load current materials (cover letter) for this application.
       fetch(`/v1/applications/${item.application_id}/materials`, {headers: headers(false)})
         .then(response => response.ok ? response.json() : null)
@@ -1337,18 +1438,27 @@
           }
           const metadataChanged = (
             materials.work_format !== item.work_format
+            || materials.location !== item.location
             || materials.vacancy_summary !== item.vacancy_summary
             || JSON.stringify(materials.employment_types || []) !== JSON.stringify(item.employment_types || [])
             || JSON.stringify(materials.key_skills || []) !== JSON.stringify(item.key_skills || [])
           );
           item.work_format = materials.work_format;
+          item.location = materials.location || '';
           item.vacancy_summary = materials.vacancy_summary;
           item.employment_types = materials.employment_types || [];
           item.key_skills = materials.key_skills || [];
+          if (['rejected', 'skipped', 'submitted', 'interview'].includes(materials.application_status)) {
+            item.application_status = materials.application_status;
+            updateCachedSearchResults(
+              candidate => candidate.application_id !== item.application_id
+            );
+            card.remove();
+            return;
+          }
           if (materials.application_status !== item.application_status || metadataChanged) {
             item.application_status = materials.application_status;
             updateCachedSearchResultStatus(item.application_id, item.application_status);
-            persistSearchResults(searchResults);
             card.replaceWith(renderResult(item));
           }
         });
@@ -1370,7 +1480,7 @@
     }
 
     const SEARCH_RESULTS_STORAGE_PREFIX = 'dashboardSearchResults:';
-    const SEARCH_RESULTS_VERSION = 4;
+    const SEARCH_RESULTS_VERSION = 6;
 
     function searchResultsStorageKey() {
       const userId = userIdInput.value.trim();
@@ -1385,6 +1495,7 @@
         title: String(item?.title || ''),
         company: String(item?.company || ''),
         source_url: String(item?.source_url || ''),
+        location: String(item?.location || ''),
         match_score: Number(item?.match_score),
         status: String(item?.status || ''),
         source,
@@ -1403,6 +1514,7 @@
         !normalized.application_id || !normalized.vacancy_id || !normalized.title
         || !normalized.source_url || !Number.isFinite(normalized.match_score)
         || !['headhunter', 'linkedin', 'greenhouse'].includes(source)
+        || ['rejected', 'skipped', 'submitted', 'interview'].includes(normalized.application_status)
       ) return null;
       normalized.match_score = Math.max(0, Math.min(100, normalized.match_score));
       return normalized;
@@ -1451,7 +1563,9 @@
             return { ...item, application_status: newStatus };
           }
           return item;
-        });
+        }).filter(item => !['rejected', 'skipped', 'submitted', 'interview'].includes(
+          item.application_status
+        ));
         localStorage.setItem(storageKey, JSON.stringify(cached));
       } catch {
         localStorage.removeItem(storageKey);
@@ -1844,7 +1958,8 @@
           document.querySelector('#browser-sessions').scrollIntoView({behavior: 'smooth', block: 'center'});
           throw new Error(`Сначала авторизуйтесь: ${missingSessions.map(source => browserSiteLabels[source]).join(', ')}`);
         }
-        const greenhouseBoards = document.querySelector('#greenhouse-boards').value
+        saveGreenhouseBoards();
+        const greenhouseBoards = greenhouseBoardsInput.value
           .split(/[\n,]+/).map(value => value.trim()).filter(Boolean);
         const outcomes = [];
         const failures = [];
@@ -1882,6 +1997,9 @@
               matching_status: 'processing',
               materials_status: 'processing'
             };
+            if (['rejected', 'skipped', 'submitted', 'interview'].includes(
+              item.application_status
+            )) return;
             const resultKey = item.application_id || item.source_url;
             if (!resultKey || seenResults.has(resultKey)) return;
             seenResults.add(resultKey);
@@ -1956,6 +2074,7 @@
       restoreSearchResults();
     }
     keyInput.addEventListener('change', () => sessionStorage.setItem('dashboardApiKey', keyInput.value));
+    greenhouseBoardsInput.addEventListener('input', saveGreenhouseBoards);
     userIdInput.addEventListener('change', () => loadUserWorkspace().catch(showError));
     document.querySelector('#load-user').addEventListener('click', () => {
       loadUserWorkspace().then(() => showStatus('Профиль загружен.')).catch(showError);

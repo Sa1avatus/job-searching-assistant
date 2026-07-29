@@ -27,6 +27,10 @@ from playwright.async_api import Locator, Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChallenge, LoginRequired
+from adapters.job_boards.headhunter_apply_profile import (
+    HeadHunterApplyProfile,
+    load_headhunter_apply_profile,
+)
 from app.browser.engine import BrowserActionResult, PlaywrightEngine
 from app.browser.evidence import capture_browser_failure
 from app.browser.publication_dates import parse_publication_datetime
@@ -38,33 +42,6 @@ logger = structlog.get_logger(__name__)
 _HOST_SUFFIX = "hh.ru"
 
 _CAPTCHA_MARKERS = ("checkcaptcha", "captcha-page", "hh.ru/account/blocked")
-
-_COVER_LETTER_EDITABLE_SELECTORS: tuple[str, ...] = (
-    "textarea[data-qa='vacancy-response-popup-form-letter-input']",
-    "[data-qa='vacancy-response-popup-form-letter-input'] textarea",
-    "textarea[data-qa='vacancy-response-popup-letter-input']",
-    "textarea[data-qa='vacancy-response-letter-textarea']",
-    "textarea[data-qa='vacancy-response-letter-informer-textarea']",
-    "[data-qa='vacancy-response-letter-informer'] textarea",
-    "[role='dialog'] textarea",
-    "textarea[name='letter']",
-)
-_COVER_LETTER_INFORMER_SELECTOR = "[data-qa='vacancy-response-letter-informer']"
-_COVER_LETTER_REVEAL_SELECTORS: tuple[str, ...] = (
-    "[data-qa='add-cover-letter']",
-    "[data-qa='vacancy-response-popup-letter-button-add']",
-    "[data-qa='vacancy-response-popup-letter-add']",
-    "[data-qa='vacancy-response-letter-informer-addletter']",
-    "[data-qa='vacancy-response-letter-informer-attachletter']",
-    "[data-qa='vacancy-response-letter-informer-writebutton']",
-    "button:has-text('Добавить сопроводительное письмо')",
-    "button:has-text('Приложить сопроводительное письмо')",
-    "button:has-text('Написать сопроводительное')",
-)
-_COVER_LETTER_SAVE_SELECTOR = (
-    "[data-qa='vacancy-response-popup-letter-button-save'],"
-    "[role='dialog'] button:has-text('Сохранить')"
-)
 
 _EMPLOYMENT_DETAIL_SELECTORS: tuple[str, ...] = (
     "[data-qa='vacancy-view-employment-mode']",
@@ -137,8 +114,13 @@ class HeadHunterApplyResult:
 class HeadHunterBrowserAdapter:
     name = "headhunter-browser"
 
-    def __init__(self, browser_engine: PlaywrightEngine) -> None:
+    def __init__(
+        self,
+        browser_engine: PlaywrightEngine,
+        apply_profile: HeadHunterApplyProfile | None = None,
+    ) -> None:
         self._browser_engine = browser_engine
+        self._apply_profile = apply_profile or load_headhunter_apply_profile()
 
     def supports_url(self, url: str) -> bool:
         hostname = (urlparse(url).hostname or "").casefold()
@@ -163,13 +145,17 @@ class HeadHunterBrowserAdapter:
         await self._raise_if_logged_out(page)
 
         actions: list[BrowserActionResult] = []
-        response_button = page.locator("[data-qa='vacancy-response-link-top']").first
+        response_button = page.locator(",".join(self._apply_profile.response_buttons)).first
         already_applied_marker = page.locator(
-            "[data-qa='vacancy-response-link-top-disabled'],"
-            "[data-qa='vacancy-response-alreadyresponded-applied-short']"
+            ",".join(self._apply_profile.already_applied_markers)
         )
         already_applied_text = page.get_by_text(
-            re.compile(r"^\s*(?:You applied|Вы откликнулись)(?:\s|$)", re.IGNORECASE)
+            re.compile(
+                r"^\s*(?:"
+                + "|".join(map(re.escape, self._apply_profile.already_applied_texts))
+                + r")(?:\s|$)",
+                re.IGNORECASE,
+            )
         )
         if (
             await already_applied_marker.count() > 0
@@ -185,6 +171,14 @@ class HeadHunterBrowserAdapter:
         )
         if not actions[-1].is_successful:
             raise ApplyBlocked("The response control was not found on this vacancy page")
+
+        cross_country_action = await self._handle_cross_country_dialog(page)
+        if cross_country_action is not None:
+            actions.append(cross_country_action)
+            if not cross_country_action.is_successful:
+                raise ApplyBlocked(
+                    "The cross-country warning could not be confirmed"
+                )
 
         await self._wait_for_response_form(page, response_button)
         await self._raise_if_captcha(page)
@@ -215,7 +209,9 @@ class HeadHunterBrowserAdapter:
                 raise ApplyBlocked(
                     "Cover letter field value does not match the requested text after fill"
                 )
-            save_letter_button = page.locator(_COVER_LETTER_SAVE_SELECTOR).first
+            save_letter_button = page.locator(
+                ",".join(self._apply_profile.cover_letter_save_buttons)
+            ).first
             if (
                 await save_letter_button.count() > 0
                 and await save_letter_button.is_visible()
@@ -227,11 +223,7 @@ class HeadHunterBrowserAdapter:
                 if not save_letter.is_successful:
                     raise ApplyBlocked("The cover letter could not be saved in the response form")
 
-        submit_button = page.locator(
-            "[data-qa='vacancy-response-popup-submit'],"
-            "[data-qa='vacancy-response-submit-popup'],"
-            "[data-qa='vacancy-response-submit-form']"
-        ).first
+        submit_button = page.locator(",".join(self._apply_profile.submit_buttons)).first
         actions.append(await self._click(page, submit_button, "submit-response", already_ok=False))
         if not actions[-1].is_successful:
             raise ApplyBlocked(
@@ -247,13 +239,7 @@ class HeadHunterBrowserAdapter:
                 )
 
         await self._raise_if_captcha(page)
-        confirmation = page.locator(
-            "[data-qa='vacancy-response-popup-form-done'],"
-            "[data-qa='vacancy-response-sent'],"
-            "[data-qa='vacancy-responded-success-title'],"
-            "[data-qa='vacancy-response-letter-informer-headresponsesuccess'],"
-            "[data-qa='vacancy-response-alreadyresponded-applied-short']"
-        )
+        confirmation = page.locator(",".join(self._apply_profile.confirmation_markers))
         confirmed = False
         for _ in range(20):
             if await self._has_visible_candidate(confirmation) or await self._has_visible_candidate(
@@ -461,7 +447,10 @@ class HeadHunterBrowserAdapter:
         )
 
     async def _find_cover_letter_field(self, page: Page) -> Locator | None:
-        selectors = (*_COVER_LETTER_EDITABLE_SELECTORS, _COVER_LETTER_INFORMER_SELECTOR)
+        selectors = (
+            *self._apply_profile.cover_letter_editable_fields,
+            *self._apply_profile.cover_letter_informers,
+        )
         for selector in selectors:
             candidate = page.locator(selector).first
             try:
@@ -474,7 +463,7 @@ class HeadHunterBrowserAdapter:
     async def _reveal_cover_letter_field(
         self, page: Page, actions: list[BrowserActionResult]
     ) -> Locator | None:
-        for selector in _COVER_LETTER_REVEAL_SELECTORS:
+        for selector in self._apply_profile.cover_letter_reveal_buttons:
             reveal_button = page.locator(selector).first
             try:
                 if await reveal_button.count() == 0 or not await reveal_button.is_visible():
@@ -532,18 +521,23 @@ class HeadHunterBrowserAdapter:
         self, page: Page
     ) -> BrowserActionResult | None:
         heading_pattern = re.compile(
-            r"^(?:You are applying from another country|"
-            r"Вы откликаетесь из другой страны)$",
+            r"^\s*(?:"
+            + "|".join(map(re.escape, self._apply_profile.cross_country_headings))
+            + r")\s*$",
             re.IGNORECASE,
         )
         continue_pattern = re.compile(
-            r"^(?:Still apply|Всё равно откликнуться|Все равно откликнуться)$",
+            r"^(?:"
+            + "|".join(
+                map(re.escape, self._apply_profile.cross_country_continue_buttons)
+            )
+            + r")$",
             re.IGNORECASE,
         )
 
         dialog: Locator | None = None
         for _ in range(6):
-            dialogs = page.get_by_role("dialog")
+            dialogs = page.locator(",".join(self._apply_profile.cross_country_dialogs))
             for index in range(await dialogs.count()):
                 candidate = dialogs.nth(index)
                 try:
@@ -562,7 +556,9 @@ class HeadHunterBrowserAdapter:
         if dialog is None:
             return None
 
-        continue_button = dialog.get_by_role("button", name=continue_pattern).first
+        continue_button = dialog.locator(
+            ",".join(self._apply_profile.cross_country_continue_selectors)
+        ).first
         try:
             button_is_available = (
                 await continue_button.count() > 0
@@ -570,6 +566,17 @@ class HeadHunterBrowserAdapter:
             )
         except Exception:
             button_is_available = False
+        if not button_is_available:
+            continue_button = dialog.get_by_role(
+                "button", name=continue_pattern
+            ).first
+            try:
+                button_is_available = (
+                    await continue_button.count() > 0
+                    and await continue_button.is_visible()
+                )
+            except Exception:
+                button_is_available = False
         if not button_is_available:
             error = ApplyBlocked(
                 "The cross-country warning is visible, but its continue button was not found"

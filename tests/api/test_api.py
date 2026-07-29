@@ -71,6 +71,8 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert "dashboardSearchResults:" in response.text
     assert "persistSearchResults(outcomes)" in response.text
     assert "restoreSearchResults()" in response.text
+    assert "SEARCH_RESULTS_VERSION = 6" in response.text
+    assert "candidate.application_id !== item.application_id" in response.text
     assert "insertProgressiveSearchResult" in response.text
     assert "discover-vacancies-stream" in response.text
     assert "response.body.getReader()" in response.text
@@ -79,6 +81,19 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert "event.event === 'matching_ready'" in response.text
     assert "coverText.readOnly = item.materials_status === 'processing'" in response.text
     assert "completedSources" in response.text
+    assert "GREENHOUSE_BOARDS_STORAGE_KEY" in response.text
+    assert "greenhouseBoardsInput.addEventListener('input', saveGreenhouseBoards)" in response.text
+    assert "greenhouseBoardsInput.value = localStorage.getItem" in response.text
+    assert "fetchWithTimeout" in response.text
+    assert "Saving the manual application status" in response.text
+    assert "Manual application marked as submitted" in response.text
+    assert "fetchWithTimeout(" in response.text
+    assert "150000" in response.text
+    assert "card-actions" in response.text
+    assert "more-actions__menu" in response.text
+    assert "status-popup" in response.text
+    assert "Перегенерировать письмо" in response.text
+    assert "coverHeader.append(regenerateLetter)" in response.text
     assert "Sources completed" in response.text
     assert "Promise.allSettled" not in response.text
     assert "Promise.all(sources.map" not in response.text
@@ -91,7 +106,7 @@ def test_openapi_reports_development_version() -> None:
     response = client.get("/openapi.json")
 
     assert response.status_code == 200
-    assert response.json()["info"]["version"] == "1.1.0-dev"
+    assert response.json()["info"]["version"] == "1.1.100"
 
 
 def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:
@@ -101,6 +116,7 @@ def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:
         title="AI Engineer",
         company="Example",
         source_url="https://hh.ru/vacancy/123",
+        location="Москва, Россия",
         match_score=80,
         status="created",
         application_status="awaiting_review",
@@ -113,6 +129,7 @@ def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:
     assert response[0].application_id == "application-1"
     assert response[0].match_score == 80
     assert response[0].application_status == "awaiting_review"
+    assert response[0].location == "Москва, Россия"
     assert response[0].vacancy_summary == "Build AI systems."
     assert response[0].work_format == "hybrid"
     assert response[0].salary_text == ""
@@ -142,6 +159,7 @@ def test_discovery_stream_emits_vacancy_before_completion(monkeypatch) -> None:
         title="Streaming Engineer",
         company="Example",
         source_url="https://boards.greenhouse.io/example/jobs/1",
+        location="Berlin, Germany",
         match_score=91,
         status="created",
         application_status="awaiting_review",
@@ -319,7 +337,7 @@ def test_dashboard_exposes_stateful_metadata_and_non_disruptive_rejection() -> N
     assert "createSummaryAffordance" in html
     assert "summary-affordance" in html
     # Cache version bumped for new metadata fields
-    assert "SEARCH_RESULTS_VERSION = 4" in html
+    assert "SEARCH_RESULTS_VERSION = 6" in html
     # New fields normalized and persisted in search cache
     assert "application_status" in html
     assert "vacancy_summary" in html

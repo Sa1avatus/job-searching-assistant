@@ -479,7 +479,11 @@ class RecruitmentService:
         )
         if task is None:
             raise EntityNotFoundError("Workflow task not found")
-        if task.state not in {TaskState.SCHEDULED.value, TaskState.WAITING_FOR_USER.value}:
+        if task.state not in {
+            TaskState.SCHEDULED.value,
+            TaskState.WAITING_FOR_USER.value,
+            TaskState.FAILED.value,
+        }:
             raise DuplicateEntityError(f"Apply cannot be scheduled from {task.state}")
 
         # hh.ru's "resume" field always comes back as required from the vacancy API, but the

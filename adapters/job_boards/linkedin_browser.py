@@ -57,7 +57,19 @@ _LINKEDIN_PROMO_FRAGMENTS = (
     "see jobs where you'd be a top applicant",
     "message hiring managers with inmail",
     "get personalized job recommendations",
+    "get personalized cover letter and resume tips",
+    "try premium for",
+    "millions of other members use premium",
 )
+_LINKEDIN_FOOTER_MARKERS = {
+    "looking for talent?",
+    "post a job",
+    "accessibility",
+    "talent solutions",
+    "community guidelines",
+    "privacy & terms",
+    "linkedin corporation © 2026",
+}
 
 
 def clean_linkedin_description_text(raw_text: str) -> str:
@@ -74,11 +86,14 @@ def clean_linkedin_description_text(raw_text: str) -> str:
     )
     if about_index is not None:
         lines = lines[about_index + 1 :]
-    cleaned = [
-        line
-        for line in lines
-        if not any(fragment in line.casefold() for fragment in _LINKEDIN_PROMO_FRAGMENTS)
-    ]
+    cleaned: list[str] = []
+    for line in lines:
+        folded = line.casefold()
+        if folded in _LINKEDIN_FOOTER_MARKERS:
+            break
+        if any(fragment in folded for fragment in _LINKEDIN_PROMO_FRAGMENTS):
+            continue
+        cleaned.append(line)
     return "\n".join(cleaned).strip()[:20_000]
 
 
@@ -86,7 +101,34 @@ def is_meaningful_linkedin_description(text: str) -> bool:
     normalized = " ".join(text.casefold().split())
     if len(normalized) < 80:
         return False
-    return not all(fragment in normalized for fragment in _LINKEDIN_PROMO_FRAGMENTS[:3])
+    chrome_hits = sum(
+        fragment in normalized
+        for fragment in (*_LINKEDIN_PROMO_FRAGMENTS, *_LINKEDIN_FOOTER_MARKERS)
+    )
+    return chrome_hits < 3
+
+
+async def has_submitted_application_marker(page: Page, *, timeout_ms: int = 5_000) -> bool:
+    """Wait for LinkedIn's asynchronously rendered application-status card."""
+    marker_pattern = re.compile(
+        r"\bapplication\s+submitted\b|"
+        r"\byou\s+applied\b|"
+        r"\bзаявка\s+отправлена\b|"
+        r"\bвы\s+откликнул(?:ись|ась)\b",
+        re.IGNORECASE,
+    )
+    marker = page.get_by_text(marker_pattern).first
+    try:
+        await marker.wait_for(state="visible", timeout=timeout_ms)
+        return True
+    except PlaywrightTimeoutError:
+        pass
+
+    try:
+        body_text = await page.locator("body").inner_text(timeout=2_000)
+    except PlaywrightTimeoutError:
+        return False
+    return marker_pattern.search(" ".join(body_text.split())) is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,8 +198,7 @@ class LinkedInBrowserAdapter:
             raise RuntimeError("LinkedIn navigation left the trusted host")
 
         actions: list[BrowserActionResult] = []
-        applied_marker = page.get_by_text("Application submitted", exact=False)
-        if await applied_marker.count() > 0:
+        if await has_submitted_application_marker(page):
             checkpoint = await self._browser_engine.capture_review_checkpoint(
                 page, target="already-applied"
             )
@@ -470,9 +511,7 @@ class LinkedInBrowserAdapter:
         salary_text = find_salary_text(insight_combined)
         if not salary_text:
             salary_text = find_salary_text(description_text)
-        application_submitted = (
-            await page.get_by_text("Application submitted", exact=False).count() > 0
-        )
+        application_submitted = await has_submitted_application_marker(page)
 
         return ExtractedLinkedInVacancy(
             source_url=url,

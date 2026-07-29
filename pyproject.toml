@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "job-searching-assistant"
-version = "1.1.0.dev0"
+version = "1.1.100"
 description = "Policy-safe, resumable recruitment automation platform"
 readme = "README.md"
 requires-python = ">=3.12"

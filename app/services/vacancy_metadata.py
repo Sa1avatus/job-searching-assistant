@@ -43,6 +43,14 @@ _OFFICE_PATTERNS = [
 ]
 
 _INFORMATIVE_MIN_LENGTH = 20
+_LINKEDIN_CHROME_MARKERS = (
+    "see jobs where you'd be a top applicant",
+    "get personalized cover letter and resume tips",
+    "try premium for",
+    "looking for talent?",
+    "talent solutions",
+    "community guidelines",
+)
 
 _KEY_SKILL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("Python", re.compile(r"(?<!\w)python(?!\w)", re.IGNORECASE)),
@@ -184,38 +192,50 @@ def _extract_requirement_section(description_text: str) -> str:
     """Extract the useful requirement block from a structured vacancy."""
     lines = [re.sub(r"\s+", " ", line).strip() for line in description_text.splitlines()]
     lines = [line for line in lines if line]
+    normalized_headings = [
+        re.sub(r"[\s:–—-]+$", "", line.casefold()).strip() for line in lines
+    ]
     start_markers = {
         "requirements",
+        "requirements & qualifications",
         "what we're looking for",
         "what we’re looking for",
+        "what you'll need",
+        "what you’ll need",
+        "what you bring",
         "qualifications",
         "required qualifications",
+        "your qualifications",
         "требования",
+        "что мы ожидаем",
+        "что потребуется",
     }
     stop_markers = {
         "benefits",
         "what we offer",
+        "what you'll do",
+        "what you’ll do",
         "our engineering principles",
         "about us",
         "о компании",
         "условия",
+        "что мы предлагаем",
     }
     start = next(
-        (index for index, line in enumerate(lines) if line.casefold() in start_markers),
+        (index for index, heading in enumerate(normalized_headings) if heading in start_markers),
         None,
     )
     if start is None:
         return ""
     selected: list[str] = []
     ignored_headings = {
-        "engineering foundation :",
-        "engineering foundation:",
+        "engineering foundation",
         "product & leadership:",
         "nice-to-have",
         "nice to have",
     }
-    for line in lines[start + 1 :]:
-        folded = line.casefold()
+    for index, line in enumerate(lines[start + 1 :], start=start + 1):
+        folded = normalized_headings[index]
         if folded in stop_markers:
             break
         if folded in start_markers or folded in ignored_headings:
@@ -264,8 +284,13 @@ def extract_key_skills(
             skills.append(normalized)
             if len(skills) == limit:
                 return tuple(skills)
+    requirement_text = _extract_requirement_section(description_text)
+    linkedin_chrome_hits = sum(
+        marker in description_text.casefold() for marker in _LINKEDIN_CHROME_MARKERS
+    )
+    evidence_text = requirement_text or ("" if linkedin_chrome_hits >= 3 else description_text)
     for label, pattern in _KEY_SKILL_PATTERNS:
-        if label.casefold() in seen or not pattern.search(description_text):
+        if label.casefold() in seen or not pattern.search(evidence_text):
             continue
         seen.add(label.casefold())
         skills.append(label)

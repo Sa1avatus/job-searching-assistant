@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <body>
+    <div aria-modal="true" role="alertdialog">
+      <h2>
+        <div data-qa="relocation-warning-title">
+          You are applying from another country
+        </div>
+      </h2>
+      <button type="button" data-qa="relocation-warning-confirm">
+        Still apply
+      </button>
+      <button type="button" data-qa="relocation-warning-abort">
+        Cancel
+      </button>
+    </div>
+    <script>
+      document
+        .querySelector("[data-qa='relocation-warning-confirm']")
+        .addEventListener("click", () => {
+          document.body.dataset.confirmed = "true";
+        });
+    </script>
+  </body>
+</html>

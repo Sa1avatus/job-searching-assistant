@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     # by Google; this project performs no proxying or markup.
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-2.5-flash"
+    materials_generation_timeout_seconds: float = Field(default=120, ge=10, le=600)
 
     @field_validator(
         "api_key",

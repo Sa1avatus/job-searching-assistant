@@ -21,6 +21,7 @@ services:
       APP_ENABLE_LINKEDIN_APPLY: ${APP_ENABLE_LINKEDIN_APPLY:-false}
       APP_ANTHROPIC_API_KEY: ${APP_ANTHROPIC_API_KEY:-}
       APP_GEMINI_API_KEY: ${APP_GEMINI_API_KEY:-}
+      APP_MATERIALS_GENERATION_TIMEOUT_SECONDS: ${APP_MATERIALS_GENERATION_TIMEOUT_SECONDS:-120}
       DISPLAY: ":99"
     command: ["sh", "scripts/start_api_with_browser_desktop.sh"]
     ports:
@@ -38,6 +39,7 @@ services:
       retries: 5
     volumes:
       - ./.artifacts:/app/.artifacts
+      - ./config/browser:/app/config/browser:ro
 
   postgres:
     image: postgres:16-alpine
@@ -126,6 +128,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./.artifacts:/app/.artifacts
+      - ./config/browser:/app/config/browser:ro
 
   redis:
     image: redis:7-alpine

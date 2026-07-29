@@ -62,6 +62,23 @@ def test_russian_title_overrides_english_page_interface_noise() -> None:
     assert detect_vacancy_language(vacancy) == "ru"
 
 
+def test_russian_description_overrides_english_job_title() -> None:
+    vacancy = VacancyRow(
+        source_url="https://example.test/jobs/qa",
+        title="Middle QA Engineer (ML, LLM, RAG)",
+        company="EvoAI",
+        description_text=(
+            "Мы разрабатываем и внедряем решения на основе искусственного интеллекта для бизнеса. "
+            "Нужно анализировать требования и критерии приёмки, готовить тестовые сценарии, "
+            "проводить функциональное, интеграционное и системное тестирование, проверять данные "
+            "в базе, анализировать логи и подробно документировать найденные дефекты. "
+            "Мы ожидаем самостоятельность, внимательность и умение работать с командой разработки."
+        ),
+    )
+
+    assert detect_vacancy_language(vacancy) == "ru"
+
+
 def _session_factory():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -318,6 +335,29 @@ def test_draft_materials_retries_english_draft_when_first_response_is_russian() 
         assert generated.cover_letter_text.startswith("Dear Hiring Manager")
         assert len(router.requests) == 2
         assert "entirely in English" in router.requests[-1].prompt
+
+    asyncio.run(run())
+
+
+def test_draft_materials_force_replaces_existing_same_language_letter() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(session_factory)
+        original_letter = "Dear Hiring Manager, this is the original cover letter."
+        replacement_letter = (
+            "Dear Hiring Manager, this newly tailored letter highlights my Python experience."
+        )
+        _save_cover_letter(session_factory, application_id, original_letter)
+        router = _FakeRouter(MaterialsDraft(cover_letter_text=replacement_letter))
+
+        with session_factory() as session:
+            generated = await MaterialsGenerationService(session, router).draft_materials(
+                application_id,
+                force_replace_cover_letter=True,
+            )
+
+        assert generated.cover_letter_text == replacement_letter
+        assert generated.cover_letter_text != original_letter
 
     asyncio.run(run())
 

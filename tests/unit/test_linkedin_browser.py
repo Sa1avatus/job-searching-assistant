@@ -11,6 +11,7 @@ import adapters.job_boards.linkedin_browser as linkedin_browser_module
 from adapters.job_boards.linkedin_browser import (
     LinkedInBrowserAdapter,
     clean_linkedin_description_text,
+    has_submitted_application_marker,
     is_meaningful_linkedin_description,
 )
 from app.browser.engine import BrowserActionResult, PlaywrightEngine
@@ -59,6 +60,54 @@ def test_linkedin_premium_stub_is_not_a_meaningful_description() -> None:
     )
 
     assert not is_meaningful_linkedin_description(stub)
+
+
+def test_linkedin_description_cleaner_drops_footer_and_premium_only_page() -> None:
+    raw = """TechX Corp.
+AI/ML Architect
+See jobs where you'd be a top applicant
+Get personalized cover letter and resume tips
+Try Premium for $0
+Looking for talent?
+Post a job
+Accessibility
+Talent Solutions
+Community Guidelines"""
+
+    cleaned = clean_linkedin_description_text(raw)
+
+    assert "Looking for talent?" not in cleaned
+    assert not is_meaningful_linkedin_description(cleaned)
+
+
+@pytest.mark.asyncio
+async def test_linkedin_submitted_marker_waits_for_dynamic_status() -> None:
+    marker = MagicMock()
+    marker.wait_for = AsyncMock()
+    text_locator = MagicMock()
+    text_locator.first = marker
+    page = MagicMock()
+    page.get_by_text.return_value = text_locator
+
+    assert await has_submitted_application_marker(cast(Page, page))
+    marker.wait_for.assert_awaited_once_with(state="visible", timeout=5_000)
+
+
+@pytest.mark.asyncio
+async def test_linkedin_submitted_marker_falls_back_to_visible_page_text() -> None:
+    marker = MagicMock()
+    marker.wait_for = AsyncMock(side_effect=PlaywrightTimeoutError("not ready"))
+    text_locator = MagicMock()
+    text_locator.first = marker
+    body = MagicMock()
+    body.inner_text = AsyncMock(
+        return_value="Application status\nApplication submitted\n2 hours ago"
+    )
+    page = MagicMock()
+    page.get_by_text.return_value = text_locator
+    page.locator.return_value = body
+
+    assert await has_submitted_application_marker(cast(Page, page), timeout_ms=1)
 
 
 class _NavigationEngine:

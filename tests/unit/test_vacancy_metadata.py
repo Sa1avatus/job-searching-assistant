@@ -236,6 +236,33 @@ def test_extract_key_skills_combines_declared_and_description_skills() -> None:
     }
 
 
+def test_extract_key_skills_prefers_requirements_over_unrelated_page_mentions() -> None:
+    result = extract_key_skills(
+        """Our blog covers Python, Kubernetes and Generative AI.
+        What You'll Need:
+        Strong experience with PostgreSQL, REST APIs and Docker.
+        What We Offer:
+        Training in AWS and machine learning."""
+    )
+
+    assert set(result) >= {"PostgreSQL", "REST API", "Docker"}
+    assert "Python" not in result
+    assert "Kubernetes" not in result
+    assert "AWS" not in result
+
+
+def test_extract_key_skills_ignores_saved_linkedin_interface_text() -> None:
+    description = """See jobs where you'd be a top applicant
+Get personalized cover letter and resume tips
+Try Premium for $0
+Looking for talent?
+Our AI platform mentions Python, Go and Kubernetes.
+Talent Solutions
+Community Guidelines"""
+
+    assert extract_key_skills(description) == ()
+
+
 @pytest.mark.parametrize(
     "description",
     [

@@ -6,6 +6,12 @@ A recruitment assistant with a personal dashboard for resume analysis, vacancy d
 
 Current stable version: **1.0.0**.
 
+HeadHunter's changeable browser selectors and confirmation texts are stored in
+`config/browser/headhunter_apply.json`. Docker Compose mounts this profile read-only into the API
+and browser worker. If HeadHunter changes its response form, update the relevant selector list and
+restart `api` and `browser-worker`; Python code does not need to be changed. The profile is
+validated at adapter startup and an invalid or incomplete file stops the flow safely.
+
 ## Features
 
 - Searches HeadHunter and LinkedIn through isolated Playwright browser sessions and imports public Greenhouse boards.

@@ -97,6 +97,7 @@ class DiscoveryOutcome:
     title: str
     company: str
     source_url: str
+    location: str
     match_score: int
     status: str  # "created" | "already_existed"
     application_status: str
@@ -312,6 +313,7 @@ class JobDiscoveryService:
                 title=vacancy.title,
                 company=vacancy.company,
                 source_url=vacancy.source_url,
+                location=vacancy.location,
                 match_score=existing_application.match_score,
                 status="already_existed",
                 application_status=existing_application.status,
@@ -335,6 +337,7 @@ class JobDiscoveryService:
             title=vacancy.title,
             company=vacancy.company,
             source_url=vacancy.source_url,
+            location=vacancy.location,
             match_score=application.match_score,
             status="created",
             application_status=application.status,
@@ -516,6 +519,7 @@ class JobDiscoveryService:
                 title=vacancy.title,
                 company=vacancy.company,
                 source_url=vacancy.source_url,
+                location=vacancy.location,
                 match_score=existing_application.match_score,
                 status="already_existed",
                 application_status=existing_application.status,
@@ -543,6 +547,7 @@ class JobDiscoveryService:
             title=vacancy.title,
             company=vacancy.company,
             source_url=vacancy.source_url,
+            location=vacancy.location,
             match_score=application.match_score,
             status="created",
             application_status=application.status,
@@ -745,6 +750,7 @@ class JobDiscoveryService:
                 title=vacancy.title,
                 company=vacancy.company,
                 source_url=vacancy.source_url,
+                location=vacancy.location,
                 match_score=existing_application.match_score,
                 status="already_existed",
                 application_status=existing_application.status,
@@ -767,6 +773,7 @@ class JobDiscoveryService:
             title=vacancy.title,
             company=vacancy.company,
             source_url=vacancy.source_url,
+            location=vacancy.location,
             match_score=application.match_score,
             status="created",
             application_status=application.status,

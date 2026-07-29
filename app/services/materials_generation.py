@@ -53,15 +53,23 @@ class GeneratedMaterials:
 
 
 def detect_vacancy_language(vacancy: VacancyRow) -> Literal["ru", "en"]:
+    vacancy_text = vacancy.description_text or ""
+    cyrillic_count = len(re.findall(r"[А-Яа-яЁё]", vacancy_text))
+    latin_count = len(re.findall(r"[A-Za-z]", vacancy_text))
+    # Job titles commonly remain in English even when the actual vacancy is Russian.
+    # Prefer a substantial, clearly dominant description; use the title only when the
+    # description is short, mixed, or mostly page-interface noise.
+    if cyrillic_count >= 80 and cyrillic_count >= latin_count:
+        return "ru"
+    if latin_count >= 80 and latin_count >= cyrillic_count * 3:
+        return "en"
+
     title_cyrillic = len(re.findall(r"[А-Яа-яЁё]", vacancy.title))
     title_latin = len(re.findall(r"[A-Za-z]", vacancy.title))
     if title_latin >= 10 and title_cyrillic < 3:
         return "en"
     if title_cyrillic >= 3 and title_cyrillic >= title_latin / 2:
         return "ru"
-    vacancy_text = vacancy.description_text or ""
-    cyrillic_count = len(re.findall(r"[А-Яа-яЁё]", vacancy_text))
-    latin_count = len(re.findall(r"[A-Za-z]", vacancy_text))
     if cyrillic_count >= 10 or (cyrillic_count >= 3 and cyrillic_count >= latin_count / 3):
         return "ru"
     return "en"
@@ -144,7 +152,12 @@ class MaterialsGenerationService:
         )
 
     async def draft_materials(
-        self, application_id: str, *, replace_mismatched_cover_letter: bool = False
+        self,
+        application_id: str,
+        *,
+        replace_mismatched_cover_letter: bool = False,
+        force_replace_cover_letter: bool = False,
+        timeout_seconds: float = 45,
     ) -> GeneratedMaterials:
         application = self._session.get(ApplicationRow, application_id)
         if application is None:
@@ -183,7 +196,7 @@ class MaterialsGenerationService:
             task_class=ModelTaskClass.LOW_COST,
             prompt=prompt,
             max_cost_usd=0.05,
-            timeout_seconds=45,
+            timeout_seconds=timeout_seconds,
         )
         draft = await self._router.route(request, MaterialsDraft)
         if not _matches_language(draft.cover_letter_text, response_language):
@@ -196,7 +209,7 @@ class MaterialsGenerationService:
                     f"Return a newly written cover_letter_text entirely in {required_language}."
                 ),
                 max_cost_usd=0.05,
-                timeout_seconds=45,
+                timeout_seconds=timeout_seconds,
             )
             draft = await self._router.route(correction_request, MaterialsDraft)
             if not _matches_language(draft.cover_letter_text, response_language):
@@ -229,9 +242,13 @@ class MaterialsGenerationService:
             filled.append(field_id)
 
         existing_cover_letter = application.cover_letter_text or ""
-        should_replace_cover_letter = not existing_cover_letter.strip() or (
-            replace_mismatched_cover_letter
-            and not _matches_language(existing_cover_letter, response_language)
+        should_replace_cover_letter = (
+            force_replace_cover_letter
+            or not existing_cover_letter.strip()
+            or (
+                replace_mismatched_cover_letter
+                and not _matches_language(existing_cover_letter, response_language)
+            )
         )
         if should_replace_cover_letter:
             application.cover_letter_text = draft.cover_letter_text.strip()
