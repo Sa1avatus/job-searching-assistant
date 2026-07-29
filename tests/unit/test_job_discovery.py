@@ -83,6 +83,30 @@ class _FakeLinkedInAdapter:
         )
 
 
+class _MultiLinkedInAdapter(_FakeLinkedInAdapter):
+    def __init__(self, hits: list[LinkedInSearchHit]) -> None:
+        super().__init__()
+        self._hits = hits
+
+    async def search(
+        self, *, text: str, location_names: list[str], limit: int
+    ) -> list[LinkedInSearchHit]:
+        return self._hits[:limit]
+
+    async def extract_vacancy(self, url: str) -> ExtractedLinkedInVacancy:
+        extracted = await super().extract_vacancy(url)
+        return ExtractedLinkedInVacancy(
+            source_url=url,
+            title=extracted.title,
+            company=extracted.company,
+            location=extracted.location,
+            description_text=extracted.description_text,
+            has_easy_apply=extracted.has_easy_apply,
+            salary_text=extracted.salary_text,
+            employment_text=extracted.employment_text,
+        )
+
+
 class _EmptyMetadataLinkedInAdapter(_FakeLinkedInAdapter):
     async def extract_vacancy(self, url: str) -> ExtractedLinkedInVacancy:
         return ExtractedLinkedInVacancy(
@@ -125,12 +149,56 @@ class _FakeGreenhouseAdapter:
         )
 
 
+class _MultiGreenhouseAdapter(_FakeGreenhouseAdapter):
+    def __init__(self, hits: tuple[GreenhouseSearchHit, ...]) -> None:
+        self._hits = hits
+
+    async def list_jobs(self, board_url: str) -> tuple[GreenhouseSearchHit, ...]:
+        return self._hits
+
+    async def extract_job(self, url: str) -> ExtractedGreenhouseJob:
+        extracted = await super().extract_job(url)
+        return ExtractedGreenhouseJob(
+            source_url=url,
+            job_id=int(url.rsplit("/", 1)[-1]),
+            title=extracted.title,
+            company=extracted.company,
+            location=extracted.location,
+            description_text=extracted.description_text,
+            language=extracted.language,
+            application_deadline=extracted.application_deadline,
+            form_fields=extracted.form_fields,
+            requires_sensitive_review=extracted.requires_sensitive_review,
+            evidence_api_url=extracted.evidence_api_url,
+            salary_text=extracted.salary_text,
+            employment_text=extracted.employment_text,
+        )
+
+
 def _session_factory():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def _create_rejected_application(
+    session, *, user_id: str, source_url: str, adapter_name: str
+) -> None:
+    service = RecruitmentService(session)
+    vacancy = service.create_vacancy(
+        source_url=source_url,
+        title="Old Python Engineer",
+        company="Old Example",
+        required_skills=["Python"],
+        preferred_skills=[],
+        description_text="Python services",
+        adapter_name=adapter_name,
+    )
+    application = service.prepare_application(user_id, vacancy.id)
+    application.status = "rejected"
+    session.commit()
 
 
 def test_discover_creates_vacancy_and_application() -> None:
@@ -546,5 +614,118 @@ def test_greenhouse_discovery_searches_supplied_board() -> None:
         assert outcomes[0].work_format == "hybrid"
         assert outcomes[0].salary_text == "$140,000"
         assert outcomes[0].employment_types == ("contract",)
+
+    asyncio.run(run())
+
+
+def test_headhunter_backfills_limit_after_rejected_candidate() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        rejected_url = "https://hh.ru/vacancy/old"
+        new_url = "https://hh.ru/vacancy/new"
+        with session_factory() as session:
+            service = RecruitmentService(session)
+            user = service.create_user("Candidate")
+            service.add_profile_fact(
+                user.id, category="skill", name="Python", value="", is_verified=True
+            )
+            _create_rejected_application(
+                session,
+                user_id=user.id,
+                source_url=rejected_url,
+                adapter_name="headhunter",
+            )
+            user_id = user.id
+
+        adapter = _FakeAdapter(
+            [
+                HeadHunterSearchHit("old", rejected_url, "Old", "Old Example"),
+                HeadHunterSearchHit("new", new_url, "New", "Example"),
+            ]
+        )
+        with session_factory() as session:
+            outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
+                user_id, headhunter_adapter=adapter, locations=[], limit=1
+            )
+
+        assert [outcome.source_url for outcome in outcomes] == [new_url]
+
+    asyncio.run(run())
+
+
+def test_linkedin_backfills_limit_after_rejected_candidate() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        rejected_url = "https://www.linkedin.com/jobs/view/old"
+        new_url = "https://www.linkedin.com/jobs/view/new"
+        with session_factory() as session:
+            service = RecruitmentService(session)
+            user = service.create_user("Candidate")
+            service.add_profile_fact(
+                user.id, category="skill", name="Python", value="", is_verified=True
+            )
+            _create_rejected_application(
+                session,
+                user_id=user.id,
+                source_url=rejected_url,
+                adapter_name="linkedin-reference",
+            )
+            user_id = user.id
+
+        adapter = _MultiLinkedInAdapter(
+            [
+                LinkedInSearchHit("old", rejected_url, "Old", "Old Example"),
+                LinkedInSearchHit("new", new_url, "New", "Example"),
+            ]
+        )
+        with session_factory() as session:
+            outcomes = await JobDiscoveryService(session).discover_linkedin_vacancies(
+                user_id, linkedin_adapter=adapter, locations=[], limit=1
+            )
+
+        assert [outcome.source_url for outcome in outcomes] == [new_url]
+
+    asyncio.run(run())
+
+
+def test_greenhouse_backfills_limit_after_rejected_candidate() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        rejected_url = "https://boards.greenhouse.io/example/jobs/3"
+        new_url = "https://boards.greenhouse.io/example/jobs/4"
+        with session_factory() as session:
+            service = RecruitmentService(session)
+            user = service.create_user("Candidate")
+            service.add_profile_fact(
+                user.id, category="skill", name="Python", value="", is_verified=True
+            )
+            _create_rejected_application(
+                session,
+                user_id=user.id,
+                source_url=rejected_url,
+                adapter_name="greenhouse",
+            )
+            user_id = user.id
+
+        adapter = _MultiGreenhouseAdapter(
+            (
+                GreenhouseSearchHit(
+                    rejected_url, "Old Python Engineer", "Old Example", "Remote", "Python"
+                ),
+                GreenhouseSearchHit(
+                    new_url, "New Python Engineer", "Example", "Remote", "Python"
+                ),
+            )
+        )
+        with session_factory() as session:
+            outcomes = await JobDiscoveryService(session).discover_greenhouse_vacancies(
+                user_id,
+                greenhouse_adapter=adapter,
+                board_urls=["https://boards.greenhouse.io/example"],
+                locations=[],
+                limit=1,
+            )
+
+        assert [outcome.source_url for outcome in outcomes] == [new_url]
 
     asyncio.run(run())

@@ -47,6 +47,11 @@ class LinkedInSessionRequiredError(RuntimeError):
 _DEFAULT_LIMIT = 15
 _MAX_LIMIT = 50
 _MAX_SEARCH_QUERIES = 8
+_MAX_CANDIDATES = 200
+_PER_QUERY_LIMIT = 50
+_TERMINAL_DISCOVERY_STATUSES = frozenset(
+    {"rejected", "skipped", "submitted", "interview"}
+)
 
 
 def _normalize_skill(skill: str) -> str:
@@ -159,20 +164,24 @@ class JobDiscoveryService:
             )
 
         limit = min(max(limit, 1), _MAX_LIMIT)
+        terminal_urls = self._terminal_source_urls(user_id)
+        candidate_limit = min(_MAX_CANDIDATES, max(limit * 2, _PER_QUERY_LIMIT))
         hits_by_url: dict[str, HeadHunterSearchHit] = {}
         for query in build_search_queries(text):
             try:
                 query_hits = await headhunter_adapter.search(
-                    text=query, location_names=locations, limit=limit
+                    text=query, location_names=locations, limit=_PER_QUERY_LIMIT
                 )
             except (CaptchaChallenge, ApplyBlocked):
                 # Preserve results collected before a challenge appeared on a later query.
                 break
             for hit in query_hits:
+                if hit.source_url in terminal_urls:
+                    continue
                 hits_by_url.setdefault(hit.source_url, hit)
-                if len(hits_by_url) == limit:
+                if len(hits_by_url) == candidate_limit:
                     break
-            if len(hits_by_url) == limit:
+            if len(hits_by_url) == candidate_limit:
                 break
 
         outcomes: list[DiscoveryOutcome] = []
@@ -188,6 +197,8 @@ class JobDiscoveryService:
                 outcomes.append(outcome)
                 if on_outcome is not None:
                     await on_outcome(outcome)
+                if len(outcomes) == limit:
+                    break
         return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
 
     async def _stage_one(
@@ -359,11 +370,13 @@ class JobDiscoveryService:
             )
 
         limit = min(max(limit, 1), _MAX_LIMIT)
+        terminal_urls = self._terminal_source_urls(user_id)
+        candidate_limit = min(_MAX_CANDIDATES, max(limit * 2, _PER_QUERY_LIMIT))
         hits_by_url: dict[str, LinkedInSearchHit] = {}
         for query in build_search_queries(text):
             try:
                 query_hits = await linkedin_adapter.search(
-                    text=query, location_names=locations, limit=limit
+                    text=query, location_names=locations, limit=_PER_QUERY_LIMIT
                 )
             except LoginRequired as error:
                 raise LinkedInSessionRequiredError(
@@ -372,10 +385,12 @@ class JobDiscoveryService:
             except (CaptchaChallenge, ApplyBlocked):
                 break
             for hit in query_hits:
+                if hit.source_url in terminal_urls:
+                    continue
                 hits_by_url.setdefault(hit.source_url, hit)
-                if len(hits_by_url) == limit:
+                if len(hits_by_url) == candidate_limit:
                     break
-            if len(hits_by_url) == limit:
+            if len(hits_by_url) == candidate_limit:
                 break
 
         outcomes: list[DiscoveryOutcome] = []
@@ -391,6 +406,8 @@ class JobDiscoveryService:
                 outcomes.append(outcome)
                 if on_outcome is not None:
                     await on_outcome(outcome)
+                if len(outcomes) == limit:
+                    break
         return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
 
     async def _stage_linkedin(
@@ -598,6 +615,8 @@ class JobDiscoveryService:
             )
 
         limit = min(max(limit, 1), _MAX_LIMIT)
+        terminal_urls = self._terminal_source_urls(user_id)
+        candidate_limit = min(_MAX_CANDIDATES, max(limit * 2, _PER_QUERY_LIMIT))
         normalized_queries = [query.casefold() for query in queries]
         normalized_locations = [location.casefold() for location in locations if location.strip()]
         hits_by_url: dict[str, GreenhouseSearchHit] = {}
@@ -609,6 +628,8 @@ class JobDiscoveryService:
                 failed_boards += 1
                 continue
             for hit in board_hits:
+                if hit.source_url in terminal_urls:
+                    continue
                 searchable_text = " ".join(
                     (hit.title, hit.company, hit.location, hit.description_text)
                 ).casefold()
@@ -619,9 +640,9 @@ class JobDiscoveryService:
                 ):
                     continue
                 hits_by_url.setdefault(hit.source_url, hit)
-                if len(hits_by_url) == limit:
+                if len(hits_by_url) == candidate_limit:
                     break
-            if len(hits_by_url) == limit:
+            if len(hits_by_url) == candidate_limit:
                 break
         if failed_boards == len(set(board_urls)):
             raise GreenhouseDiscoveryError("Не удалось прочитать указанные доски Greenhouse")
@@ -639,6 +660,8 @@ class JobDiscoveryService:
                 outcomes.append(outcome)
                 if on_outcome is not None:
                     await on_outcome(outcome)
+                if len(outcomes) == limit:
+                    break
         return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
 
     async def _stage_greenhouse(
@@ -772,6 +795,18 @@ class JobDiscoveryService:
             seen_tokens.add(reference.board_token)
             board_urls.append(reference.board_url)
         return board_urls
+
+    def _terminal_source_urls(self, user_id: str) -> set[str]:
+        return set(
+            self._session.scalars(
+                select(VacancyRow.source_url)
+                .join(ApplicationRow, ApplicationRow.vacancy_id == VacancyRow.id)
+                .where(
+                    ApplicationRow.user_id == user_id,
+                    ApplicationRow.status.in_(_TERMINAL_DISCOVERY_STATUSES),
+                )
+            )
+        )
 
     def _rescore_from_text(
         self,
