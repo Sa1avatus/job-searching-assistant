@@ -306,45 +306,51 @@ class LinkedInBrowserAdapter:
                     error=error,
                 )
                 return []
-            count = min(await cards.count(), limit)
             hits: list[LinkedInSearchHit] = []
             seen_job_ids: set[str] = set()
-            for index in range(count):
-                card = cards.nth(index)
-                raw_job_id = await card.get_attribute("data-job-id")
+            card_snapshots = await cards.evaluate_all(
+                """elements => elements.map(card => ({
+                    jobId: card.getAttribute("data-job-id") || "",
+                    title: (
+                        card.querySelector(
+                            ".job-card-list__title, .job-card-container__link"
+                        )?.textContent || ""
+                    ).trim(),
+                    company: (
+                        card.querySelector(".job-card-container__company-name")
+                            ?.textContent || ""
+                    ).trim()
+                }))"""
+            )
+            for snapshot in card_snapshots[:limit]:
+                if not isinstance(snapshot, dict):
+                    continue
+                raw_job_id = str(snapshot.get("jobId", ""))
                 job_id_match = re.search(r"(\d{5,})", raw_job_id or "")
                 if job_id_match is None:
                     continue
                 job_id = job_id_match.group(1)
                 seen_job_ids.add(job_id)
-                title_locator = card.locator(
-                    ".job-card-list__title, .job-card-container__link"
-                ).first
-                title = (
-                    (await title_locator.inner_text()).strip()
-                    if await title_locator.count() > 0
-                    else ""
-                )
-                company_locator = card.locator(".job-card-container__company-name").first
-                company = (
-                    (await company_locator.inner_text()).strip()
-                    if await company_locator.count() > 0
-                    else ""
-                )
                 hits.append(
                     LinkedInSearchHit(
                         job_id=job_id,
                         source_url=f"https://www.linkedin.com/jobs/view/{job_id}",
-                        title=title,
-                        company=company,
+                        title=str(snapshot.get("title", "")).strip(),
+                        company=str(snapshot.get("company", "")).strip(),
                     )
                 )
             if len(hits) < limit:
                 links = page.locator('a[href*="/jobs/view/"]')
-                link_count = await links.count()
-                for index in range(link_count):
-                    link = links.nth(index)
-                    href = await link.get_attribute("href")
+                link_snapshots = await links.evaluate_all(
+                    """elements => elements.map(link => ({
+                        href: link.getAttribute("href") || "",
+                        title: (link.textContent || "").trim()
+                    }))"""
+                )
+                for snapshot in link_snapshots:
+                    if not isinstance(snapshot, dict):
+                        continue
+                    href = str(snapshot.get("href", ""))
                     job_id_match = re.search(
                         r"/jobs/view/(?:[^/?#-]+-)*(\d{5,})", href or ""
                     )
@@ -356,7 +362,7 @@ class LinkedInBrowserAdapter:
                         LinkedInSearchHit(
                             job_id=job_id,
                             source_url=f"https://www.linkedin.com/jobs/view/{job_id}",
-                            title=(await link.inner_text()).strip(),
+                            title=str(snapshot.get("title", "")).strip(),
                             company="",
                         )
                     )
