@@ -13,7 +13,6 @@ COPY migrations ./migrations
 COPY fixtures ./fixtures
 COPY scripts ./scripts
 COPY alembic.ini ./
-RUN pip install --no-deps .
 
 ENV APP_DATABASE_URL=postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
 CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

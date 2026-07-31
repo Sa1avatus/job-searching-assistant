@@ -1,9 +1,11 @@
 import asyncio
+import json
 import secrets
 import sys
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import asdict
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
@@ -22,7 +24,8 @@ if sys.platform == "win32":
 
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import SecretStr
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -30,24 +33,36 @@ from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChalle
 from adapters.job_boards.contracts import ADAPTER_CAPABILITIES
 from adapters.job_boards.greenhouse_api import GreenhouseJobBoardApi
 from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter
+from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
 from adapters.job_boards.linkedin_reference import LinkedInJobReference
 from app.api.schemas import (
+    ActiveCvFileRequest,
+    ApplicationMatchDetailsResponse,
     ApplicationMaterialsResponse,
     ApplicationMaterialsUpdateRequest,
     ApplicationResponse,
+    ApplicationStatusUpdateRequest,
     AssessmentRequest,
     AssessmentResponse,
+    BrowserApplySubmitRequest,
+    BrowserAuthorizationResponse,
     BrowserHandoffRequest,
     BrowserHandoffResponse,
-    BrowserApplySubmitRequest,
     BrowserReviewRequest,
+    BrowserSessionStatusResponse,
+    CompanyBlacklistRequest,
+    CompanyBlacklistResponse,
     ConfirmedProfileFactResponse,
     ConfirmProfileFactsRequest,
+    ConfirmResumeProfileRequest,
     ConnectorCapabilityResponse,
     CvFileResponse,
+    DiscoverGreenhouseVacanciesRequest,
     DiscoverHeadHunterVacanciesRequest,
     DiscoverLinkedInVacanciesRequest,
+    DiscoverVacanciesStreamRequest,
     DiscoveryOutcomeResponse,
+    EmploymentTypeName,
     EvidenceArtifactResponse,
     ExtractedProfileResponse,
     GreenhouseImportRequest,
@@ -57,11 +72,18 @@ from app.api.schemas import (
     HumanActionResumeRequest,
     ImportedVacancyResponse,
     LinkedInReferenceImportRequest,
+    LlmModelsRequest,
+    LlmModelsResponse,
+    LlmPreferenceResponse,
+    LlmPreferenceUpdateRequest,
     PrepareApplicationRequest,
     ProfileFactRequest,
     ProfileFactResponse,
+    RequirementMatchDetailResponse,
     ReviewDecisionRequest,
     ReviewItemResponse,
+    SavedVacancyPageResponse,
+    SavedVacancyResponse,
     ScreeningAnswerResponse,
     TaskTransitionResponse,
     UserRequest,
@@ -69,32 +91,51 @@ from app.api.schemas import (
     VacancyRequest,
     VacancyResponse,
     WorkflowTaskResponse,
+    WorkFormat,
 )
 from app.browser.engine import PlaywrightEngine
 from app.browser.selector_library import SelectorLibrary
+from app.browser.session_probe import probe_browser_session
+from app.browser.session_service import BrowserSessionService
 from app.browser.session_store import InvalidBrowserState, delete_browser_state_file
 from app.config import Settings, get_settings
 from app.domain.models import ProfileFact, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy
-from app.observability.logging import configure_logging
-from app.observability.metrics import metrics
-from app.services.browser_handoff import create_browser_handoff
 from app.domain.resume_text import UnreadableResumeError, extract_resume_text
+from app.domain.vacancy_attributes import EMPLOYMENT_TYPE_ORDER
+from app.llm.preferences import (
+    InvalidLlmPreference,
+    LlmModelDiscoveryError,
+    LlmPreferenceNotFound,
+    LlmPreferenceService,
+    fetch_available_models,
+)
 from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
 from app.llm.router import ModelProvider, ModelRouter, NoModelAvailableError
-from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
+from app.matching.jobs import MatchingJobNotReadyError, MatchingJobService
+from app.observability.logging import configure_logging
+from app.observability.metrics import metrics
+from app.services.browser_authorization import (
+    BrowserAuthorizationError,
+    BrowserAuthorizationManager,
+    BrowserSiteKey,
+)
+from app.services.browser_handoff import create_browser_handoff
+from app.services.company_blacklist import CompanyBlacklistService
 from app.services.job_discovery import (
+    DiscoveryOutcome,
+    GreenhouseDiscoveryError,
     JobDiscoveryService,
     LinkedInSessionRequiredError,
     NoSearchKeywordsError,
 )
-from app.storage.database import SessionFactory
-from app.workers.browser_tasks import _restore_browser_session
-from app.workers.browser_worker import create_session_store
 from app.services.materials_generation import (
     MaterialsGenerationService,
+    MaterialsLanguageMismatchError,
     NoVerifiedFactsError,
+    cover_letter_matches_vacancy_language,
+    detect_vacancy_language,
 )
 from app.services.recruitment import (
     DuplicateEntityError,
@@ -102,15 +143,83 @@ from app.services.recruitment import (
     RecruitmentService,
 )
 from app.services.resume_intake import ResumeIntakeService
-from app.storage.database import session_scope
+from app.services.vacancy_catalog import VacancyCatalogService
+from app.services.vacancy_metadata import (
+    detect_work_format,
+    extract_key_skills,
+    summarize_vacancy,
+)
+from app.storage.database import SessionFactory, session_scope
 from app.storage.documents import DocumentStorage, InvalidDocumentError
 from app.storage.evidence_artifacts import EvidenceArtifactStorage, InvalidEvidenceArtifact
-from app.storage.tables import ApplicationRow, CvFileRow, WorkerHeartbeatRow, WorkflowTaskRow
+from app.storage.tables import (
+    ApplicationMatchResultRow,
+    ApplicationRow,
+    BrowserSessionRow,
+    CandidateEvidenceRow,
+    CvFileRow,
+    LlmPreferenceRow,
+    RequirementMatchRow,
+    UserRow,
+    VacancyRequirementRow,
+    VacancyRow,
+    WorkerHeartbeatRow,
+    WorkflowTaskRow,
+)
+from app.workers.browser_tasks import _restore_browser_session
+from app.workers.browser_worker import create_session_store
 
 configure_logging()
-app = FastAPI(title="Job Searching Assistant", version="0.1.0")
+app = FastAPI(title="Job Searching Assistant", version="1.1.100")
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
+BROWSER_AUTHORIZATION_MANAGER = BrowserAuthorizationManager()
+
+
+def serialize_discovery_outcomes(
+    outcomes: list[DiscoveryOutcome],
+) -> list[DiscoveryOutcomeResponse]:
+    return [DiscoveryOutcomeResponse(**asdict(outcome)) for outcome in outcomes]
+
+
+def serialize_discovery_outcome(outcome: DiscoveryOutcome) -> dict[str, object]:
+    return DiscoveryOutcomeResponse(**asdict(outcome)).model_dump(mode="json")
+
+
+def response_work_format(vacancy: VacancyRow) -> WorkFormat:
+    if vacancy.work_format == "remote":
+        return "remote"
+    if vacancy.work_format == "hybrid":
+        return "hybrid"
+    if vacancy.work_format == "office":
+        return "office"
+    return detect_work_format(vacancy.title, vacancy.location, vacancy.description_text)
+
+
+def response_employment_types(vacancy: VacancyRow) -> list[EmploymentTypeName]:
+    stored_employment_types = set(vacancy.employment_types or ())
+    return [
+        employment_type
+        for employment_type in EMPLOYMENT_TYPE_ORDER
+        if employment_type in stored_employment_types
+    ]
+
+
+def serialize_cv_file(cv_file: CvFileRow, *, active_cv_file_id: str | None) -> CvFileResponse:
+    return CvFileResponse(
+        id=cv_file.id,
+        user_id=cv_file.user_id,
+        original_filename=cv_file.original_filename,
+        content_type=cv_file.content_type,
+        sha256=cv_file.sha256,
+        size_bytes=cv_file.size_bytes,
+        skills=cv_file.skills,
+        experience_summary=cv_file.experience_summary,
+        search_keywords=cv_file.search_keywords,
+        years_of_experience=cv_file.years_of_experience,
+        analyzed_at=cv_file.analyzed_at,
+        is_active=cv_file.id == active_cv_file_id,
+    )
 
 
 def required_api_scope(method: str, path: str) -> str:
@@ -134,6 +243,8 @@ def required_api_scope(method: str, path: str) -> str:
         return "applications:submit_real"
     if path.startswith("/v1/applications/") and (
         path.endswith("/decision")
+        or path.endswith("/status")
+        or path.endswith("/reject-vacancy")
         or path.endswith("/retry")
         or path.endswith("/materials")
         or path.endswith("/generate-materials")
@@ -158,8 +269,27 @@ async def headhunter_http_client() -> AsyncIterator[httpx.AsyncClient]:
         yield client
 
 
+async def llm_http_client() -> AsyncIterator[httpx.AsyncClient]:
+    settings = get_settings()
+    timeout = httpx.Timeout(settings.materials_generation_timeout_seconds + 10)
+    async with httpx.AsyncClient(
+        timeout=timeout, follow_redirects=False, trust_env=False
+    ) as client:
+        yield client
+
+
+def _configured_secret(secret: SecretStr | None) -> str | None:
+    if secret is None:
+        return None
+    value = secret.get_secret_value().strip()
+    return value or None
+
+
 def llm_is_configured(settings: Settings) -> bool:
-    return settings.anthropic_api_key is not None or settings.gemini_api_key is not None
+    return bool(
+        _configured_secret(settings.anthropic_api_key)
+        or _configured_secret(settings.gemini_api_key)
+    )
 
 
 def build_model_providers(
@@ -172,23 +302,53 @@ def build_model_providers(
     fallback for free.
     """
     providers: list[ModelProvider] = []
-    if settings.anthropic_api_key is not None:
+    anthropic_api_key = _configured_secret(settings.anthropic_api_key)
+    gemini_api_key = _configured_secret(settings.gemini_api_key)
+    if anthropic_api_key is not None:
         providers.append(
             AnthropicMessagesProvider(
                 http_client,
-                api_key=settings.anthropic_api_key.get_secret_value(),
+                api_key=anthropic_api_key,
                 model=settings.anthropic_model,
             )
         )
-    if settings.gemini_api_key is not None:
+    if gemini_api_key is not None:
         providers.append(
             GeminiProvider(
                 http_client,
-                api_key=settings.gemini_api_key.get_secret_value(),
+                api_key=gemini_api_key,
                 model=settings.gemini_model,
             )
         )
     return tuple(providers)
+
+
+def _llm_preference_service(session: Session, settings: Settings) -> LlmPreferenceService:
+    encryption_key = _configured_secret(settings.browser_state_encryption_key)
+    if encryption_key is None:
+        raise InvalidLlmPreference("APP_BROWSER_STATE_ENCRYPTION_KEY is required")
+    return LlmPreferenceService(session, encryption_key=encryption_key)
+
+
+def build_user_model_providers(
+    http_client: httpx.AsyncClient,
+    session: Session,
+    user_id: str,
+    settings: Settings,
+) -> tuple[ModelProvider, ...]:
+    encryption_key = _configured_secret(settings.browser_state_encryption_key)
+    if encryption_key is None:
+        return build_model_providers(http_client, settings)
+    preference = LlmPreferenceService(session, encryption_key=encryption_key).load(user_id)
+    if preference is None:
+        return build_model_providers(http_client, settings)
+    if preference.provider == "anthropic":
+        return (
+            AnthropicMessagesProvider(
+                http_client, api_key=preference.api_key, model=preference.model
+            ),
+        )
+    return (GeminiProvider(http_client, api_key=preference.api_key, model=preference.model),)
 
 
 async def model_router() -> AsyncIterator[ModelRouter]:
@@ -301,6 +461,121 @@ def dashboard_interface() -> FileResponse:
     )
 
 
+@app.get(
+    "/v1/users/{user_id}/vacancies",
+    response_model=SavedVacancyPageResponse,
+)
+def list_saved_vacancies(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    query: str = "",
+    source: str = "all",
+    status_filter: str = "all",
+    location: str = "",
+    min_match_score: int = 0,
+    published_from: date | None = None,
+    published_to: date | None = None,
+    work_format: str = "all",
+    employment_type: str = "all",
+    page: int = 1,
+    page_size: int = 20,
+) -> SavedVacancyPageResponse:
+    if source not in {"all", "headhunter", "linkedin", "greenhouse", "registry", "other"}:
+        raise HTTPException(status_code=422, detail="Unsupported vacancy source")
+    if work_format not in {"all", "remote", "hybrid", "office", "unspecified"}:
+        raise HTTPException(status_code=422, detail="Unsupported work format")
+    if employment_type not in {
+        "all",
+        "full_time",
+        "part_time",
+        "contract",
+        "project",
+        "temporary",
+        "internship",
+    }:
+        raise HTTPException(status_code=422, detail="Unsupported employment type")
+    if not 0 <= min_match_score <= 100 or page < 1 or not 1 <= page_size <= 100:
+        raise HTTPException(status_code=422, detail="Invalid vacancy pagination or score filter")
+    if published_from is not None and published_to is not None and published_from > published_to:
+        raise HTTPException(status_code=422, detail="Invalid vacancy publication date range")
+    try:
+        vacancy_page = VacancyCatalogService(session).list_saved_vacancies(
+            user_id,
+            query=query,
+            source=source,
+            status=status_filter,
+            location=location,
+            min_match_score=min_match_score,
+            published_from=published_from,
+            published_to=published_to,
+            work_format=work_format,
+            employment_type=employment_type,
+            page=page,
+            page_size=page_size,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return SavedVacancyPageResponse(
+        items=[SavedVacancyResponse(**asdict(item)) for item in vacancy_page.items],
+        total=vacancy_page.total,
+        page=vacancy_page.page,
+        page_size=vacancy_page.page_size,
+        total_pages=vacancy_page.total_pages,
+    )
+
+
+@app.get(
+    "/v1/users/{user_id}/company-blacklist",
+    response_model=list[CompanyBlacklistResponse],
+)
+def list_company_blacklist(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[CompanyBlacklistResponse]:
+    try:
+        entries = CompanyBlacklistService(session).list_entries(user_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return [
+        CompanyBlacklistResponse.model_validate(entry, from_attributes=True) for entry in entries
+    ]
+
+
+@app.post(
+    "/v1/users/{user_id}/company-blacklist",
+    response_model=CompanyBlacklistResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_company_blacklist(
+    user_id: str,
+    request: CompanyBlacklistRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> CompanyBlacklistResponse:
+    try:
+        entry = CompanyBlacklistService(session).add(user_id, request.company)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (DuplicateEntityError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return CompanyBlacklistResponse.model_validate(entry, from_attributes=True)
+
+
+@app.delete(
+    "/v1/users/{user_id}/company-blacklist/{entry_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_company_blacklist(
+    user_id: str,
+    entry_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> Response:
+    try:
+        CompanyBlacklistService(session).remove(user_id, entry_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @app.get("/v1/evidence/{artifact_id}", response_class=FileResponse)
 def get_evidence_artifact(
     artifact_id: str,
@@ -400,6 +675,199 @@ def create_user(
     return UserResponse(id=user.id, display_name=user.display_name)
 
 
+@app.post("/v1/llm/models", response_model=LlmModelsResponse)
+async def list_llm_models(
+    request: LlmModelsRequest,
+    http_client: Annotated[httpx.AsyncClient, Depends(headhunter_http_client)],
+) -> LlmModelsResponse:
+    try:
+        models = await fetch_available_models(
+            http_client,
+            provider=request.provider,
+            api_key=request.api_key.get_secret_value(),
+        )
+    except (InvalidLlmPreference, LlmModelDiscoveryError, httpx.HTTPError) as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return LlmModelsResponse(models=models)
+
+
+@app.get(
+    "/v1/users/{user_id}/llm-preference",
+    response_model=LlmPreferenceResponse | None,
+)
+def get_llm_preference(
+    user_id: str, session: Annotated[Session, Depends(session_scope)]
+) -> LlmPreferenceResponse | None:
+    row = session.get(LlmPreferenceRow, user_id)
+    if row is None:
+        return None
+    return LlmPreferenceResponse(provider=row.provider, model=row.model)  # type: ignore[arg-type]
+
+
+@app.put("/v1/users/{user_id}/llm-preference", response_model=LlmPreferenceResponse)
+def update_llm_preference(
+    user_id: str,
+    request: LlmPreferenceUpdateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> LlmPreferenceResponse:
+    settings = get_settings()
+    try:
+        row = _llm_preference_service(session, settings).save(
+            user_id=user_id,
+            provider=request.provider,
+            model=request.model,
+            api_key=request.api_key.get_secret_value() if request.api_key is not None else None,
+        )
+    except LlmPreferenceNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InvalidLlmPreference as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return LlmPreferenceResponse(provider=row.provider, model=row.model)  # type: ignore[arg-type]
+
+
+@app.get(
+    "/v1/users/{user_id}/browser-sessions",
+    response_model=list[BrowserSessionStatusResponse],
+)
+async def get_browser_session_statuses(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    probe: bool = False,
+) -> list[BrowserSessionStatusResponse]:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    settings = get_settings()
+    try:
+        store = create_session_store(settings)
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    statuses: list[BrowserSessionStatusResponse] = []
+    for site_key in ("headhunter", "linkedin"):
+        row = session.scalar(
+            select(BrowserSessionRow).where(
+                BrowserSessionRow.user_id == user_id,
+                BrowserSessionRow.site_key == site_key,
+            )
+        )
+        is_authorized = False
+        session_probe = None
+        if row is not None and row.status in {"available", "active"}:
+            try:
+                stored_state = store.load(row.encrypted_state_path)
+                is_authorized = True
+                if probe:
+                    session_probe = await probe_browser_session(
+                        site_key=site_key,
+                        state=stored_state,
+                        headless=settings.browser_headless,
+                        timeout_ms=settings.browser_timeout_ms,
+                        artifact_directory=settings.artifact_directory,
+                    )
+                    if session_probe.is_live is False:
+                        is_authorized = False
+                        row.status = "expired"
+                        session.commit()
+            except InvalidBrowserState:
+                is_authorized = False
+        statuses.append(
+            BrowserSessionStatusResponse(
+                site_key=site_key,
+                is_authorized=is_authorized,
+                is_waiting_for_login=BROWSER_AUTHORIZATION_MANAGER.is_waiting(
+                    user_id=user_id, site_key=site_key
+                ),
+                last_url=row.last_url if row is not None else None,
+                updated_at=row.updated_at.isoformat() if row is not None else None,
+                is_live=session_probe.is_live if session_probe is not None else None,
+                checked_at=(
+                    session_probe.checked_at.isoformat() if session_probe is not None else None
+                ),
+                check_error=session_probe.error if session_probe is not None else None,
+            )
+        )
+    return statuses
+
+
+@app.post(
+    "/v1/users/{user_id}/browser-sessions/{site_key}/start",
+    response_model=BrowserAuthorizationResponse,
+)
+async def start_browser_authorization(
+    user_id: str,
+    site_key: BrowserSiteKey,
+    session: Annotated[Session, Depends(session_scope)],
+) -> BrowserAuthorizationResponse:
+    settings = get_settings()
+    if settings.environment == "production":
+        raise HTTPException(
+            status_code=403,
+            detail="Вход через видимое окно браузера доступен только в локальной установке",
+        )
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        await BROWSER_AUTHORIZATION_MANAGER.start(
+            user_id=user_id,
+            site_key=site_key,
+            timeout_ms=settings.browser_timeout_ms,
+            artifact_directory=settings.artifact_directory,
+        )
+    except BrowserAuthorizationError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail="Не удалось открыть окно входа. Проверьте локальную установку Chromium",
+        ) from error
+    return BrowserAuthorizationResponse(site_key=site_key, state="waiting_for_login")
+
+
+@app.post(
+    "/v1/users/{user_id}/browser-sessions/{site_key}/confirm",
+    response_model=BrowserAuthorizationResponse,
+)
+async def confirm_browser_authorization(
+    user_id: str,
+    site_key: BrowserSiteKey,
+    session: Annotated[Session, Depends(session_scope)],
+) -> BrowserAuthorizationResponse:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        state, last_url = await BROWSER_AUTHORIZATION_MANAGER.confirm(
+            user_id=user_id, site_key=site_key
+        )
+        store = create_session_store(get_settings())
+        BrowserSessionService(session, store).save(
+            user_id=user_id,
+            site_key=site_key,
+            adapter_name=site_key,
+            state=state,
+            last_url=last_url,
+        )
+    except BrowserAuthorizationError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (InvalidBrowserState, RuntimeError) as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return BrowserAuthorizationResponse(site_key=site_key, state="authorized")
+
+
+@app.post(
+    "/v1/users/{user_id}/browser-sessions/{site_key}/cancel",
+    response_model=BrowserAuthorizationResponse,
+)
+async def cancel_browser_authorization(
+    user_id: str,
+    site_key: BrowserSiteKey,
+    session: Annotated[Session, Depends(session_scope)],
+) -> BrowserAuthorizationResponse:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    await BROWSER_AUTHORIZATION_MANAGER.cancel(user_id=user_id, site_key=site_key)
+    return BrowserAuthorizationResponse(site_key=site_key, state="cancelled")
+
+
 @app.post(
     "/v1/users/{user_id}/facts",
     response_model=ProfileFactResponse,
@@ -425,6 +893,30 @@ def add_profile_fact(
         value=fact.value,
         is_verified=fact.is_verified,
     )
+
+
+@app.post(
+    "/v1/applications/{application_id}/recalculate-match",
+    response_model=WorkflowTaskResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def recalculate_application_match(
+    application_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> WorkflowTaskResponse:
+    settings = get_settings()
+    if not settings.matching_v2_enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="Matching v2 is disabled; set APP_MATCHING_V2_ENABLED=true",
+        )
+    try:
+        task = MatchingJobService(session).schedule(application_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except MatchingJobNotReadyError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _workflow_task_response(task)
 
 
 @app.post(
@@ -462,7 +954,55 @@ async def upload_cv_file(
         # add_cv_file() returned a pre-existing record for identical bytes (idempotent re-upload)
         # rather than the one we just wrote to disk — remove the now-orphaned duplicate file.
         saved_document.storage_path.unlink(missing_ok=True)
-    return CvFileResponse.model_validate(cv_file, from_attributes=True)
+    user = session.get(UserRow, user_id)
+    return serialize_cv_file(
+        cv_file, active_cv_file_id=user.active_cv_file_id if user is not None else None
+    )
+
+
+@app.get("/v1/users/{user_id}/cv-files", response_model=list[CvFileResponse])
+def list_cv_files(
+    user_id: str, session: Annotated[Session, Depends(session_scope)]
+) -> list[CvFileResponse]:
+    service = RecruitmentService(session)
+    try:
+        cv_files = service.list_cv_files(user_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    user = session.get(UserRow, user_id)
+    active_cv_file_id = user.active_cv_file_id if user is not None else None
+    return [serialize_cv_file(cv_file, active_cv_file_id=active_cv_file_id) for cv_file in cv_files]
+
+
+@app.delete(
+    "/v1/users/{user_id}/cv-files/{cv_file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_cv_file(
+    user_id: str,
+    cv_file_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    storage: Annotated[DocumentStorage, Depends(document_storage)],
+) -> Response:
+    try:
+        stored_path = RecruitmentService(session).delete_cv_file(user_id, cv_file_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    storage.delete(stored_path)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.put("/v1/users/{user_id}/active-cv-file", response_model=CvFileResponse)
+def select_active_cv_file(
+    user_id: str,
+    request: ActiveCvFileRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> CvFileResponse:
+    try:
+        cv_file = RecruitmentService(session).set_active_cv_file(user_id, request.cv_file_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return serialize_cv_file(cv_file, active_cv_file_id=cv_file.id)
 
 
 @app.post(
@@ -473,41 +1013,71 @@ async def extract_profile_from_cv(
     user_id: str,
     cv_file_id: str,
     session: Annotated[Session, Depends(session_scope)],
-    router: Annotated[ModelRouter, Depends(model_router)],
+    http_client: Annotated[httpx.AsyncClient, Depends(headhunter_http_client)],
+    storage: Annotated[DocumentStorage, Depends(document_storage)],
 ) -> ExtractedProfileResponse:
     """Draft skills/summary/search keywords from an uploaded resume. Writes nothing yet.
 
     The result is a draft for the person to review and edit; call
-    ``POST /v1/users/{user_id}/confirm-profile-facts`` to actually save any of it as verified
-    profile facts. Requires APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY to be set.
+    ``PUT /v1/users/{user_id}/cv-files/{cv_file_id}/profile`` to save it on this resume.
+    Requires a configured per-user or environment LLM provider.
     """
     settings = get_settings()
-    if not llm_is_configured(settings):
+    try:
+        providers = build_user_model_providers(http_client, session, user_id, settings)
+    except InvalidLlmPreference as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    if not providers:
         raise HTTPException(
             status_code=503,
-            detail="Resume analysis is unavailable: set APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY",
+            detail=(
+                "Resume analysis is unavailable: set APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY"
+            ),
         )
     cv_file = session.get(CvFileRow, cv_file_id)
     if cv_file is None or cv_file.user_id != user_id:
         raise HTTPException(status_code=404, detail="CV file not found for this user")
     try:
-        content = Path(cv_file.storage_path).read_bytes()
+        content = storage.resolve(cv_file.storage_path).read_bytes()
         extension = Path(cv_file.original_filename).suffix
         resume_text = extract_resume_text(content, extension=extension)
     except (OSError, UnreadableResumeError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     try:
-        draft = await ResumeIntakeService(router).draft_profile(resume_text)
+        draft = await ResumeIntakeService(ModelRouter(providers)).draft_profile(resume_text)
     except NoModelAvailableError as error:
-        raise HTTPException(
-            status_code=502, detail=f"Resume analysis failed: {error}"
-        ) from error
+        raise HTTPException(status_code=502, detail=f"Resume analysis failed: {error}") from error
     return ExtractedProfileResponse(
         skills=draft.skills,
         experience_summary=draft.experience_summary,
         search_keywords=draft.search_keywords,
         years_of_experience=draft.years_of_experience,
     )
+
+
+@app.put(
+    "/v1/users/{user_id}/cv-files/{cv_file_id}/profile",
+    response_model=CvFileResponse,
+)
+def confirm_resume_profile(
+    user_id: str,
+    cv_file_id: str,
+    request: ConfirmResumeProfileRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> CvFileResponse:
+    """Persist reviewed skills and search data on one CV and select it for later searches."""
+    try:
+        cv_file = RecruitmentService(session).save_cv_profile(
+            user_id,
+            cv_file_id,
+            skills=request.skills,
+            experience_summary=request.experience_summary,
+            search_keywords=request.search_keywords,
+            years_of_experience=request.years_of_experience,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return serialize_cv_file(cv_file, active_cv_file_id=cv_file.id)
 
 
 @app.post(
@@ -558,38 +1128,59 @@ async def discover_headhunter_vacancies(
     request: DiscoverHeadHunterVacanciesRequest,
     session: Annotated[Session, Depends(session_scope)],
     http_client: Annotated[httpx.AsyncClient, Depends(headhunter_http_client)],
-    adapter: Annotated[HeadHunterBrowserAdapter, Depends(headhunter_browser_adapter)],
 ) -> list[DiscoveryOutcomeResponse]:
     """Search hh.ru by the candidate's verified skills and stage results as awaiting_review.
 
-    Uses a real (headless) browser against hh.ru's public search/vacancy pages rather than
-    api.hh.ru, whose anonymous access is CAPTCHA-limited in practice. Only creates
-    vacancies/applications for human review — never schedules a real submission.
+    Uses a real browser and the user's encrypted hh.ru session rather than the unavailable
+    job-seeker API. Only creates vacancies/applications for human review.
     """
     settings = get_settings()
-    try:
-        outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
-            user_id,
-            headhunter_adapter=adapter,
-            locations=request.locations,
-            limit=request.limit,
-            search_text=request.search_text,
+    store = create_session_store(settings)
+    state = _restore_browser_session(SessionFactory, store, user_id=user_id, site_key="headhunter")
+    if state is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Авторизуйтесь на hh.ru в разделе «Сессии сайтов» личного кабинета",
         )
+    task_artifact_directory = (
+        settings.artifact_directory / "browser-worker" / f"hh-discover-{user_id}"
+    )
+    try:
+        async with PlaywrightEngine(
+            headless=settings.browser_headless,
+            timeout_ms=settings.browser_timeout_ms,
+            artifact_directory=task_artifact_directory,
+            storage_state=state,
+            selector_library=SelectorLibrary(settings.artifact_directory),
+        ) as browser_engine:
+            adapter = HeadHunterBrowserAdapter(browser_engine)
+            outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
+                user_id,
+                headhunter_adapter=adapter,
+                locations=request.locations,
+                limit=request.limit,
+                search_text=request.search_text,
+                cv_file_id=request.cv_file_id,
+            )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except NoSearchKeywordsError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    if llm_is_configured(settings):
-        materials_router = ModelRouter(build_model_providers(http_client, settings))
+    providers = build_user_model_providers(http_client, session, user_id, settings)
+    if providers:
+        materials_router = ModelRouter(providers)
         materials_service = MaterialsGenerationService(session, materials_router)
         for outcome in outcomes:
-            if outcome.status != "created":
+            if not materials_service.needs_material_refresh(outcome.application_id):
                 continue
             try:
-                await materials_service.draft_materials(outcome.application_id)
+                await materials_service.draft_materials(
+                    outcome.application_id,
+                    replace_mismatched_cover_letter=True,
+                )
             except Exception:  # noqa: BLE001 - a drafting failure must not fail the whole search
                 continue
-    return [DiscoveryOutcomeResponse(**outcome.__dict__) for outcome in outcomes]
+    return serialize_discovery_outcomes(outcomes)
 
 
 @app.post(
@@ -605,8 +1196,7 @@ async def discover_linkedin_vacancies(
     """Search LinkedIn's job search page (native Easy Apply jobs only) via browser automation.
 
     Requires APP_ENABLE_LINKEDIN_APPLY=true (the same explicit-risk opt-in used for real
-    submission) and a session captured via ``scripts/browser_login_capture.py linkedin`` — an
-    anonymous/un-authed LinkedIn job search hits an auth wall almost immediately. Only creates
+    submission) and a session saved from the personal dashboard. Only creates
     vacancies/applications for human review — never schedules a real submission.
     """
     settings = get_settings()
@@ -620,13 +1210,11 @@ async def discover_linkedin_vacancies(
     if state is None:
         raise HTTPException(
             status_code=409,
-            detail=(
-                "No usable LinkedIn session; run "
-                "`python scripts/browser_login_capture.py linkedin --user-id "
-                f"{user_id}` first"
-            ),
+            detail="Авторизуйтесь в LinkedIn в разделе «Сессии сайтов» личного кабинета",
         )
-    task_artifact_directory = settings.artifact_directory / "browser-worker" / f"li-discover-{user_id}"
+    task_artifact_directory = (
+        settings.artifact_directory / "browser-worker" / f"li-discover-{user_id}"
+    )
     try:
         async with PlaywrightEngine(
             headless=settings.browser_headless,
@@ -642,6 +1230,7 @@ async def discover_linkedin_vacancies(
                 locations=request.locations,
                 limit=request.limit,
                 search_text=request.search_text,
+                cv_file_id=request.cv_file_id,
             )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -649,17 +1238,316 @@ async def discover_linkedin_vacancies(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except LinkedInSessionRequiredError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    if llm_is_configured(settings):
-        materials_router = ModelRouter(build_model_providers(http_client, settings))
+    providers = build_user_model_providers(http_client, session, user_id, settings)
+    if providers:
+        materials_router = ModelRouter(providers)
         materials_service = MaterialsGenerationService(session, materials_router)
         for outcome in outcomes:
-            if outcome.status != "created":
+            if not materials_service.needs_material_refresh(outcome.application_id):
                 continue
             try:
-                await materials_service.draft_materials(outcome.application_id)
+                await materials_service.draft_materials(
+                    outcome.application_id,
+                    replace_mismatched_cover_letter=True,
+                )
             except Exception:  # noqa: BLE001 - a drafting failure must not fail the whole search
                 continue
-    return [DiscoveryOutcomeResponse(**outcome.__dict__) for outcome in outcomes]
+    return serialize_discovery_outcomes(outcomes)
+
+
+@app.post(
+    "/v1/users/{user_id}/discover-greenhouse-vacancies",
+    response_model=list[DiscoveryOutcomeResponse],
+)
+async def discover_greenhouse_vacancies(
+    user_id: str,
+    request: DiscoverGreenhouseVacanciesRequest,
+    session: Annotated[Session, Depends(session_scope)],
+    http_client: Annotated[httpx.AsyncClient, Depends(greenhouse_http_client)],
+) -> list[DiscoveryOutcomeResponse]:
+    """Search known or explicitly supplied Greenhouse company boards through their public API."""
+    try:
+        outcomes = await JobDiscoveryService(session).discover_greenhouse_vacancies(
+            user_id,
+            greenhouse_adapter=GreenhouseJobBoardApi(http_client),
+            board_urls=[str(board_url) for board_url in request.board_urls],
+            locations=request.locations,
+            limit=request.limit,
+            search_text=request.search_text,
+            cv_file_id=request.cv_file_id,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except NoSearchKeywordsError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except GreenhouseDiscoveryError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    settings = get_settings()
+    providers = build_user_model_providers(http_client, session, user_id, settings)
+    if providers:
+        materials_service = MaterialsGenerationService(session, ModelRouter(providers))
+        for outcome in outcomes:
+            if not materials_service.needs_material_refresh(outcome.application_id):
+                continue
+            try:
+                await materials_service.draft_materials(
+                    outcome.application_id,
+                    replace_mismatched_cover_letter=True,
+                )
+            except Exception:  # noqa: BLE001 - drafting failure must not discard the vacancy
+                continue
+    return serialize_discovery_outcomes(outcomes)
+
+
+@app.post("/v1/users/{user_id}/discover-vacancies-stream")
+async def discover_vacancies_stream(
+    user_id: str,
+    request: DiscoverVacanciesStreamRequest,
+) -> StreamingResponse:
+    """Stream each persisted vacancy as newline-delimited JSON."""
+    with SessionFactory() as session:
+        if session.get(UserRow, user_id) is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+    settings = get_settings()
+    requested_sources = tuple(dict.fromkeys(request.sources))
+    queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    enrichment_semaphore = asyncio.Semaphore(1)
+
+    async def publish_outcome(source: str, outcome: DiscoveryOutcome) -> None:
+        await queue.put(
+            {
+                "event": "vacancy",
+                "source": source,
+                "item": serialize_discovery_outcome(outcome),
+            }
+        )
+
+    async def enrich_outcome(source: str, application_id: str) -> None:
+        async with enrichment_semaphore:
+            await queue.put(
+                {
+                    "event": "enrichment_started",
+                    "source": source,
+                    "application_id": application_id,
+                }
+            )
+            matching_was_scheduled = False
+            if settings.matching_v2_enabled:
+                try:
+                    with SessionFactory() as matching_session:
+                        MatchingJobService(matching_session).schedule(application_id)
+                    matching_was_scheduled = True
+                except Exception as error:  # noqa: BLE001 - legacy score remains available
+                    await queue.put(
+                        {
+                            "event": "matching_error",
+                            "source": source,
+                            "application_id": application_id,
+                            "error": str(error),
+                        }
+                    )
+
+            try:
+                async with httpx.AsyncClient(
+                    timeout=60, follow_redirects=False, trust_env=False
+                ) as client:
+                    with SessionFactory() as materials_session:
+                        providers = build_user_model_providers(
+                            client, materials_session, user_id, settings
+                        )
+                        if not providers:
+                            raise RuntimeError("LLM is not configured")
+                        materials_service = MaterialsGenerationService(
+                            materials_session, ModelRouter(providers)
+                        )
+                        if materials_service.needs_material_refresh(application_id):
+                            generated = await materials_service.draft_materials(
+                                application_id,
+                                replace_mismatched_cover_letter=True,
+                            )
+                            cover_letter_text = generated.cover_letter_text
+                        else:
+                            application = materials_session.get(ApplicationRow, application_id)
+                            cover_letter_text = (
+                                application.cover_letter_text if application is not None else ""
+                            )
+                await queue.put(
+                    {
+                        "event": "materials_ready",
+                        "source": source,
+                        "application_id": application_id,
+                        "cover_letter_text": cover_letter_text,
+                    }
+                )
+            except Exception as error:  # noqa: BLE001 - matching and search must continue
+                await queue.put(
+                    {
+                        "event": "materials_error",
+                        "source": source,
+                        "application_id": application_id,
+                        "error": str(error),
+                    }
+                )
+
+            if matching_was_scheduled:
+                for _ in range(60):
+                    with SessionFactory() as poll_session:
+                        aggregate = poll_session.get(ApplicationMatchResultRow, application_id)
+                        application = poll_session.get(ApplicationRow, application_id)
+                        if (
+                            aggregate is not None
+                            and aggregate.status in {"scored", "degraded", "failed"}
+                        ):
+                            score = (
+                                round(aggregate.final_score)
+                                if aggregate.status == "scored"
+                                else application.match_score if application is not None else 0
+                            )
+                            await queue.put(
+                                {
+                                    "event": "matching_ready",
+                                    "source": source,
+                                    "application_id": application_id,
+                                    "match_score": score,
+                                    "matching_status": aggregate.status,
+                                }
+                            )
+                            break
+                    await asyncio.sleep(1)
+                else:
+                    await queue.put(
+                        {
+                            "event": "matching_error",
+                            "source": source,
+                            "application_id": application_id,
+                            "error": "Detailed matching is still queued",
+                        }
+                    )
+            else:
+                with SessionFactory() as score_session:
+                    application = score_session.get(ApplicationRow, application_id)
+                    score = application.match_score if application is not None else 0
+                await queue.put(
+                    {
+                        "event": "matching_ready",
+                        "source": source,
+                        "application_id": application_id,
+                        "match_score": score,
+                        "matching_status": "legacy",
+                    }
+                )
+
+    async def run_source(source: str) -> None:
+        enrichment_tasks: list[asyncio.Task[None]] = []
+        try:
+            with SessionFactory() as source_session:
+                service = JobDiscoveryService(source_session)
+
+                async def on_outcome(outcome: DiscoveryOutcome) -> None:
+                    await publish_outcome(source, outcome)
+                    enrichment_tasks.append(
+                        asyncio.create_task(enrich_outcome(source, outcome.application_id))
+                    )
+
+                if source == "greenhouse":
+                    async with httpx.AsyncClient(
+                        timeout=30, follow_redirects=False, trust_env=False
+                    ) as client:
+                        await service.discover_greenhouse_vacancies(
+                            user_id,
+                            greenhouse_adapter=GreenhouseJobBoardApi(client),
+                            board_urls=[str(board_url) for board_url in request.board_urls],
+                            locations=request.locations,
+                            limit=request.limit,
+                            search_text=request.search_text,
+                            cv_file_id=request.cv_file_id,
+                            on_outcome=on_outcome,
+                        )
+                else:
+                    if source == "linkedin" and not settings.enable_linkedin_apply:
+                        raise LinkedInSessionRequiredError(
+                            "LinkedIn browser automation is disabled"
+                        )
+                    store = create_session_store(settings)
+                    state = _restore_browser_session(
+                        SessionFactory, store, user_id=user_id, site_key=source
+                    )
+                    if state is None:
+                        raise LinkedInSessionRequiredError(
+                            f"Authorize {source} in Site sessions before searching"
+                        )
+                    artifact_prefix = "hh" if source == "headhunter" else "li"
+                    artifact_directory = (
+                        settings.artifact_directory
+                        / "browser-worker"
+                        / f"{artifact_prefix}-discover-{user_id}"
+                    )
+                    async with PlaywrightEngine(
+                        headless=settings.browser_headless,
+                        timeout_ms=settings.browser_timeout_ms,
+                        artifact_directory=artifact_directory,
+                        storage_state=state,
+                        selector_library=SelectorLibrary(settings.artifact_directory),
+                    ) as browser_engine:
+                        if source == "headhunter":
+                            await service.discover_headhunter_vacancies(
+                                user_id,
+                                headhunter_adapter=HeadHunterBrowserAdapter(browser_engine),
+                                locations=request.locations,
+                                limit=request.limit,
+                                search_text=request.search_text,
+                                cv_file_id=request.cv_file_id,
+                                on_outcome=on_outcome,
+                            )
+                        else:
+                            await service.discover_linkedin_vacancies(
+                                user_id,
+                                linkedin_adapter=LinkedInBrowserAdapter(browser_engine),
+                                locations=request.locations,
+                                limit=request.limit,
+                                search_text=request.search_text,
+                                cv_file_id=request.cv_file_id,
+                                on_outcome=on_outcome,
+                            )
+        except Exception as error:  # noqa: BLE001 - one source must not end the whole stream
+            await queue.put({"event": "source_error", "source": source, "error": str(error)})
+        finally:
+            await queue.put({"event": "source_complete", "source": source})
+            if enrichment_tasks:
+                await asyncio.gather(*enrichment_tasks, return_exceptions=True)
+            await queue.put({"event": "_source_finished", "source": source})
+
+    async def event_stream() -> AsyncIterator[bytes]:
+        tasks = [asyncio.create_task(run_source(source)) for source in requested_sources]
+        finished_sources = 0
+        try:
+            while finished_sources < len(tasks):
+                event = await queue.get()
+                if event["event"] == "_source_finished":
+                    finished_sources += 1
+                    continue
+                yield (json.dumps(event, ensure_ascii=False) + "\n").encode()
+            await asyncio.gather(*tasks)
+            yield (
+                json.dumps(
+                    {"event": "complete", "sources_completed": finished_sources},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            ).encode()
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/v1/vacancies", response_model=VacancyResponse, status_code=status.HTTP_201_CREATED)
@@ -748,7 +1636,9 @@ async def import_headhunter_vacancy(
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except (RuntimeError, ApplyBlocked) as error:
-        raise HTTPException(status_code=502, detail=f"Could not read hh.ru vacancy: {error}") from error
+        raise HTTPException(
+            status_code=502, detail=f"Could not read hh.ru vacancy: {error}"
+        ) from error
     except CaptchaChallenge as error:
         raise HTTPException(
             status_code=503, detail="hh.ru presented a verification checkpoint; try again shortly"
@@ -807,6 +1697,91 @@ def prepare_application(
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return ApplicationResponse.model_validate(application, from_attributes=True)
+
+
+@app.get(
+    "/v1/applications/{application_id}/match-details",
+    response_model=ApplicationMatchDetailsResponse,
+)
+def application_match_details(
+    application_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationMatchDetailsResponse:
+    application = session.get(ApplicationRow, application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+    aggregate = session.get(ApplicationMatchResultRow, application_id)
+    if aggregate is None:
+        raise HTTPException(status_code=404, detail="Match details have not been calculated")
+    rows = session.execute(
+        select(RequirementMatchRow, VacancyRequirementRow, CandidateEvidenceRow)
+        .join(
+            VacancyRequirementRow,
+            VacancyRequirementRow.id == RequirementMatchRow.requirement_id,
+        )
+        .outerjoin(
+            CandidateEvidenceRow,
+            CandidateEvidenceRow.id == RequirementMatchRow.evidence_id,
+        )
+        .where(RequirementMatchRow.application_id == application_id)
+        .order_by(VacancyRequirementRow.created_at, VacancyRequirementRow.id)
+    ).all()
+    requirement_details = [
+        RequirementMatchDetailResponse(
+            requirement_id=requirement.id,
+            requirement_text=requirement.requirement_text,
+            requirement_type=requirement.requirement_type,
+            importance=requirement.importance,
+            is_blocker=requirement.is_blocker,
+            source_fragment=requirement.source_fragment,
+            evidence_id=evidence.id if evidence is not None else None,
+            evidence_text=evidence.evidence_text if evidence is not None else None,
+            evidence_experience_level=(
+                evidence.experience_level if evidence is not None else None
+            ),
+            evidence_source_fragment=(
+                evidence.source_fragment if evidence is not None else None
+            ),
+            lexical_score=requirement_match.lexical_score,
+            dense_score=requirement_match.dense_score,
+            hybrid_score=requirement_match.hybrid_score,
+            reranker_raw_score=requirement_match.reranker_raw_score,
+            reranker_score=requirement_match.reranker_score,
+            final_match_score=requirement_match.final_match_score,
+            match_level=requirement_match.match_level,
+            explanation=requirement_match.explanation,
+            retrieval_model_versions=requirement_match.retrieval_model_versions_json,
+        )
+        for requirement_match, requirement, evidence in rows
+    ]
+    return ApplicationMatchDetailsResponse(
+        application_id=application.id,
+        cv_file_id=aggregate.cv_file_id,
+        legacy_match_score=application.match_score,
+        status=aggregate.status,
+        run_id=aggregate.run_id,
+        eligibility_status=aggregate.eligibility_status,
+        final_score=aggregate.final_score,
+        hard_skill_score=aggregate.hard_skill_score,
+        preferred_skill_score=aggregate.preferred_skill_score,
+        role_score=aggregate.role_score,
+        seniority_score=aggregate.seniority_score,
+        experience_score=aggregate.experience_score,
+        work_format_score=aggregate.work_format_score,
+        location_score=aggregate.location_score,
+        domain_score=aggregate.domain_score,
+        blocker_count=aggregate.blocker_count,
+        matched_required_count=aggregate.matched_required_count,
+        missing_required_count=aggregate.missing_required_count,
+        scoring_version=aggregate.scoring_version,
+        model_versions=aggregate.model_versions_json,
+        explanation=aggregate.explanation_json,
+        fallback_reason=aggregate.fallback_reason,
+        failure_reason=aggregate.failure_reason,
+        started_at=aggregate.started_at,
+        calculated_at=aggregate.calculated_at,
+        requirements=requirement_details,
+    )
 
 
 @app.post(
@@ -971,6 +1946,7 @@ def _active_human_action(
 @app.get("/v1/review-queue", response_model=list[ReviewItemResponse])
 def list_review_queue(
     session: Annotated[Session, Depends(session_scope)],
+    application_id: str | None = None,
 ) -> list[ReviewItemResponse]:
     return [
         ReviewItemResponse(
@@ -997,10 +1973,22 @@ def list_review_queue(
                 if answer.semantic_category in SENSITIVE_CATEGORIES
             ],
             active_human_action=_active_human_action(workflow_task),
+            vacancy_summary=summarize_vacancy(vacancy.description_text),
+            work_format=response_work_format(vacancy),
+            salary_text=vacancy.salary_text,
+            employment_types=response_employment_types(vacancy),
+            missing_required_skills=[
+                warning.removeprefix("Missing required skill: ").strip()
+                for warning in application.warnings
+                if warning.startswith("Missing required skill: ")
+            ],
+            key_skills=list(
+                extract_key_skills(vacancy.description_text, vacancy.required_skills or ())
+            ),
         )
         for application, vacancy, cv_file, workflow_task in RecruitmentService(
             session
-        ).list_review_queue()
+        ).list_review_queue(application_id)
     ]
 
 
@@ -1014,6 +2002,41 @@ def decide_application(
         application = RecruitmentService(session).decide_application(
             application_id, request.decision
         )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DuplicateEntityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return ApplicationResponse.model_validate(application, from_attributes=True)
+
+
+@app.patch(
+    "/v1/applications/{application_id}/status",
+    response_model=ApplicationResponse,
+)
+def update_application_status(
+    application_id: str,
+    request: ApplicationStatusUpdateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationResponse:
+    try:
+        application = RecruitmentService(session).update_application_status(
+            application_id, request.status
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return ApplicationResponse.model_validate(application, from_attributes=True)
+
+
+@app.post(
+    "/v1/applications/{application_id}/reject-vacancy",
+    response_model=ApplicationResponse,
+)
+def reject_saved_vacancy(
+    application_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationResponse:
+    try:
+        application = VacancyCatalogService(session).reject_saved_vacancy(application_id)
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
@@ -1057,7 +2080,7 @@ def update_application_materials(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return _materials_response(application)
+    return _materials_response(session, application)
 
 
 @app.get(
@@ -1070,12 +2093,29 @@ def get_application_materials(
     application = session.get(ApplicationRow, application_id)
     if application is None:
         raise HTTPException(status_code=404, detail="Application not found")
-    return _materials_response(application)
+    return _materials_response(session, application)
 
 
-def _materials_response(application: ApplicationRow) -> ApplicationMaterialsResponse:
+def _materials_response(
+    session: Session, application: ApplicationRow
+) -> ApplicationMaterialsResponse:
+    vacancy = session.get(VacancyRow, application.vacancy_id)
+    if vacancy is None:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
     return ApplicationMaterialsResponse(
         application_id=application.id,
+        application_status=application.status,
+        location=vacancy.location,
+        vacancy_language=detect_vacancy_language(vacancy),
+        cover_letter_language_matches=cover_letter_matches_vacancy_language(
+            vacancy, application.cover_letter_text
+        ),
+        vacancy_summary=summarize_vacancy(vacancy.description_text),
+        work_format=response_work_format(vacancy),
+        employment_types=response_employment_types(vacancy),
+        key_skills=list(
+            extract_key_skills(vacancy.description_text, vacancy.required_skills or ())
+        ),
         cover_letter_text=application.cover_letter_text,
         screening_answers=[
             ScreeningAnswerResponse.model_validate(answer, from_attributes=True)
@@ -1101,7 +2141,7 @@ def _materials_response(application: ApplicationRow) -> ApplicationMaterialsResp
 async def generate_application_materials(
     application_id: str,
     session: Annotated[Session, Depends(session_scope)],
-    router: Annotated[ModelRouter, Depends(model_router)],
+    http_client: Annotated[httpx.AsyncClient, Depends(llm_http_client)],
 ) -> ApplicationMaterialsResponse:
     """Draft a cover letter and open screening answers from the candidate's verified facts.
 
@@ -1112,23 +2152,38 @@ async def generate_application_materials(
     app/services/materials_generation.py. Requires APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY.
     """
     settings = get_settings()
-    if not llm_is_configured(settings):
+    application = session.get(ApplicationRow, application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+    try:
+        providers = build_user_model_providers(http_client, session, application.user_id, settings)
+    except InvalidLlmPreference as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    if not providers:
         raise HTTPException(
             status_code=503,
-            detail="Materials drafting is unavailable: set APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY",
+            detail=(
+                "Materials drafting is unavailable: set APP_ANTHROPIC_API_KEY or APP_GEMINI_API_KEY"
+            ),
         )
     try:
-        await MaterialsGenerationService(session, router).draft_materials(application_id)
+        await MaterialsGenerationService(session, ModelRouter(providers)).draft_materials(
+            application_id,
+            replace_mismatched_cover_letter=True,
+            force_replace_cover_letter=True,
+            timeout_seconds=settings.materials_generation_timeout_seconds,
+        )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except NoVerifiedFactsError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except MaterialsLanguageMismatchError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
     except NoModelAvailableError as error:
-        raise HTTPException(status_code=502, detail=f"Materials drafting failed: {error}") from error
-    application = session.get(ApplicationRow, application_id)
-    if application is None:
-        raise HTTPException(status_code=404, detail="Application not found")
-    return _materials_response(application)
+        raise HTTPException(
+            status_code=502, detail=f"Materials drafting failed: {error}"
+        ) from error
+    return _materials_response(session, application)
 
 
 @app.post("/v1/applications/{application_id}/resume", response_model=WorkflowTaskResponse)

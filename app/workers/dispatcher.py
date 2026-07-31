@@ -42,6 +42,25 @@ class TaskHandler(Protocol):
     async def handle(self, claimed_task: ClaimedTask) -> ExecutionOutcome: ...
 
 
+class MatchingRunner(Protocol):
+    async def run(self, application_id: str) -> None: ...
+
+
+class MatchingTaskHandler:
+    def __init__(self, runner: MatchingRunner) -> None:
+        self._runner = runner
+
+    async def handle(self, claimed_task: ClaimedTask) -> ExecutionOutcome:
+        if claimed_task.application_id is None:
+            return ExecutionOutcome(TaskState.FAILED, "matching task has no application id")
+        await self._runner.run(claimed_task.application_id)
+        return ExecutionOutcome(
+            TaskState.COMPLETED,
+            "matching v2 calculation completed",
+            (f"application:{claimed_task.application_id}",),
+        )
+
+
 class ApplicationReviewCheckpointHandler:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
@@ -207,12 +226,17 @@ class DurableTaskDispatcher:
 async def run_worker() -> None:
     configure_logging()
     settings = get_settings()
+    from app.matching.runtime import MatchingRuntime
+
     redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
     coordinator = RedisCoordinator(cast(RedisCoordinationClient, redis_client))
     dispatcher = DurableTaskDispatcher(
         session_factory=SessionFactory,
         coordinator=coordinator,
-        handlers={"application-review": ApplicationReviewCheckpointHandler(SessionFactory)},
+        handlers={
+            "application-review": ApplicationReviewCheckpointHandler(SessionFactory),
+            "matching-v2": MatchingTaskHandler(MatchingRuntime(SessionFactory, settings)),
+        },
         worker_name="dispatcher-1",
         settings=settings,
     )

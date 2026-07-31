@@ -6,6 +6,7 @@ class MetricsRegistry:
     def __init__(self) -> None:
         self._counters: dict[str, int] = defaultdict(int)
         self._gauges: dict[str, float] = {}
+        self._observations: dict[str, tuple[int, float]] = {}
         self._lock = Lock()
 
     @staticmethod
@@ -25,6 +26,14 @@ class MetricsRegistry:
         with self._lock:
             self._gauges[metric_name] = value
 
+    def observe(self, metric_name: str, value: float) -> None:
+        self._validate_name(metric_name)
+        if value < 0:
+            raise ValueError("observed value cannot be negative")
+        with self._lock:
+            count, total = self._observations.get(metric_name, (0, 0.0))
+            self._observations[metric_name] = (count + 1, total + value)
+
     def render_prometheus(self) -> str:
         with self._lock:
             counters = "".join(
@@ -35,7 +44,15 @@ class MetricsRegistry:
                 f"# TYPE {name} gauge\n{name} {value:g}\n"
                 for name, value in sorted(self._gauges.items())
             )
-            return counters + gauges
+            summaries = "".join(
+                (
+                    f"# TYPE {name} summary\n"
+                    f"{name}_count {count}\n"
+                    f"{name}_sum {total:g}\n"
+                )
+                for name, (count, total) in sorted(self._observations.items())
+            )
+            return counters + gauges + summaries
 
 
 metrics = MetricsRegistry()

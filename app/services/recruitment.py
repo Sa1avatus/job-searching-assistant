@@ -3,12 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.domain.application_status import APPLICATION_STATUSES, ApplicationStatus
 from app.domain.models import ApplicationQuestion, ProfileFact, TaskState, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy, prepare_answers
+from app.domain.vacancy_attributes import EMPLOYMENT_TYPE_ORDER, EmploymentType
 from app.storage.documents import SavedDocument
 from app.storage.tables import (
     ApplicationAnswerRow,
@@ -97,6 +99,105 @@ class RecruitmentService:
             raise DuplicateEntityError("This CV file was already uploaded") from error
         return cv_file
 
+    def list_cv_files(self, user_id: str) -> list[CvFileRow]:
+        self._require_user(user_id)
+        return list(
+            self._session.scalars(
+                select(CvFileRow)
+                .where(CvFileRow.user_id == user_id)
+                .order_by(CvFileRow.created_at.desc(), CvFileRow.id.desc())
+            )
+        )
+
+    def get_cv_file(self, user_id: str, cv_file_id: str) -> CvFileRow:
+        cv_file = self._session.get(CvFileRow, cv_file_id)
+        if cv_file is None or cv_file.user_id != user_id:
+            raise EntityNotFoundError("CV file not found for this user")
+        return cv_file
+
+    def active_cv_file(self, user_id: str, cv_file_id: str | None = None) -> CvFileRow | None:
+        user = self._require_user(user_id)
+        selected_cv_file_id = cv_file_id or user.active_cv_file_id
+        if selected_cv_file_id is None:
+            return None
+        return self.get_cv_file(user_id, selected_cv_file_id)
+
+    def set_active_cv_file(self, user_id: str, cv_file_id: str) -> CvFileRow:
+        user = self._require_user(user_id)
+        cv_file = self.get_cv_file(user_id, cv_file_id)
+        user.active_cv_file_id = cv_file.id
+        self._session.commit()
+        return cv_file
+
+    def delete_cv_file(self, user_id: str, cv_file_id: str) -> Path:
+        user = self._require_user(user_id)
+        cv_file = self.get_cv_file(user_id, cv_file_id)
+        stored_path = Path(cv_file.storage_path)
+        self._session.execute(
+            update(ApplicationRow)
+            .where(ApplicationRow.selected_cv_file_id == cv_file.id)
+            .values(selected_cv_file_id=None)
+        )
+        replacement = self._session.scalar(
+            select(CvFileRow)
+            .where(CvFileRow.user_id == user_id, CvFileRow.id != cv_file.id)
+            .order_by(CvFileRow.created_at.desc(), CvFileRow.id.desc())
+        )
+        if user.active_cv_file_id == cv_file.id:
+            user.active_cv_file_id = replacement.id if replacement is not None else None
+        self._session.delete(cv_file)
+        self._session.commit()
+        return stored_path
+
+    def save_cv_profile(
+        self,
+        user_id: str,
+        cv_file_id: str,
+        *,
+        skills: list[str],
+        experience_summary: str,
+        search_keywords: str,
+        years_of_experience: float | None,
+    ) -> CvFileRow:
+        user = self._require_user(user_id)
+        cv_file = self.get_cv_file(user_id, cv_file_id)
+        cv_file.skills = list(dict.fromkeys(skill.strip() for skill in skills if skill.strip()))
+        cv_file.experience_summary = experience_summary.strip()
+        cv_file.search_keywords = search_keywords.strip()
+        cv_file.years_of_experience = years_of_experience
+        cv_file.analyzed_at = datetime.now(UTC)
+        user.active_cv_file_id = cv_file.id
+        self._session.commit()
+        return cv_file
+
+    def verified_profile_facts(
+        self, user_id: str, cv_file_id: str | None = None
+    ) -> list[ProfileFact]:
+        user = self._require_user(user_id)
+        cv_file = self.active_cv_file(user_id, cv_file_id)
+        excluded_resume_categories = (
+            {"skill", "experience_summary"}
+            if cv_file is not None and cv_file.analyzed_at is not None
+            else set()
+        )
+        facts = [
+            ProfileFact(fact.category, fact.name, fact.value, fact.is_verified)
+            for fact in user.facts
+            if fact.is_verified and fact.category not in excluded_resume_categories
+        ]
+        if cv_file is not None and cv_file.analyzed_at is not None:
+            facts.extend(ProfileFact("skill", skill, "", True) for skill in cv_file.skills)
+            if cv_file.experience_summary:
+                facts.append(
+                    ProfileFact(
+                        "experience_summary",
+                        "experience_summary",
+                        cv_file.experience_summary,
+                        True,
+                    )
+                )
+        return facts
+
     def create_vacancy(
         self,
         *,
@@ -111,7 +212,43 @@ class RecruitmentService:
         source_evidence_url: str | None = None,
         application_fields: list[dict[str, object]] | None = None,
         requires_sensitive_review: bool = False,
+        published_at: datetime | None = None,
+        salary_text: str = "",
+        work_format: str = "unspecified",
+        employment_types: tuple[EmploymentType, ...] | list[EmploymentType] = (),
     ) -> VacancyRow:
+        # Validate work_format
+        valid_work_formats = {"remote", "hybrid", "office", "unspecified"}
+        if work_format not in valid_work_formats:
+            raise ValueError(
+                f"Invalid work_format: {work_format}. Must be one of {valid_work_formats}"
+            )
+
+        # Normalize salary_text
+        normalized_salary = salary_text.strip()
+
+        # Canonicalize employment_types
+        normalized_types = (
+            tuple(employment_types) if isinstance(employment_types, list) else employment_types
+        )
+
+        # Validate employment types and preserve order from EMPLOYMENT_TYPE_ORDER
+        valid_set = set(EMPLOYMENT_TYPE_ORDER)
+        for et in normalized_types:
+            if et not in valid_set:
+                raise ValueError(
+                    f"Invalid employment type: {et}. Must be one of {EMPLOYMENT_TYPE_ORDER}"
+                )
+
+        # Remove duplicates and maintain order from EMPLOYMENT_TYPE_ORDER
+        seen = set()
+        ordered_unique = []
+        for et in EMPLOYMENT_TYPE_ORDER:
+            if et in normalized_types and et not in seen:
+                ordered_unique.append(et)
+                seen.add(et)
+        canonical_employment_types = tuple(ordered_unique)
+
         vacancy = VacancyRow(
             source_url=source_url,
             title=title,
@@ -124,6 +261,10 @@ class RecruitmentService:
             source_evidence_url=source_evidence_url,
             application_fields=application_fields or [],
             requires_sensitive_review=requires_sensitive_review,
+            published_at=published_at,
+            salary_text=normalized_salary,
+            work_format=work_format,
+            employment_types=canonical_employment_types,
         )
         self._session.add(vacancy)
         try:
@@ -136,7 +277,7 @@ class RecruitmentService:
     def prepare_application(
         self, user_id: str, vacancy_id: str, cv_file_id: str | None = None
     ) -> ApplicationRow:
-        user = self._require_user(user_id)
+        self._require_user(user_id)
         vacancy_row = self._session.get(VacancyRow, vacancy_id)
         if vacancy_row is None:
             raise EntityNotFoundError("Vacancy not found")
@@ -146,6 +287,7 @@ class RecruitmentService:
                 raise EntityNotFoundError("CV file not found")
             if cv_file.user_id != user_id:
                 raise EntityNotFoundError("CV file not found for this user")
+        profile_facts = self.verified_profile_facts(user_id, cv_file_id)
         assessment = assess_vacancy(
             Vacancy(
                 source_url=vacancy_row.source_url,
@@ -154,10 +296,7 @@ class RecruitmentService:
                 required_skills=frozenset(vacancy_row.required_skills),
                 preferred_skills=frozenset(vacancy_row.preferred_skills),
             ),
-            [
-                ProfileFact(fact.category, fact.name, fact.value, fact.is_verified)
-                for fact in user.facts
-            ],
+            profile_facts,
         )
         warnings = [
             f"Missing required skill: {skill}" for skill in assessment.missing_required_skills
@@ -175,13 +314,7 @@ class RecruitmentService:
             warnings=warnings,
         )
         questions = self._application_questions(vacancy_row.application_fields)
-        prepared_answers = prepare_answers(
-            questions,
-            [
-                ProfileFact(fact.category, fact.name, fact.value, fact.is_verified)
-                for fact in user.facts
-            ],
-        )
+        prepared_answers = prepare_answers(questions, profile_facts)
         question_by_id = {question.field_id: question for question in questions}
         for answer in prepared_answers:
             question = question_by_id[answer.field_id]
@@ -226,15 +359,19 @@ class RecruitmentService:
 
     def list_review_queue(
         self,
+        application_id: str | None = None,
     ) -> list[tuple[ApplicationRow, VacancyRow, CvFileRow | None, WorkflowTaskRow]]:
         statement = (
             select(ApplicationRow, VacancyRow, CvFileRow, WorkflowTaskRow)
             .join(VacancyRow, VacancyRow.id == ApplicationRow.vacancy_id)
             .outerjoin(CvFileRow, CvFileRow.id == ApplicationRow.selected_cv_file_id)
             .join(WorkflowTaskRow, WorkflowTaskRow.application_id == ApplicationRow.id)
-            .where(ApplicationRow.status == "awaiting_review")
             .order_by(ApplicationRow.created_at)
         )
+        if application_id is None:
+            statement = statement.where(ApplicationRow.status == "awaiting_review")
+        else:
+            statement = statement.where(ApplicationRow.id == application_id)
         return list(self._session.execute(statement).tuples())
 
     def schedule_greenhouse_browser_review(self, application_id: str) -> WorkflowTaskRow:
@@ -342,7 +479,11 @@ class RecruitmentService:
         )
         if task is None:
             raise EntityNotFoundError("Workflow task not found")
-        if task.state not in {TaskState.SCHEDULED.value, TaskState.WAITING_FOR_USER.value}:
+        if task.state not in {
+            TaskState.SCHEDULED.value,
+            TaskState.WAITING_FOR_USER.value,
+            TaskState.FAILED.value,
+        }:
             raise DuplicateEntityError(f"Apply cannot be scheduled from {task.state}")
 
         # hh.ru's "resume" field always comes back as required from the vacancy API, but the
@@ -387,7 +528,11 @@ class RecruitmentService:
                 reason=f"human explicitly confirmed a real {site_key} application submission",
                 worker="api",
                 attempt_number=task.attempt_number,
-                evidence=[f"application:{application_id}", "submission:pending", f"site:{site_key}"],
+                evidence=[
+                    f"application:{application_id}",
+                    "submission:pending",
+                    f"site:{site_key}",
+                ],
             )
         )
         self._session.commit()
@@ -597,6 +742,20 @@ class RecruitmentService:
                     checkpoint.status = "resolved"
                     checkpoint.resolved_at = datetime.now(UTC)
                     checkpoint.resolution_evidence = [f"decision:{decision}"]
+        self._session.commit()
+        return application
+
+    def update_application_status(
+        self, application_id: str, status: ApplicationStatus
+    ) -> ApplicationRow:
+        application = self._session.scalar(
+            select(ApplicationRow).where(ApplicationRow.id == application_id).with_for_update()
+        )
+        if application is None:
+            raise EntityNotFoundError("Application not found")
+        if status not in APPLICATION_STATUSES:
+            raise ValueError("Unsupported application status")
+        application.status = status
         self._session.commit()
         return application
 

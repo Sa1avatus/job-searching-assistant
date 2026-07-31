@@ -44,6 +44,13 @@ checkpoint. `ApplicationReviewWorkflow` persists the running state before browse
 the screenshot-backed `waiting_for_user` checkpoint afterward. Final submission is intentionally
 absent until approval and duplicate-verification APIs are implemented and tested.
 
+Resume-derived profile data is scoped to `cv_files`, not to the user as a single global profile.
+`users.active_cv_file_id` selects the default resume, while every discovery request may explicitly
+provide a `cv_file_id`. Matching, search keywords, generated materials, and the selected application
+document are therefore grounded in the same resume. Verified non-resume facts such as contact and
+authorization data remain user-scoped. Legacy global skill facts remain a compatibility fallback
+only when no analyzed resume profile is selected.
+
 For background execution, the SQL row carries its queue and validated payload. The ordinary
 dispatcher cannot claim `browser` work; the isolated Chromium worker claims it atomically and
 persists screenshot evidence plus `submission=false` when it reaches the review boundary.

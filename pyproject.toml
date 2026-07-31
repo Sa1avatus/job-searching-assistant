@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "job-searching-assistant"
-version = "0.1.0"
+version = "1.1.100"
 description = "Policy-safe, resumable recruitment automation platform"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "alembic>=1.13,<2",
-  "cryptography>=44,<48",
-  "fastapi>=0.115,<1",
+  "cryptography>=48.0.1,<49",
+  "fastapi>=0.139,<1",
   "httpx>=0.27,<1",
   "playwright>=1.49,<2",
   "psycopg[binary]>=3.2,<4",
@@ -21,13 +21,20 @@ dependencies = [
   "python-multipart>=0.0.20,<1",
   "redis>=5.2,<7",
   "sqlalchemy>=2.0,<3",
+  "starlette>=1.3.1,<2",
   "structlog>=24.4,<26",
   "typer>=0.15,<1",
   "uvicorn[standard]>=0.34,<1",
 ]
 
 [project.optional-dependencies]
-dev = ["mypy>=1.14,<2", "pip-audit>=2.9,<3", "pytest>=8.3,<9", "ruff>=0.9,<1"]
+dev = [
+  "mypy>=1.14,<2",
+  "pip-audit>=2.9,<3",
+  "pytest>=9.0.3,<10",
+  "pytest-asyncio>=0.25,<2",
+  "ruff>=0.9,<1",
+]
 
 [project.scripts]
 recruitment-assistant = "app.cli:main"
@@ -37,6 +44,7 @@ packages = ["app"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "strict"
 
 [tool.ruff]
 line-length = 100

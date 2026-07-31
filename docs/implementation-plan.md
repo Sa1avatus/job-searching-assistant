@@ -101,9 +101,31 @@ fixture. Docker Compose health checks will be run when Docker is available.
 - 2026-07-18: Browser review screenshots are now registered as protected evidence together with the
   human checkpoint and final task transition. Application review resolves only through an explicit
   decision, preventing the generic resume action from rerunning a completed form preparation loop.
+- 2026-07-22: Added Anthropic/Gemini selection, live provider model discovery, encrypted per-user
+  API-key persistence, user-bound model routing, extended resume formats, and migrations `0011` and
+  `0012`. Live Gemini discovery returned 41 models and the saved key was absent from API responses.
+  Ruff, mypy, 127 tests, Alembic drift check, Docker builds, and port-8000 smoke tests passed.
+- 2026-07-22: Added the dashboard vacancy catalog with per-user server-side filtering and
+  pagination, menu-based settings/search/resume/session navigation, and bounded phrase/word search
+  expansion with URL deduplication for hh.ru and LinkedIn. The live PostgreSQL catalog returned 202
+  user vacancies across 11 pages; LinkedIn filtering returned 81 records and browser UI checks
+  confirmed pagination, filtering, status labels, and an error-free console. The Windows server
+  launcher now pins imports to this project root instead of a previously installed package copy.
+- 2026-07-22: Added migration `0013` and per-user company blacklists, permanent vacancy rejection,
+  default hiding of rejected/skipped applications, match-score ordering, accessible red-to-green
+  score meters, and Russian cover-letter language enforcement. Greenhouse board discovery was
+  live-verified with two staged jobs. LinkedIn's July 2026 randomized-class interface was captured,
+  the adapter was repaired using canonical job links and document metadata, and one live LinkedIn
+  job was then extracted and staged successfully. The live catalog showed 148 visible vacancies in
+  descending score order; 141 tests, Ruff, and strict mypy passed before final UI verification.
+- 2026-07-22: Added migration `0014` and the multi-resume dashboard flow. Skills, search keywords,
+  experience summary, and years of experience are persisted per CV; the selected CV now drives
+  discovery queries, matching, application selection, and generated materials. Existing single-CV
+  data is migrated to the newest uploaded resume.
 
 ## Final result
 
 The initial controlled operational increment is implemented and locally verified. It reaches a
 durable screenshot-backed review checkpoint without external submission, survives restart, and
-runs with PostgreSQL, Redis, API, dispatcher, and retention services under Docker Compose.
+runs with PostgreSQL, Redis, API, dispatcher, and retention services under Docker Compose. The
+dashboard now also supports encrypted per-user LLM settings and expanded resume ingestion.

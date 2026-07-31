@@ -1,9 +1,9 @@
 """Draft application materials (cover letter, free-text screening answers) with an LLM.
 
 Hard safety rules, enforced in code (not just by prompting):
-- The prompt includes only the candidate's *verified* profile facts (``ProfileFactRow.is_verified``)
-  and the vacancy's own text. The model is instructed not to invent anything beyond that, but the
-  instruction alone is not trusted.
+- The prompt includes only the candidate's verified global facts plus facts extracted from the CV
+  selected on the application. The model is instructed not to invent anything beyond that, but
+  the instruction alone is not trusted.
 - Sensitive-category fields (work authorization, disability, background checks, ...) are never
   sent to the model and never overwritten by its output, even if the model tries to answer them
   anyway. See ``app/domain/policy.SENSITIVE_CATEGORIES``.
@@ -18,20 +18,26 @@ Hard safety rules, enforced in code (not just by prompting):
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.domain.models import ProfileFact
 from app.domain.policy import SENSITIVE_CATEGORIES
 from app.llm.router import ModelRequest, ModelRouter, ModelTaskClass
-from app.services.recruitment import EntityNotFoundError
-from app.storage.tables import ApplicationRow, ProfileFactRow, VacancyRow
+from app.services.recruitment import EntityNotFoundError, RecruitmentService
+from app.storage.tables import ApplicationRow, VacancyRow
 
 
 class NoVerifiedFactsError(RuntimeError):
     """The candidate has no verified profile facts to draft from."""
+
+
+class MaterialsLanguageMismatchError(RuntimeError):
+    """The model ignored the required vacancy language twice."""
 
 
 class MaterialsDraft(BaseModel):
@@ -46,19 +52,69 @@ class GeneratedMaterials:
     skipped_sensitive_field_ids: tuple[str, ...]
 
 
+def detect_vacancy_language(vacancy: VacancyRow) -> Literal["ru", "en"]:
+    vacancy_text = vacancy.description_text or ""
+    cyrillic_count = len(re.findall(r"[А-Яа-яЁё]", vacancy_text))
+    latin_count = len(re.findall(r"[A-Za-z]", vacancy_text))
+    # Job titles commonly remain in English even when the actual vacancy is Russian.
+    # Prefer a substantial, clearly dominant description; use the title only when the
+    # description is short, mixed, or mostly page-interface noise.
+    if cyrillic_count >= 80 and cyrillic_count >= latin_count:
+        return "ru"
+    if latin_count >= 80 and latin_count >= cyrillic_count * 3:
+        return "en"
+
+    title_cyrillic = len(re.findall(r"[А-Яа-яЁё]", vacancy.title))
+    title_latin = len(re.findall(r"[A-Za-z]", vacancy.title))
+    if title_latin >= 10 and title_cyrillic < 3:
+        return "en"
+    if title_cyrillic >= 3 and title_cyrillic >= title_latin / 2:
+        return "ru"
+    if cyrillic_count >= 10 or (cyrillic_count >= 3 and cyrillic_count >= latin_count / 3):
+        return "ru"
+    return "en"
+
+
+def _is_russian_text(text: str) -> bool:
+    return len(re.findall(r"[А-Яа-яЁё]", text)) >= 10
+
+
+def _matches_language(text: str, language: str) -> bool:
+    cyrillic_count = len(re.findall(r"[А-Яа-яЁё]", text))
+    latin_count = len(re.findall(r"[A-Za-z]", text))
+    if language == "ru":
+        return _is_russian_text(text) or (
+            cyrillic_count >= 3 and cyrillic_count >= latin_count / 3
+        )
+    return latin_count >= 10 and (
+        cyrillic_count < 3 or latin_count >= cyrillic_count * 3
+    )
+
+
+def cover_letter_matches_vacancy_language(vacancy: VacancyRow, text: str) -> bool:
+    return not text.strip() or _matches_language(text, detect_vacancy_language(vacancy))
+
+
 def _build_prompt(
     *,
     vacancy: VacancyRow,
-    facts: list[ProfileFactRow],
+    facts: list[ProfileFact],
     open_fields: list[tuple[str, str]],
+    response_language: str,
 ) -> str:
     fact_lines = "\n".join(f"- [{fact.category}] {fact.name}: {fact.value}" for fact in facts)
     field_lines = "\n".join(f"- field_id={field_id!r}: {label}" for field_id, label in open_fields)
+    language_instruction = (
+        "Write the cover letter entirely in Russian because the vacancy is in Russian."
+        if response_language == "ru"
+        else "Write the cover letter in English because the vacancy is in English."
+    )
     return (
         "You are drafting job-application materials for a real candidate. Use ONLY the facts "
         "listed below. Do not invent employers, dates, numbers, skills, or achievements that are "
         "not present in this list. If a screening question cannot be answered from these facts, "
         "omit it from screening_answers entirely rather than guessing.\n\n"
+        f"Required response language: {language_instruction}\n\n"
         f"Vacancy title: {vacancy.title}\n"
         f"Company: {vacancy.company}\n"
         f"Vacancy description:\n{(vacancy.description_text or '')[:4000]}\n\n"
@@ -76,7 +132,33 @@ class MaterialsGenerationService:
         self._session = session
         self._router = router
 
-    async def draft_materials(self, application_id: str) -> GeneratedMaterials:
+    def needs_material_refresh(self, application_id: str) -> bool:
+        """Return whether an awaiting-review application has missing or wrong-language material."""
+        application = self._session.get(ApplicationRow, application_id)
+        if application is None or application.status != "awaiting_review":
+            return False
+        vacancy = self._session.get(VacancyRow, application.vacancy_id)
+        if vacancy is None:
+            return False
+        cover_letter = application.cover_letter_text or ""
+        response_language = detect_vacancy_language(vacancy)
+        if not cover_letter.strip() or not _matches_language(cover_letter, response_language):
+            return True
+        return any(
+            not answer.answer
+            and answer.semantic_category not in SENSITIVE_CATEGORIES
+            and answer.field_id != "resume"
+            for answer in application.answers
+        )
+
+    async def draft_materials(
+        self,
+        application_id: str,
+        *,
+        replace_mismatched_cover_letter: bool = False,
+        force_replace_cover_letter: bool = False,
+        timeout_seconds: float = 45,
+    ) -> GeneratedMaterials:
         application = self._session.get(ApplicationRow, application_id)
         if application is None:
             raise EntityNotFoundError("Application not found")
@@ -86,13 +168,8 @@ class MaterialsGenerationService:
         if vacancy is None:
             raise EntityNotFoundError("Vacancy not found")
 
-        facts = list(
-            self._session.scalars(
-                select(ProfileFactRow).where(
-                    ProfileFactRow.user_id == application.user_id,
-                    ProfileFactRow.is_verified.is_(True),
-                )
-            )
+        facts = RecruitmentService(self._session).verified_profile_facts(
+            application.user_id, application.selected_cv_file_id
         )
         if not facts:
             raise NoVerifiedFactsError(
@@ -107,15 +184,39 @@ class MaterialsGenerationService:
             and answer.field_id != "resume"
         ]
 
-        prompt = _build_prompt(vacancy=vacancy, facts=facts, open_fields=open_fields)
+        response_language = detect_vacancy_language(vacancy)
+        prompt = _build_prompt(
+            vacancy=vacancy,
+            facts=facts,
+            open_fields=open_fields,
+            response_language=response_language,
+        )
         request = ModelRequest(
             task_name="draft_application_materials",
             task_class=ModelTaskClass.LOW_COST,
             prompt=prompt,
             max_cost_usd=0.05,
-            timeout_seconds=45,
+            timeout_seconds=timeout_seconds,
         )
         draft = await self._router.route(request, MaterialsDraft)
+        if not _matches_language(draft.cover_letter_text, response_language):
+            required_language = "Russian" if response_language == "ru" else "English"
+            correction_request = ModelRequest(
+                task_name="correct_application_materials_language",
+                task_class=ModelTaskClass.LOW_COST,
+                prompt=(
+                    f"{prompt}\n\nIMPORTANT: The previous response used the wrong language. "
+                    f"Return a newly written cover_letter_text entirely in {required_language}."
+                ),
+                max_cost_usd=0.05,
+                timeout_seconds=timeout_seconds,
+            )
+            draft = await self._router.route(correction_request, MaterialsDraft)
+            if not _matches_language(draft.cover_letter_text, response_language):
+                raise MaterialsLanguageMismatchError(
+                    f"The model did not produce a {required_language} cover letter for a "
+                    f"{required_language} vacancy"
+                )
 
         filled: list[str] = []
         skipped_sensitive: list[str] = []
@@ -140,7 +241,16 @@ class MaterialsGenerationService:
             answer.warning = "Drafted by AI from your verified profile facts — review before use"
             filled.append(field_id)
 
-        if not (application.cover_letter_text or "").strip():
+        existing_cover_letter = application.cover_letter_text or ""
+        should_replace_cover_letter = (
+            force_replace_cover_letter
+            or not existing_cover_letter.strip()
+            or (
+                replace_mismatched_cover_letter
+                and not _matches_language(existing_cover_letter, response_language)
+            )
+        )
+        if should_replace_cover_letter:
             application.cover_letter_text = draft.cover_letter_text.strip()
         self._session.commit()
         return GeneratedMaterials(

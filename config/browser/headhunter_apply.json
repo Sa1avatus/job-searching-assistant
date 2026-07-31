@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "response_buttons": ["[data-qa='vacancy-response-link-top']"],
+  "already_applied_markers": [
+    "[data-qa='vacancy-response-link-top-disabled']",
+    "[data-qa='vacancy-response-alreadyresponded-applied-short']"
+  ],
+  "already_applied_texts": ["You applied", "Вы откликнулись"],
+  "cover_letter_editable_fields": [
+    "textarea[data-qa='vacancy-response-popup-form-letter-input']",
+    "[data-qa='vacancy-response-popup-form-letter-input'] textarea",
+    "textarea[data-qa='vacancy-response-popup-letter-input']",
+    "textarea[data-qa='vacancy-response-letter-textarea']",
+    "textarea[data-qa='vacancy-response-letter-informer-textarea']",
+    "[data-qa='vacancy-response-letter-informer'] textarea",
+    "[role='dialog'] textarea",
+    "textarea[name='letter']"
+  ],
+  "cover_letter_informers": ["[data-qa='vacancy-response-letter-informer']"],
+  "cover_letter_reveal_buttons": [
+    "[data-qa='vacancy-response-letter-toggle']",
+    "[data-qa='add-cover-letter']",
+    "[data-qa='vacancy-response-popup-letter-button-add']",
+    "[data-qa='vacancy-response-popup-letter-add']",
+    "[data-qa='vacancy-response-letter-informer-addletter']",
+    "[data-qa='vacancy-response-letter-informer-attachletter']",
+    "[data-qa='vacancy-response-letter-informer-writebutton']",
+    "button:has-text('Добавить сопроводительное письмо')",
+    "button:has-text('Приложить сопроводительное письмо')",
+    "button:has-text('Написать сопроводительное')"
+  ],
+  "cover_letter_save_buttons": [
+    "[data-qa='vacancy-response-popup-letter-button-save']",
+    "[role='dialog'] button:has-text('Сохранить')",
+    "[role='dialog'] button:has-text('Save')"
+  ],
+  "submit_buttons": [
+    "[data-qa='vacancy-response-popup-submit']",
+    "[data-qa='vacancy-response-submit-popup']",
+    "[data-qa='vacancy-response-submit-form']"
+  ],
+  "confirmation_markers": [
+    "[data-qa='vacancy-response-popup-form-done']",
+    "[data-qa='vacancy-response-sent']",
+    "[data-qa='vacancy-responded-success-title']",
+    "[data-qa='vacancy-response-letter-informer-headresponsesuccess']",
+    "[data-qa='vacancy-response-alreadyresponded-applied-short']"
+  ],
+  "cross_country_dialogs": [
+    "[role='alertdialog']",
+    "[role='dialog']"
+  ],
+  "cross_country_headings": [
+    "You are applying from another country",
+    "Вы откликаетесь из другой страны"
+  ],
+  "cross_country_continue_selectors": [
+    "[data-qa='relocation-warning-confirm']"
+  ],
+  "cross_country_continue_buttons": [
+    "Still apply",
+    "Всё равно откликнуться",
+    "Все равно откликнуться"
+  ]
+}

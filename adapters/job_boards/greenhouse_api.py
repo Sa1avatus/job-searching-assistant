@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from html.parser import HTMLParser
 from urllib.parse import quote, urlparse
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.browser.form_discovery import classify_semantic_category
 from app.domain.forms import FormField, FormFieldType
+from app.domain.vacancy_attributes import find_salary_text
 
 
 class _TextExtractor(HTMLParser):
@@ -68,6 +70,38 @@ class GreenhouseJobReference:
         return f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs/{self.job_id}"
 
 
+@dataclass(frozen=True, slots=True)
+class GreenhouseBoardReference:
+    board_token: str
+    board_url: str
+
+    @classmethod
+    def from_url(cls, url: str) -> GreenhouseBoardReference:
+        parsed_url = urlparse(url)
+        if parsed_url.scheme != "https":
+            raise ValueError("Greenhouse board URL must use HTTPS")
+        if parsed_url.username is not None or parsed_url.password is not None:
+            raise ValueError("Greenhouse board URL must not contain credentials")
+        try:
+            port = parsed_url.port
+        except ValueError as error:
+            raise ValueError("Greenhouse board URL port is invalid") from error
+        if port not in {None, 443}:
+            raise ValueError("Greenhouse board URL must use the standard HTTPS port")
+        if parsed_url.hostname not in {"boards.greenhouse.io", "job-boards.greenhouse.io"}:
+            raise ValueError("URL is not a supported Greenhouse job board")
+        path_parts = tuple(part for part in parsed_url.path.split("/") if part)
+        if not path_parts or not re.fullmatch(r"[A-Za-z0-9_-]+", path_parts[0]):
+            raise ValueError("Greenhouse board token is missing or invalid")
+        board_token = path_parts[0]
+        return cls(board_token, f"https://{parsed_url.hostname}/{board_token}")
+
+    @property
+    def api_url(self) -> str:
+        token = quote(self.board_token, safe="")
+        return f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs"
+
+
 class GreenhouseOption(BaseModel):
     label: str
 
@@ -96,6 +130,7 @@ class GreenhouseJobPayload(BaseModel):
     content: str = ""
     absolute_url: str
     language: str = "en"
+    updated_at: datetime | None = None
     application_deadline: str | None = None
     questions: list[GreenhouseQuestion] = Field(default_factory=list)
     location_questions: list[GreenhouseQuestion] = Field(default_factory=list)
@@ -115,6 +150,21 @@ class GreenhouseJobPayload(BaseModel):
         return [] if value is None else value
 
 
+class GreenhouseJobsPayload(BaseModel):
+    jobs: list[GreenhouseJobPayload] = Field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class GreenhouseSearchHit:
+    source_url: str
+    title: str
+    company: str
+    location: str
+    description_text: str
+    salary_text: str = ""
+    employment_text: str = ""
+
+
 @dataclass(frozen=True, slots=True)
 class ExtractedGreenhouseJob:
     source_url: str
@@ -128,6 +178,9 @@ class ExtractedGreenhouseJob:
     form_fields: tuple[FormField, ...]
     requires_sensitive_review: bool
     evidence_api_url: str
+    published_at: datetime | None = None
+    salary_text: str = ""
+    employment_text: str = ""
 
 
 GREENHOUSE_FIELD_TYPES: dict[str, FormFieldType | None] = {
@@ -187,16 +240,42 @@ class GreenhouseJobBoardApi:
         requires_sensitive_review = bool(
             compliance_fields or payload.data_compliance or payload.demographic_questions
         )
+        description_text = html_to_text(payload.content)
+        salary_text = find_salary_text(description_text)
         return ExtractedGreenhouseJob(
             source_url=reference.source_url,
             job_id=payload.id,
             title=payload.title,
             company=payload.company_name,
             location=payload.location.name,
-            description_text=html_to_text(payload.content),
+            description_text=description_text,
             language=payload.language,
             application_deadline=payload.application_deadline,
             form_fields=(*standard_fields, *compliance_fields),
             requires_sensitive_review=requires_sensitive_review,
             evidence_api_url=reference.api_url,
+            published_at=payload.updated_at,
+            salary_text=salary_text,
+            employment_text=description_text,
         )
+
+    async def list_jobs(self, board_url: str) -> tuple[GreenhouseSearchHit, ...]:
+        reference = GreenhouseBoardReference.from_url(board_url)
+        response = await self._http_client.get(reference.api_url, params={"content": "true"})
+        response.raise_for_status()
+        payload = GreenhouseJobsPayload.model_validate(response.json())
+        hits: list[GreenhouseSearchHit] = []
+        for job in payload.jobs:
+            description_text = html_to_text(job.content)
+            hits.append(
+                GreenhouseSearchHit(
+                    source_url=f"https://boards.greenhouse.io/{reference.board_token}/jobs/{job.id}",
+                    title=job.title,
+                    company=job.company_name or reference.board_token,
+                    location=job.location.name,
+                    description_text=description_text,
+                    salary_text=find_salary_text(description_text),
+                    employment_text=description_text,
+                )
+            )
+        return tuple(hits)

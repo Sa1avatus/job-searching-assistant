@@ -41,9 +41,7 @@ def upgrade() -> None:
             ["id"],
             ondelete="SET NULL",
         )
-        batch_op.create_index(
-            "ix_applications_selected_cv_file_id", ["selected_cv_file_id"]
-        )
+        batch_op.create_index("ix_applications_selected_cv_file_id", ["selected_cv_file_id"])
 
 
 def downgrade() -> None:

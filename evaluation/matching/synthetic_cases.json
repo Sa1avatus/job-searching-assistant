@@ -1,0 +1,102 @@
+[
+  {
+    "id": "highly-relevant-rag",
+    "vacancy": "Build production RAG services with Python, LLMs and vector search.",
+    "candidate_profile": "Built and operated Python RAG services using LLMs and vector retrieval.",
+    "expected_eligibility": true,
+    "expected_score_range": [80, 100],
+    "expected_matched_requirements": ["Python", "RAG", "LLM", "vector search"],
+    "expected_missing_requirements": [],
+    "reviewer_notes": "Direct production evidence."
+  },
+  {
+    "id": "similar-words-different-role",
+    "vacancy": "Senior frontend engineer for React design systems.",
+    "candidate_profile": "Backend Python engineer who consumed React dashboards.",
+    "expected_eligibility": true,
+    "expected_score_range": [15, 45],
+    "expected_matched_requirements": [],
+    "expected_missing_requirements": ["frontend engineering", "React design systems"],
+    "reviewer_notes": "Lexical overlap must not imply role fit."
+  },
+  {
+    "id": "kubernetes-hands-on",
+    "vacancy": "Hands-on Kubernetes production operations are required.",
+    "candidate_profile": "Operated Kubernetes clusters, deployments and incident response in production.",
+    "expected_eligibility": true,
+    "expected_score_range": [75, 100],
+    "expected_matched_requirements": ["hands-on Kubernetes"],
+    "expected_missing_requirements": [],
+    "reviewer_notes": "Operational evidence satisfies the requirement."
+  },
+  {
+    "id": "kubernetes-conceptual-only",
+    "vacancy": "Hands-on Kubernetes production operations are required.",
+    "candidate_profile": "Completed an introductory Kubernetes course and understands basic concepts.",
+    "expected_eligibility": false,
+    "expected_score_range": [0, 35],
+    "expected_matched_requirements": [],
+    "expected_missing_requirements": ["hands-on Kubernetes"],
+    "reviewer_notes": "Conceptual knowledge cannot be upgraded to production experience."
+  },
+  {
+    "id": "ru-vacancy-en-cv",
+    "vacancy": "Требуется практический опыт разработки сервисов на Python и PostgreSQL.",
+    "candidate_profile": "Developed production services with Python and PostgreSQL for four years.",
+    "expected_eligibility": true,
+    "expected_score_range": [70, 100],
+    "expected_matched_requirements": ["Python", "PostgreSQL"],
+    "expected_missing_requirements": [],
+    "reviewer_notes": "Russian requirement and English evidence."
+  },
+  {
+    "id": "en-vacancy-ru-cv",
+    "vacancy": "Production Java and Kafka experience required.",
+    "candidate_profile": "Разрабатывал и сопровождал production-сервисы на Java и Kafka.",
+    "expected_eligibility": true,
+    "expected_score_range": [70, 100],
+    "expected_matched_requirements": ["Java", "Kafka"],
+    "expected_missing_requirements": [],
+    "reviewer_notes": "English requirement and Russian evidence."
+  },
+  {
+    "id": "vector-store-alternatives",
+    "vacancy": "Experience with Qdrant, Weaviate, FAISS or ChromaDB.",
+    "candidate_profile": "Implemented semantic retrieval with FAISS.",
+    "expected_eligibility": true,
+    "expected_score_range": [65, 95],
+    "expected_matched_requirements": ["vector database alternative"],
+    "expected_missing_requirements": [],
+    "reviewer_notes": "One explicit alternative is sufficient."
+  },
+  {
+    "id": "work-authorization-blocker",
+    "vacancy": "Existing US work authorization is mandatory; sponsorship is unavailable.",
+    "candidate_profile": "Requires employer sponsorship to work in the United States.",
+    "expected_eligibility": false,
+    "expected_score_range": [0, 20],
+    "expected_matched_requirements": [],
+    "expected_missing_requirements": ["US work authorization"],
+    "reviewer_notes": "Semantic similarity must not override authorization."
+  },
+  {
+    "id": "preferred-skill-missing",
+    "vacancy": "Python is required. Terraform is preferred.",
+    "candidate_profile": "Five years of production Python; no Terraform listed.",
+    "expected_eligibility": true,
+    "expected_score_range": [70, 95],
+    "expected_matched_requirements": ["Python"],
+    "expected_missing_requirements": ["Terraform"],
+    "reviewer_notes": "Missing preferred skill has bounded impact."
+  },
+  {
+    "id": "empty-description",
+    "vacancy": "",
+    "candidate_profile": "Production software engineer with Python and SQL.",
+    "expected_eligibility": true,
+    "expected_score_range": [0, 20],
+    "expected_matched_requirements": [],
+    "expected_missing_requirements": [],
+    "reviewer_notes": "Poor source should degrade safely instead of inventing requirements."
+  }
+]

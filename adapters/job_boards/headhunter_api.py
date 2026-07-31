@@ -188,11 +188,11 @@ class HeadHunterApi:
         headers = {"User-Agent": self._user_agent}
         if self._access_token is not None:
             headers["Authorization"] = f"Bearer {self._access_token}"
-        params: list[tuple[str, str]] = [
-            ("text", text),
-            ("per_page", str(min(max(limit, 1), 100))),
-        ]
-        params.extend(("area", area_id) for area_id in area_ids)
+        params: dict[str, str | list[str]] = {
+            "text": text,
+            "per_page": str(min(max(limit, 1), 100)),
+            "area": area_ids,
+        }
         response = await self._http_client.get(
             "https://api.hh.ru/vacancies", headers=headers, params=params
         )

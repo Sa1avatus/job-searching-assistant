@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     api_key: SecretStr | None = None
     api_clients_json: SecretStr | None = None
     redis_url: str = "redis://localhost:6379/0"
+    opensearch_url: str = "http://localhost:9200"
+    opensearch_evidence_index_prefix: str = "candidate-evidence"
+    opensearch_evidence_read_alias: str = "candidate-evidence-read"
+    opensearch_evidence_write_alias: str = "candidate-evidence-write"
+    embedding_dimensions: int = Field(default=1024, ge=1, le=65_536)
+    matching_v2_enabled: bool = False
+    matching_v2_shadow_mode: bool = True
+    matching_v2_fallback_enabled: bool = True
+    matching_model_service_url: str = "http://localhost:8090"
+    matching_model_timeout_seconds: float = Field(default=120, ge=1, le=600)
     worker_lease_seconds: int = Field(default=120, ge=10, le=3600)
     worker_poll_seconds: float = Field(default=2.0, ge=0.1, le=60)
     worker_retry_seconds: int = Field(default=30, ge=1, le=3600)
@@ -32,7 +42,7 @@ class Settings(BaseSettings):
     retention_days: int = Field(default=30, ge=1, le=3650)
     retention_interval_seconds: int = Field(default=86_400, ge=60, le=604_800)
     hh_user_agent: str = Field(
-        default="JobSearchingAssistant/0.1 (local personal assistant)", min_length=1, max_length=300
+        default="JobSearchingAssistant/1.0 (local personal assistant)", min_length=1, max_length=300
     )
     hh_access_token: SecretStr | None = None
 
@@ -57,6 +67,7 @@ class Settings(BaseSettings):
     # by Google; this project performs no proxying or markup.
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-2.5-flash"
+    materials_generation_timeout_seconds: float = Field(default=120, ge=10, le=600)
 
     @field_validator(
         "api_key",
@@ -68,6 +79,19 @@ class Settings(BaseSettings):
     @classmethod
     def empty_secret_is_none(cls, value: object) -> object:
         return None if value == "" else value
+
+    @field_validator(
+        "opensearch_evidence_index_prefix",
+        "opensearch_evidence_read_alias",
+        "opensearch_evidence_write_alias",
+    )
+    @classmethod
+    def validate_opensearch_name(cls, value: str) -> str:
+        if not value or value != value.casefold() or any(
+            character in value for character in (" ", "\\", "/", "*", "?", '"', "<", ">", "|")
+        ):
+            raise ValueError("OpenSearch index and alias names must be lowercase and path-safe")
+        return value
 
     @model_validator(mode="after")
     def require_production_api_key(self) -> "Settings":

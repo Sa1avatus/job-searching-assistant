@@ -48,9 +48,7 @@ async def test_complete_strips_markdown_code_fence() -> None:
         return httpx.Response(
             200,
             json={
-                "content": [
-                    {"type": "text", "text": '```json\n{"cover_letter_text": "Hi"}\n```'}
-                ]
+                "content": [{"type": "text", "text": '```json\n{"cover_letter_text": "Hi"}\n```'}]
             },
         )
 

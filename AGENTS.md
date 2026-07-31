@@ -7,4 +7,4 @@
 - Default to review mode and never submit a real application from automated tests.
 - Run `python -m pytest -q` for the current verified core.
 - Do not claim an external integration works until it has been exercised.
-
+- For delegated implementation, follow the workspace Local Code Worker workflow exactly: run from `D:\OpenAIProjects\local-code-worker`, use the provider and model from its `.env` without command-line overrides, and require Codex approval plus the Worker's interactive `y/N` confirmation.

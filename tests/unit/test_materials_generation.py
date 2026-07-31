@@ -8,10 +8,13 @@ from app.llm.router import ModelRequest
 from app.services.materials_generation import (
     MaterialsDraft,
     MaterialsGenerationService,
+    MaterialsLanguageMismatchError,
     NoVerifiedFactsError,
+    detect_vacancy_language,
 )
 from app.services.recruitment import RecruitmentService
 from app.storage.database import Base
+from app.storage.tables import ApplicationRow, VacancyRow
 
 
 class _FakeRouter:
@@ -24,6 +27,58 @@ class _FakeRouter:
         return self.draft
 
 
+class _SequentialRouter:
+    def __init__(self, *drafts: MaterialsDraft) -> None:
+        self._drafts = iter(drafts)
+        self.requests: list[ModelRequest] = []
+
+    async def route(self, request: ModelRequest, schema: type[MaterialsDraft]) -> MaterialsDraft:
+        self.requests.append(request)
+        return next(self._drafts)
+
+
+def test_english_title_overrides_russian_page_interface_noise() -> None:
+    vacancy = VacancyRow(
+        source_url="https://example.test/jobs/english",
+        title="Solution Architect (Engineer + Product + Architecture)",
+        company="Example",
+        description_text=(
+            "Описание служебных элементов страницы на русском языке. "
+            "The actual role builds cloud platforms and distributed systems."
+        ),
+    )
+
+    assert detect_vacancy_language(vacancy) == "en"
+
+
+def test_russian_title_overrides_english_page_interface_noise() -> None:
+    vacancy = VacancyRow(
+        source_url="https://example.test/jobs/russian",
+        title="Архитектор корпоративных решений",
+        company="Example",
+        description_text="Premium recommendations and navigation text in English.",
+    )
+
+    assert detect_vacancy_language(vacancy) == "ru"
+
+
+def test_russian_description_overrides_english_job_title() -> None:
+    vacancy = VacancyRow(
+        source_url="https://example.test/jobs/qa",
+        title="Middle QA Engineer (ML, LLM, RAG)",
+        company="EvoAI",
+        description_text=(
+            "Мы разрабатываем и внедряем решения на основе искусственного интеллекта для бизнеса. "
+            "Нужно анализировать требования и критерии приёмки, готовить тестовые сценарии, "
+            "проводить функциональное, интеграционное и системное тестирование, проверять данные "
+            "в базе, анализировать логи и подробно документировать найденные дефекты. "
+            "Мы ожидаем самостоятельность, внимательность и умение работать с командой разработки."
+        ),
+    )
+
+    assert detect_vacancy_language(vacancy) == "ru"
+
+
 def _session_factory():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -32,7 +87,13 @@ def _session_factory():
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def _seed_application(session_factory, *, with_verified_fact: bool = True):
+def _seed_application(
+    session_factory,
+    *,
+    with_verified_fact: bool = True,
+    title: str = "Backend Engineer",
+    description_text: str = "Build things.",
+):
     with session_factory() as session:
         service = RecruitmentService(session)
         user = service.create_user("Candidate")
@@ -42,11 +103,11 @@ def _seed_application(session_factory, *, with_verified_fact: bool = True):
             )
         vacancy = service.create_vacancy(
             source_url="https://example.test/vacancy/1",
-            title="Backend Engineer",
+            title=title,
             company="Example Co",
             required_skills=["Python"],
             preferred_skills=[],
-            description_text="Build things.",
+            description_text=description_text,
             application_fields=[
                 {
                     "field_id": "why_interested",
@@ -66,6 +127,58 @@ def _seed_application(session_factory, *, with_verified_fact: bool = True):
         )
         application = service.prepare_application(user.id, vacancy.id)
         return application.id
+
+
+def _save_cover_letter(session_factory, application_id: str, cover_letter_text: str) -> None:
+    with session_factory() as session:
+        RecruitmentService(session).update_application_materials(
+            application_id,
+            cover_letter_text=cover_letter_text,
+            screening_answers={},
+        )
+
+
+def _load_cover_letter(session_factory, application_id: str) -> str:
+    with session_factory() as session:
+        application = session.get(ApplicationRow, application_id)
+        assert application is not None
+        return application.cover_letter_text
+
+
+def test_material_refresh_detects_blank_and_wrong_language_cover_letters() -> None:
+    session_factory = _session_factory()
+    application_id = _seed_application(
+        session_factory,
+        title="Python-разработчик",
+        description_text="Разработка внутренних сервисов и автоматизация процессов.",
+    )
+    router = _FakeRouter(MaterialsDraft(cover_letter_text="unused"))
+
+    with session_factory() as session:
+        service = MaterialsGenerationService(session, router)
+        assert service.needs_material_refresh(application_id)
+
+    _save_cover_letter(
+        session_factory,
+        application_id,
+        "Dear Hiring Manager, my Python experience fits this role.",
+    )
+    with session_factory() as session:
+        assert MaterialsGenerationService(session, router).needs_material_refresh(application_id)
+
+
+def test_material_refresh_skips_non_review_application() -> None:
+    session_factory = _session_factory()
+    application_id = _seed_application(session_factory)
+    router = _FakeRouter(MaterialsDraft(cover_letter_text="unused"))
+    with session_factory() as session:
+        application = session.get(ApplicationRow, application_id)
+        assert application is not None
+        application.status = "submitted"
+        session.commit()
+        assert not MaterialsGenerationService(session, router).needs_material_refresh(
+            application_id
+        )
 
 
 def test_draft_materials_fills_open_field_and_cover_letter() -> None:
@@ -172,5 +285,256 @@ def test_draft_materials_requires_verified_facts() -> None:
             except NoVerifiedFactsError:
                 return
         raise AssertionError("expected NoVerifiedFactsError")
+
+    asyncio.run(run())
+
+
+def test_draft_materials_uses_russian_for_russian_vacancy() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(
+            session_factory,
+            title="Python-разработчик",
+            description_text="Разработка внутренних сервисов и автоматизация процессов.",
+        )
+        router = _FakeRouter(
+            MaterialsDraft(
+                cover_letter_text=(
+                    "Здравствуйте! Мой опыт разработки на Python соответствует этой позиции."
+                )
+            )
+        )
+        with session_factory() as session:
+            result = await MaterialsGenerationService(session, router).draft_materials(
+                application_id
+            )
+
+        assert "Здравствуйте" in result.cover_letter_text
+        assert router.last_request is not None
+        assert "entirely in Russian" in router.last_request.prompt
+
+    asyncio.run(run())
+
+
+def test_draft_materials_retries_english_draft_when_first_response_is_russian() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(session_factory)
+        router = _SequentialRouter(
+            MaterialsDraft(cover_letter_text="Здравствуйте! Я хочу работать в вашей компании."),
+            MaterialsDraft(
+                cover_letter_text="Dear Hiring Manager, my Python experience fits this role."
+            ),
+        )
+
+        with session_factory() as session:
+            generated = await MaterialsGenerationService(session, router).draft_materials(
+                application_id
+            )
+
+        assert generated.cover_letter_text.startswith("Dear Hiring Manager")
+        assert len(router.requests) == 2
+        assert "entirely in English" in router.requests[-1].prompt
+
+    asyncio.run(run())
+
+
+def test_draft_materials_force_replaces_existing_same_language_letter() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(session_factory)
+        original_letter = "Dear Hiring Manager, this is the original cover letter."
+        replacement_letter = (
+            "Dear Hiring Manager, this newly tailored letter highlights my Python experience."
+        )
+        _save_cover_letter(session_factory, application_id, original_letter)
+        router = _FakeRouter(MaterialsDraft(cover_letter_text=replacement_letter))
+
+        with session_factory() as session:
+            generated = await MaterialsGenerationService(session, router).draft_materials(
+                application_id,
+                force_replace_cover_letter=True,
+            )
+
+        assert generated.cover_letter_text == replacement_letter
+        assert generated.cover_letter_text != original_letter
+
+    asyncio.run(run())
+
+
+def test_draft_materials_rejects_second_wrong_language_english_response() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(session_factory)
+        router = _SequentialRouter(
+            MaterialsDraft(cover_letter_text="Здравствуйте! Я хочу работать в вашей компании."),
+            MaterialsDraft(cover_letter_text="Добрый день! Это повторный русский ответ."),
+        )
+
+        with session_factory() as session:
+            try:
+                await MaterialsGenerationService(session, router).draft_materials(application_id)
+            except MaterialsLanguageMismatchError:
+                assert len(router.requests) == 2
+                return
+        raise AssertionError("expected MaterialsLanguageMismatchError")
+
+    asyncio.run(run())
+
+
+def test_draft_materials_replaces_english_letter_for_russian_vacancy_when_requested() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(
+            session_factory,
+            title="Python-разработчик",
+            description_text="Разработка внутренних сервисов и автоматизация процессов.",
+        )
+        _save_cover_letter(
+            session_factory,
+            application_id,
+            "Dear Hiring Manager, my Python experience fits this role.",
+        )
+        router = _FakeRouter(
+            MaterialsDraft(
+                cover_letter_text=(
+                    "Здравствуйте! Мой опыт разработки на Python соответствует этой позиции."
+                )
+            )
+        )
+
+        with session_factory() as session:
+            generated = await MaterialsGenerationService(session, router).draft_materials(
+                application_id, replace_mismatched_cover_letter=True
+            )
+
+        assert generated.cover_letter_text.startswith("Здравствуйте")
+
+    asyncio.run(run())
+
+
+def test_draft_materials_replaces_russian_letter_for_english_vacancy_when_requested() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(session_factory)
+        _save_cover_letter(
+            session_factory,
+            application_id,
+            "Здравствуйте! Мой опыт разработки на Python соответствует этой позиции.",
+        )
+        router = _FakeRouter(
+            MaterialsDraft(
+                cover_letter_text="Dear Hiring Manager, my Python experience fits this role."
+            )
+        )
+
+        with session_factory() as session:
+            generated = await MaterialsGenerationService(session, router).draft_materials(
+                application_id, replace_mismatched_cover_letter=True
+            )
+
+        assert generated.cover_letter_text.startswith("Dear Hiring Manager")
+
+    asyncio.run(run())
+
+
+def test_draft_materials_preserves_compatible_russian_letter_when_replacement_requested() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(
+            session_factory,
+            title="Python-разработчик",
+            description_text="Разработка внутренних сервисов и автоматизация процессов.",
+        )
+        original_letter = (
+            "Здравствуйте! Мой собственный опыт разработки на Python подходит этой позиции."
+        )
+        _save_cover_letter(session_factory, application_id, original_letter)
+        router = _FakeRouter(
+            MaterialsDraft(
+                cover_letter_text="Добрый день! Это новый автоматически созданный русский текст."
+            )
+        )
+
+        with session_factory() as session:
+            generated = await MaterialsGenerationService(session, router).draft_materials(
+                application_id, replace_mismatched_cover_letter=True
+            )
+
+        assert generated.cover_letter_text == original_letter
+
+    asyncio.run(run())
+
+
+def test_draft_materials_preserves_compatible_english_letter_when_replacement_requested() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(session_factory)
+        original_letter = "Dear Hiring Manager, this is my own English cover letter."
+        _save_cover_letter(session_factory, application_id, original_letter)
+        router = _FakeRouter(
+            MaterialsDraft(
+                cover_letter_text="Hello, this is a newly generated English cover letter."
+            )
+        )
+
+        with session_factory() as session:
+            generated = await MaterialsGenerationService(session, router).draft_materials(
+                application_id, replace_mismatched_cover_letter=True
+            )
+
+        assert generated.cover_letter_text == original_letter
+
+    asyncio.run(run())
+
+
+def test_draft_materials_preserves_mismatched_letter_by_default() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(session_factory)
+        original_letter = (
+            "Здравствуйте! Мой собственный опыт разработки на Python подходит этой позиции."
+        )
+        _save_cover_letter(session_factory, application_id, original_letter)
+        router = _FakeRouter(
+            MaterialsDraft(
+                cover_letter_text="Dear Hiring Manager, my Python experience fits this role."
+            )
+        )
+
+        with session_factory() as session:
+            generated = await MaterialsGenerationService(session, router).draft_materials(
+                application_id
+            )
+
+        assert generated.cover_letter_text == original_letter
+
+    asyncio.run(run())
+
+
+def test_draft_materials_preserves_original_letter_when_language_correction_fails() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(session_factory)
+        original_letter = (
+            "Здравствуйте! Мой собственный опыт разработки на Python подходит этой позиции."
+        )
+        _save_cover_letter(session_factory, application_id, original_letter)
+        router = _SequentialRouter(
+            MaterialsDraft(cover_letter_text="Добрый день! Это снова русский текст."),
+            MaterialsDraft(cover_letter_text="Здравствуйте! Исправление всё ещё на русском."),
+        )
+
+        with session_factory() as session:
+            try:
+                await MaterialsGenerationService(session, router).draft_materials(
+                    application_id, replace_mismatched_cover_letter=True
+                )
+            except MaterialsLanguageMismatchError:
+                pass
+            else:
+                raise AssertionError("expected MaterialsLanguageMismatchError")
+
+        assert _load_cover_letter(session_factory, application_id) == original_letter
 
     asyncio.run(run())

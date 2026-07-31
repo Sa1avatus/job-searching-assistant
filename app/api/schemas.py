@@ -1,6 +1,19 @@
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, SecretStr
+
+from app.domain.application_status import ApplicationStatus
+
+WorkFormat = Literal["remote", "hybrid", "office", "unspecified"]
+EmploymentTypeName = Literal[
+    "full_time",
+    "part_time",
+    "contract",
+    "project",
+    "temporary",
+    "internship",
+]
 
 
 class VacancyRequest(BaseModel):
@@ -81,6 +94,16 @@ class CvFileResponse(BaseModel):
     content_type: str
     sha256: str
     size_bytes: int
+    skills: list[str]
+    experience_summary: str
+    search_keywords: str
+    years_of_experience: float | None
+    analyzed_at: datetime | None
+    is_active: bool = False
+
+
+class ActiveCvFileRequest(BaseModel):
+    cv_file_id: str
 
 
 class VacancyResponse(BaseModel):
@@ -143,6 +166,57 @@ class ApplicationResponse(BaseModel):
     warnings: list[str]
 
 
+class RequirementMatchDetailResponse(BaseModel):
+    requirement_id: str
+    requirement_text: str
+    requirement_type: str
+    importance: str
+    is_blocker: bool
+    source_fragment: str
+    evidence_id: str | None
+    evidence_text: str | None
+    evidence_experience_level: str | None
+    evidence_source_fragment: str | None
+    lexical_score: float | None
+    dense_score: float | None
+    hybrid_score: float | None
+    reranker_raw_score: float | None
+    reranker_score: float | None
+    final_match_score: float
+    match_level: str
+    explanation: str
+    retrieval_model_versions: dict[str, object]
+
+
+class ApplicationMatchDetailsResponse(BaseModel):
+    application_id: str
+    cv_file_id: str | None
+    legacy_match_score: int
+    status: str
+    run_id: str | None
+    eligibility_status: str
+    final_score: float
+    hard_skill_score: float
+    preferred_skill_score: float
+    role_score: float
+    seniority_score: float
+    experience_score: float
+    work_format_score: float
+    location_score: float
+    domain_score: float
+    blocker_count: int
+    matched_required_count: int
+    missing_required_count: int
+    scoring_version: str
+    model_versions: dict[str, object]
+    explanation: dict[str, object]
+    fallback_reason: str | None
+    failure_reason: str | None
+    started_at: datetime | None
+    calculated_at: datetime | None
+    requirements: list[RequirementMatchDetailResponse]
+
+
 class TaskTransitionResponse(BaseModel):
     previous_state: str
     new_state: str
@@ -165,6 +239,10 @@ class WorkflowTaskResponse(BaseModel):
 
 class ReviewDecisionRequest(BaseModel):
     decision: str = Field(pattern="^(approve|reject|skip)$")
+
+
+class ApplicationStatusUpdateRequest(BaseModel):
+    status: ApplicationStatus
 
 
 class ScreeningAnswerResponse(BaseModel):
@@ -193,6 +271,14 @@ class ApplicationMaterialsUpdateRequest(BaseModel):
 
 class ApplicationMaterialsResponse(BaseModel):
     application_id: str
+    application_status: str
+    location: str
+    vacancy_language: Literal["ru", "en"]
+    cover_letter_language_matches: bool
+    vacancy_summary: str
+    work_format: WorkFormat
+    employment_types: list[EmploymentTypeName]
+    key_skills: list[str]
     cover_letter_text: str
     screening_answers: list[ScreeningAnswerResponse]
     missing_facts: list[str]
@@ -232,6 +318,12 @@ class ReviewItemResponse(ApplicationResponse):
     missing_facts: list[str]
     requested_legal_declarations: list[str]
     active_human_action: HumanActionCheckpointResponse | None
+    vacancy_summary: str
+    work_format: WorkFormat
+    salary_text: str
+    employment_types: list[EmploymentTypeName]
+    missing_required_skills: list[str]
+    key_skills: list[str]
 
 
 class ExtractedProfileResponse(BaseModel):
@@ -242,8 +334,13 @@ class ExtractedProfileResponse(BaseModel):
 
 
 class ConfirmProfileFactsRequest(BaseModel):
-    skills: list[str] = Field(default_factory=list, max_length=60)
+    skills: list[str] = Field(default_factory=list, max_length=160)
     experience_summary: str = Field(default="", max_length=2_000)
+
+
+class ConfirmResumeProfileRequest(ConfirmProfileFactsRequest):
+    search_keywords: str = Field(default="", max_length=500)
+    years_of_experience: float | None = Field(default=None, ge=0, le=80)
 
 
 class ConfirmedProfileFactResponse(BaseModel):
@@ -254,6 +351,43 @@ class ConfirmedProfileFactResponse(BaseModel):
     is_verified: bool
 
 
+class LlmModelsRequest(BaseModel):
+    provider: Literal["anthropic", "gemini"]
+    api_key: SecretStr
+
+
+class LlmModelsResponse(BaseModel):
+    models: list[str]
+
+
+class LlmPreferenceUpdateRequest(BaseModel):
+    provider: Literal["anthropic", "gemini"]
+    model: str = Field(min_length=1, max_length=200)
+    api_key: SecretStr | None = None
+
+
+class LlmPreferenceResponse(BaseModel):
+    provider: Literal["anthropic", "gemini"]
+    model: str
+    api_key_configured: bool = True
+
+
+class BrowserSessionStatusResponse(BaseModel):
+    site_key: Literal["headhunter", "linkedin"]
+    is_authorized: bool
+    is_live: bool | None = None
+    is_waiting_for_login: bool
+    last_url: str | None = None
+    updated_at: str | None = None
+    checked_at: str | None = None
+    check_error: str | None = None
+
+
+class BrowserAuthorizationResponse(BaseModel):
+    site_key: Literal["headhunter", "linkedin"]
+    state: Literal["waiting_for_login", "authorized", "cancelled"]
+
+
 class DiscoverHeadHunterVacanciesRequest(BaseModel):
     locations: list[str] = Field(
         default_factory=list,
@@ -262,6 +396,7 @@ class DiscoverHeadHunterVacanciesRequest(BaseModel):
     )
     limit: int = Field(default=15, ge=1, le=50)
     search_text: str | None = Field(default=None, max_length=300)
+    cv_file_id: str | None = None
 
 
 class DiscoveryOutcomeResponse(BaseModel):
@@ -270,8 +405,42 @@ class DiscoveryOutcomeResponse(BaseModel):
     title: str
     company: str
     source_url: str
+    location: str
     match_score: int
     status: str
+    application_status: str
+    vacancy_summary: str
+    work_format: WorkFormat
+    salary_text: str
+    employment_types: list[EmploymentTypeName]
+    key_skills: list[str]
+
+
+class SavedVacancyResponse(BaseModel):
+    application_id: str
+    vacancy_id: str
+    title: str
+    company: str
+    source_url: str
+    location: str
+    match_score: int
+    status: str
+    source: Literal["headhunter", "linkedin", "greenhouse", "registry", "other"]
+    published_at: datetime | None
+    created_at: datetime
+    vacancy_summary: str
+    work_format: WorkFormat
+    salary_text: str
+    employment_types: list[EmploymentTypeName]
+    key_skills: list[str]
+
+
+class SavedVacancyPageResponse(BaseModel):
+    items: list[SavedVacancyResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
 
 
 class DiscoverLinkedInVacanciesRequest(BaseModel):
@@ -282,3 +451,40 @@ class DiscoverLinkedInVacanciesRequest(BaseModel):
     )
     limit: int = Field(default=15, ge=1, le=50)
     search_text: str | None = Field(default=None, max_length=300)
+    cv_file_id: str | None = None
+
+
+class DiscoverGreenhouseVacanciesRequest(BaseModel):
+    board_urls: list[HttpUrl] = Field(
+        default_factory=list,
+        description=(
+            "Greenhouse company boards. Empty uses boards from previously saved Greenhouse jobs."
+        ),
+        max_length=20,
+    )
+    locations: list[str] = Field(default_factory=list, max_length=20)
+    limit: int = Field(default=15, ge=1, le=50)
+    search_text: str | None = Field(default=None, max_length=300)
+    cv_file_id: str | None = None
+
+
+class DiscoverVacanciesStreamRequest(BaseModel):
+    sources: list[Literal["headhunter", "linkedin", "greenhouse"]] = Field(
+        min_length=1, max_length=3
+    )
+    board_urls: list[HttpUrl] = Field(default_factory=list, max_length=20)
+    locations: list[str] = Field(default_factory=list, max_length=20)
+    limit: int = Field(default=15, ge=1, le=50)
+    search_text: str | None = Field(default=None, max_length=300)
+    cv_file_id: str | None = None
+
+
+class CompanyBlacklistRequest(BaseModel):
+    company: str = Field(min_length=1, max_length=300)
+
+
+class CompanyBlacklistResponse(BaseModel):
+    id: str
+    user_id: str
+    company: str
+    created_at: datetime

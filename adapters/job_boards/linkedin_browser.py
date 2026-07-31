@@ -21,21 +21,114 @@ LinkedIn changes its DOM more often than Greenhouse/hh.ru.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from urllib.parse import quote, urlparse
 
-from playwright.async_api import Locator, Page, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import Locator, Page
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChallenge, LoginRequired
 from app.browser.engine import BrowserActionResult, PlaywrightEngine
 from app.browser.evidence import capture_browser_failure
 from app.browser.form_discovery import discover_form_fields
+from app.browser.publication_dates import parse_publication_datetime
 from app.domain.failures import FailureCategory
+from app.domain.vacancy_attributes import find_salary_text
 
 _HOST_SUFFIX = "linkedin.com"
 _MAX_EASY_APPLY_STEPS = 8
 _CHALLENGE_URL_MARKERS = ("/checkpoint/", "/uas/login", "/authwall")
+
+_LINKEDIN_INSIGHT_SELECTORS: tuple[str, ...] = (
+    ".job-details-jobs-unified-top-card__job-insight",
+    ".jobs-unified-top-card__job-insight",
+)
+_LINKEDIN_DESCRIPTION_SELECTORS = (
+    "#job-details",
+    ".jobs-description-content__text",
+    ".jobs-box__html-content",
+    ".jobs-description__content",
+)
+_LINKEDIN_PROMO_FRAGMENTS = (
+    "job search smarter with premium",
+    "see jobs where you'd be a top applicant",
+    "message hiring managers with inmail",
+    "get personalized job recommendations",
+    "get personalized cover letter and resume tips",
+    "try premium for",
+    "millions of other members use premium",
+)
+_LINKEDIN_FOOTER_MARKERS = {
+    "looking for talent?",
+    "post a job",
+    "accessibility",
+    "talent solutions",
+    "community guidelines",
+    "privacy & terms",
+    "linkedin corporation © 2026",
+}
+
+
+def clean_linkedin_description_text(raw_text: str) -> str:
+    """Keep the vacancy body while removing LinkedIn chrome and Premium promos."""
+    lines = [re.sub(r"\s+", " ", line).strip() for line in raw_text.splitlines()]
+    lines = [line for line in lines if line]
+    about_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.casefold() in {"about the job", "о вакансии"}
+        ),
+        None,
+    )
+    if about_index is not None:
+        lines = lines[about_index + 1 :]
+    cleaned: list[str] = []
+    for line in lines:
+        folded = line.casefold()
+        if folded in _LINKEDIN_FOOTER_MARKERS:
+            break
+        if any(fragment in folded for fragment in _LINKEDIN_PROMO_FRAGMENTS):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()[:20_000]
+
+
+def is_meaningful_linkedin_description(text: str) -> bool:
+    normalized = " ".join(text.casefold().split())
+    if len(normalized) < 80:
+        return False
+    chrome_hits = sum(
+        fragment in normalized
+        for fragment in (*_LINKEDIN_PROMO_FRAGMENTS, *_LINKEDIN_FOOTER_MARKERS)
+    )
+    return chrome_hits < 3
+
+
+async def has_submitted_application_marker(page: Page, *, timeout_ms: int = 5_000) -> bool:
+    """Wait for LinkedIn's asynchronously rendered application-status card."""
+    marker_pattern = re.compile(
+        r"\bapplication\s+submitted\b|"
+        r"\byou\s+applied\b|"
+        r"\bзаявка\s+отправлена\b|"
+        r"\bвы\s+откликнул(?:ись|ась)\b",
+        re.IGNORECASE,
+    )
+    marker = page.get_by_text(marker_pattern).first
+    try:
+        await marker.wait_for(state="visible", timeout=timeout_ms)
+        return True
+    except PlaywrightTimeoutError:
+        pass
+
+    try:
+        body_text = await page.locator("body").inner_text(timeout=2_000)
+    except PlaywrightTimeoutError:
+        return False
+    return marker_pattern.search(" ".join(body_text.split())) is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +147,10 @@ class ExtractedLinkedInVacancy:
     location: str
     description_text: str
     has_easy_apply: bool
+    published_at: datetime | None = None
+    salary_text: str = ""
+    employment_text: str = ""
+    application_submitted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,8 +198,7 @@ class LinkedInBrowserAdapter:
             raise RuntimeError("LinkedIn navigation left the trusted host")
 
         actions: list[BrowserActionResult] = []
-        applied_marker = page.get_by_text("Application submitted", exact=False)
-        if await applied_marker.count() > 0:
+        if await has_submitted_application_marker(page):
             checkpoint = await self._browser_engine.capture_review_checkpoint(
                 page, target="already-applied"
             )
@@ -113,15 +209,15 @@ class LinkedInBrowserAdapter:
             raise ApplyBlocked(
                 "This job has no native Easy Apply control (likely an external application)"
             )
-        actions.append(
-            await self._click(page, easy_apply_button, "open-easy-apply-modal")
-        )
+        actions.append(await self._click(page, easy_apply_button, "open-easy-apply-modal"))
         if not actions[-1].is_successful:
             raise ApplyBlocked("Could not open the Easy Apply modal")
         await self._raise_if_challenge_url(page)
 
         steps_completed = 0
-        modal = page.locator("div.jobs-easy-apply-modal, div[data-test-modal-id='easy-apply-modal']")
+        modal = page.locator(
+            "div.jobs-easy-apply-modal, div[data-test-modal-id='easy-apply-modal']"
+        )
         for _ in range(_MAX_EASY_APPLY_STEPS):
             await self._raise_if_challenge_url(page)
             submit_button = modal.get_by_role("button", name="Submit application")
@@ -188,42 +284,115 @@ class LinkedInBrowserAdapter:
         if location:
             query += f"&location={quote(location)}"
         page = await self._browser_engine.new_page()
-        navigation = await self._browser_engine.navigate(
-            page, f"https://www.linkedin.com/jobs/search/?{query}"
-        )
-        if not navigation.is_successful:
-            raise RuntimeError(f"LinkedIn search navigation failed: {navigation.error_category}")
-        await self._raise_if_challenge_url(page)
-
-        cards = page.locator("[data-job-id]")
-        count = min(await cards.count(), limit)
-        hits: list[LinkedInSearchHit] = []
-        for index in range(count):
-            card = cards.nth(index)
-            job_id = await card.get_attribute("data-job-id")
-            if not job_id:
-                continue
-            title_locator = card.locator(
-                ".job-card-list__title, .job-card-container__link"
-            ).first
-            title = (
-                (await title_locator.inner_text()).strip() if await title_locator.count() > 0 else ""
-            )
-            company_locator = card.locator(".job-card-container__company-name").first
-            company = (
-                (await company_locator.inner_text()).strip()
-                if await company_locator.count() > 0
-                else ""
-            )
-            hits.append(
-                LinkedInSearchHit(
-                    job_id=job_id,
-                    source_url=f"https://www.linkedin.com/jobs/view/{job_id}",
-                    title=title,
-                    company=company,
+        try:
+            search_url = f"https://www.linkedin.com/jobs/search/?{query}"
+            navigation = await self._navigate_search_with_retry(page, search_url)
+            if not navigation.is_successful:
+                raise RuntimeError(
+                    f"LinkedIn search navigation failed: {navigation.error_category}"
                 )
+            await self._raise_if_challenge_url(page)
+
+            cards = page.locator("[data-job-id]")
+            result_targets = page.locator('[data-job-id], a[href*="/jobs/view/"]')
+            try:
+                await result_targets.first.wait_for(state="attached", timeout=10_000)
+            except PlaywrightTimeoutError as error:
+                await capture_browser_failure(
+                    page,
+                    artifact_directory=self._browser_engine.artifact_directory,
+                    action_name="search",
+                    target="linkedin-results-not-found",
+                    error=error,
+                )
+                return []
+            hits: list[LinkedInSearchHit] = []
+            seen_job_ids: set[str] = set()
+            card_snapshots = await cards.evaluate_all(
+                """elements => elements.map(card => ({
+                    jobId: card.getAttribute("data-job-id") || "",
+                    title: (
+                        card.querySelector(
+                            ".job-card-list__title, .job-card-container__link"
+                        )?.textContent || ""
+                    ).trim(),
+                    company: (
+                        card.querySelector(".job-card-container__company-name")
+                            ?.textContent || ""
+                    ).trim()
+                }))"""
             )
-        return hits
+            for snapshot in card_snapshots[:limit]:
+                if not isinstance(snapshot, dict):
+                    continue
+                raw_job_id = str(snapshot.get("jobId", ""))
+                job_id_match = re.search(r"(\d{5,})", raw_job_id or "")
+                if job_id_match is None:
+                    continue
+                job_id = job_id_match.group(1)
+                seen_job_ids.add(job_id)
+                hits.append(
+                    LinkedInSearchHit(
+                        job_id=job_id,
+                        source_url=f"https://www.linkedin.com/jobs/view/{job_id}",
+                        title=str(snapshot.get("title", "")).strip(),
+                        company=str(snapshot.get("company", "")).strip(),
+                    )
+                )
+            if len(hits) < limit:
+                links = page.locator('a[href*="/jobs/view/"]')
+                link_snapshots = await links.evaluate_all(
+                    """elements => elements.map(link => ({
+                        href: link.getAttribute("href") || "",
+                        title: (link.textContent || "").trim()
+                    }))"""
+                )
+                for snapshot in link_snapshots:
+                    if not isinstance(snapshot, dict):
+                        continue
+                    href = str(snapshot.get("href", ""))
+                    job_id_match = re.search(
+                        r"/jobs/view/(?:[^/?#-]+-)*(\d{5,})", href or ""
+                    )
+                    if job_id_match is None or job_id_match.group(1) in seen_job_ids:
+                        continue
+                    job_id = job_id_match.group(1)
+                    seen_job_ids.add(job_id)
+                    hits.append(
+                        LinkedInSearchHit(
+                            job_id=job_id,
+                            source_url=f"https://www.linkedin.com/jobs/view/{job_id}",
+                            title=str(snapshot.get("title", "")).strip(),
+                            company="",
+                        )
+                    )
+                    if len(hits) == limit:
+                        break
+            if not hits:
+                await capture_browser_failure(
+                    page,
+                    artifact_directory=self._browser_engine.artifact_directory,
+                    action_name="search",
+                    target="linkedin-result-identifiers-not-parsed",
+                    error=RuntimeError(
+                        "LinkedIn result elements did not expose parseable job ids"
+                    ),
+                )
+            return hits
+        finally:
+            await page.close()
+
+    async def _navigate_search_with_retry(
+        self, page: Page, search_url: str
+    ) -> BrowserActionResult:
+        navigation = await self._browser_engine.navigate(page, search_url)
+        if (
+            not navigation.is_successful
+            and navigation.error_category is FailureCategory.TRANSIENT_NETWORK_ERROR
+            and navigation.should_retry
+        ):
+            navigation = await self._browser_engine.navigate(page, search_url)
+        return navigation
 
     async def extract_vacancy(self, url: str) -> ExtractedLinkedInVacancy:
         """Read a job posting's detail pane. Requires a signed-in session (same as search)."""
@@ -237,18 +406,29 @@ class LinkedInBrowserAdapter:
         if not self.supports_url(page.url):
             raise RuntimeError("LinkedIn navigation left the trusted host")
 
-        title_locator = page.locator(
-            ".job-details-jobs-unified-top-card__job-title, h1"
-        ).first
-        if await title_locator.count() == 0:
+        title_locator = page.locator(".job-details-jobs-unified-top-card__job-title, h1").first
+        document_title_parts = (await page.title()).rsplit(" | ", 2)
+        if await title_locator.count() > 0:
+            title = (await title_locator.inner_text()).strip()
+        elif len(document_title_parts) == 3 and document_title_parts[-1] == "LinkedIn":
+            title = document_title_parts[0].strip()
+        else:
+            await capture_browser_failure(
+                page,
+                artifact_directory=self._browser_engine.artifact_directory,
+                action_name="extract",
+                target="linkedin-job-title-not-found",
+                error=ApplyBlocked("LinkedIn job title was not found"),
+            )
             raise ApplyBlocked("This does not look like a live LinkedIn job posting page")
-        title = (await title_locator.inner_text()).strip()
         company_locator = page.locator(
             ".job-details-jobs-unified-top-card__company-name, "
-            ".jobs-unified-top-card__company-name"
+            ".jobs-unified-top-card__company-name, a[href*='/company/']"
         ).first
         company = (
-            (await company_locator.inner_text()).strip() if await company_locator.count() > 0 else ""
+            (await company_locator.inner_text()).strip()
+            if await company_locator.count() > 0
+            else (document_title_parts[1].strip() if len(document_title_parts) == 3 else "")
         )
         location_locator = page.locator(
             ".job-details-jobs-unified-top-card__primary-description-container"
@@ -258,13 +438,87 @@ class LinkedInBrowserAdapter:
             if await location_locator.count() > 0
             else ""
         )
-        description_locator = page.locator(".jobs-description__content").first
-        description_text = (
-            (await description_locator.inner_text()).strip()
-            if await description_locator.count() > 0
-            else ""
+        description_text = ""
+        for selector in _LINKEDIN_DESCRIPTION_SELECTORS:
+            candidate = page.locator(selector).first
+            if await candidate.count() == 0:
+                continue
+            candidate_text = clean_linkedin_description_text(await candidate.inner_text())
+            if is_meaningful_linkedin_description(candidate_text):
+                description_text = candidate_text
+                break
+        if not description_text:
+            about_heading = page.get_by_role(
+                "heading", name=re.compile(r"^(?:About the job|О вакансии)$", re.IGNORECASE)
+            ).first
+            if await about_heading.count() > 0:
+                candidate_text = clean_linkedin_description_text(
+                    await about_heading.locator("..").locator("..").inner_text()
+                )
+                if is_meaningful_linkedin_description(candidate_text):
+                    description_text = candidate_text
+        if not description_text:
+            main_content = page.locator("main").first
+            if await main_content.count() > 0:
+                candidate_text = clean_linkedin_description_text(
+                    await main_content.inner_text()
+                )
+                if is_meaningful_linkedin_description(candidate_text):
+                    description_text = candidate_text
+        publication_locator = page.locator(
+            "time[datetime],.jobs-unified-top-card__posted-date"
+        ).first
+        publication_value = (
+            await publication_locator.get_attribute("datetime")
+            if await publication_locator.count() > 0
+            else None
         )
+        if publication_value is None and await publication_locator.count() > 0:
+            publication_value = await publication_locator.inner_text()
+        published_at = parse_publication_datetime(publication_value)
         has_easy_apply = await page.get_by_role("button", name="Easy Apply").count() > 0
+
+        seen_insights: set[str] = set()
+        insight_fragments: list[str] = []
+        for selector in _LINKEDIN_INSIGHT_SELECTORS:
+            candidates = page.locator(selector)
+            for idx in range(await candidates.count()):
+                candidate = candidates.nth(idx)
+                try:
+                    if await candidate.is_visible():
+                        raw = (await candidate.inner_text()).strip()
+                        normalized = re.sub(r"\s+", " ", raw)
+                        if normalized and normalized not in seen_insights:
+                            seen_insights.add(normalized)
+                            insight_fragments.append(normalized)
+                except Exception:  # noqa: BLE001 - stale insight candidates are skipped
+                    continue
+        semantic_insights = page.get_by_role(
+            "link",
+            name=re.compile(
+                r"^(?:Remote|Hybrid|On-site|Onsite|Full-time|Part-time|Contract|"
+                r"Temporary|Internship|Удалённо|Гибрид|Офис|Полная занятость|"
+                r"Частичная занятость|Контракт|Стажировка)$",
+                re.IGNORECASE,
+            ),
+        )
+        for idx in range(await semantic_insights.count()):
+            candidate = semantic_insights.nth(idx)
+            try:
+                if await candidate.is_visible():
+                    normalized = re.sub(r"\s+", " ", (await candidate.inner_text()).strip())
+                    if normalized and normalized not in seen_insights:
+                        seen_insights.add(normalized)
+                        insight_fragments.append(normalized)
+            except Exception:  # noqa: BLE001 - stale semantic candidates are skipped
+                continue
+        employment_text = ", ".join(insight_fragments)
+        insight_combined = " ".join(insight_fragments)
+        salary_text = find_salary_text(insight_combined)
+        if not salary_text:
+            salary_text = find_salary_text(description_text)
+        application_submitted = await has_submitted_application_marker(page)
+
         return ExtractedLinkedInVacancy(
             source_url=url,
             title=title,
@@ -272,6 +526,10 @@ class LinkedInBrowserAdapter:
             location=location,
             description_text=description_text,
             has_easy_apply=has_easy_apply,
+            published_at=published_at,
+            salary_text=salary_text,
+            employment_text=employment_text,
+            application_submitted=application_submitted,
         )
 
     async def _raise_if_challenge_url(self, page: Page) -> None:
@@ -282,7 +540,8 @@ class LinkedInBrowserAdapter:
             raise LoginRequired("LinkedIn session is not authenticated")
         checkpoint = await self._browser_engine.capture_review_checkpoint(page, target="captcha")
         raise CaptchaChallenge(
-            "LinkedIn presented a verification checkpoint", screenshot_path=checkpoint.screenshot_path
+            "LinkedIn presented a verification checkpoint",
+            screenshot_path=checkpoint.screenshot_path,
         )
 
     async def _click(self, page: Page, locator: Locator, target: str) -> BrowserActionResult:

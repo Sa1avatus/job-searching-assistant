@@ -8,11 +8,17 @@
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
     * { box-sizing: border-box; }
     body { margin: 0; background: #0b1020; color: #eef2ff; min-height: 100vh; }
-    header, main { width: min(1080px, calc(100% - 32px)); margin: 0 auto; }
-    header { padding: 40px 0 20px; }
+    header, main { width: min(1280px, calc(100% - 32px)); margin: 0 auto; }
+    header { padding: 40px 0 20px; display: flex; justify-content: space-between; gap: 16px; align-items: start; }
     h1 { margin: 0; font-size: clamp(26px, 5vw, 40px); letter-spacing: -0.03em; }
     .eyebrow { color: #8da2fb; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; font-size: 12px; }
-    section.step { background: linear-gradient(145deg, #111a34, #0e162b); border: 1px solid #263154; border-radius: 18px; padding: 22px; margin-bottom: 18px; box-shadow: 0 18px 45px #02061755; }
+    main.dashboard-shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; padding-bottom: 40px; }
+    .sidebar { position: sticky; top: 18px; display: grid; gap: 7px; padding: 12px; background: #0e162b; border: 1px solid #263154; border-radius: 18px; }
+    .menu-button { width: 100%; text-align: left; background: transparent; border-color: transparent; color: #aab5d6; }
+    .menu-button.active { background: #1d294d; border-color: #5065a8; color: #fff; }
+    .dashboard-content { min-width: 0; }
+    section.step { display: none; background: linear-gradient(145deg, #111a34, #0e162b); border: 1px solid #263154; border-radius: 18px; padding: 22px; margin-bottom: 18px; box-shadow: 0 18px 45px #02061755; }
+    section.step.active { display: block; }
     section.step h2 { margin: 0 0 4px; font-size: 18px; }
     section.step .hint { color: #aab5d6; font-size: 13px; margin-bottom: 14px; }
     input, textarea, button, select { border: 1px solid #303b60; border-radius: 10px; padding: 10px 13px; font: inherit; }
@@ -21,6 +27,7 @@
     button { background: #1d294d; color: #fff; cursor: pointer; font-weight: 700; }
     button:hover { border-color: #8da2fb; }
     button:disabled { opacity: .5; cursor: wait; }
+    [hidden] { display: none !important; }
     button.primary { background: #124d3b; border-color: #24765e; }
     button.accept { background: #124d3b; border-color: #24765e; }
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
@@ -30,52 +37,231 @@
     .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .chip { display: flex; align-items: center; gap: 6px; background: #17224a; border: 1px solid #35437a; border-radius: 999px; padding: 6px 12px; font-size: 13px; }
     .chip input[type=checkbox] { width: auto; }
-    #results { display: grid; gap: 16px; }
+    #results.active { display: grid; gap: 16px; }
     article { background: linear-gradient(145deg, #111a34, #0e162b); border: 1px solid #263154; border-radius: 18px; padding: 20px; }
     .topline { display: flex; gap: 16px; justify-content: space-between; align-items: start; }
     h3 { margin: 2px 0 4px; font-size: 20px; }
     .company, .meta { color: #aab5d6; }
-    .score { min-width: 58px; height: 58px; border: 1px solid #5065a8; border-radius: 50%; display: grid; place-items: center; font-size: 18px; font-weight: 800; }
+    .match-meter { min-width: 128px; color: hsl(calc(var(--match) * 1.2), 76%, 62%); font-weight: 800; text-align: right; }
+    .match-meter__track { height: 9px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: #27304d; }
+    .match-meter__fill { width: calc(var(--match) * 1%); height: 100%; border-radius: inherit; background: hsl(calc(var(--match) * 1.2), 72%, 46%); transition: width .2s ease; }
     .cover-letter { margin-top: 14px; }
+    .cover-letter__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+    .cover-letter__header label { margin: 0; }
     .cover-letter textarea { min-height: 120px; }
     .actions { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 14px; }
+    .card-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 44px; gap: 9px; align-items: stretch; }
+    .card-actions > button, .card-actions > .link-btn { min-width: 0; min-height: 44px; display: flex; align-items: center; justify-content: center; text-align: center; }
+    .icon-button { width: 38px; height: 38px; padding: 8px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+    .icon-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .icon-button.is-spinning svg { animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .more-actions { position: relative; min-width: 0; }
+    .more-actions__toggle { width: 44px; height: 44px; padding: 0; font-size: 24px; line-height: 1; }
+    .more-actions__menu, .status-popup { position: absolute; z-index: 30; right: 0; bottom: calc(100% + 8px); width: min(290px, calc(100vw - 48px)); padding: 7px; border: 1px solid #3a4772; border-radius: 12px; background: #101831; box-shadow: 0 18px 45px #020617cc; }
+    .more-actions__menu button, .status-popup button { width: 100%; background: transparent; border-color: transparent; text-align: left; }
+    .more-actions__menu button:hover, .status-popup button:hover { background: #1d294d; border-color: #5065a8; }
+    .status-popup { right: calc(100% + 8px); bottom: 0; }
     a.link-btn { color: #a9baff; text-decoration: none; border: 1px solid #303b60; border-radius: 10px; padding: 10px 13px; font-weight: 700; }
     a.link-btn:hover { border-color: #8da2fb; }
     .empty { border: 1px dashed #344166; border-radius: 18px; padding: 40px; text-align: center; color: #aab5d6; }
     .badge { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #223056; color: #aab5d6; }
+    .attribute-tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+    .key-skills { margin-top: 10px; }
+    .key-skills__label { color: #aab5d6; font-size: 13px; margin-bottom: 7px; }
+    .status-editor { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .status-editor select { width: auto; min-width: 170px; }
+    .badge.salary { background: #173f35; border: 1px solid #2b725e; color: #9ff3cf; }
+    .language-selector { position: relative; flex: 0 0 auto; }
+    .language-toggle { min-width: 132px; display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 8px 11px; line-height: 1; }
+    .language-flag { width: 24px; height: 16px; flex: 0 0 auto; border-radius: 2px; box-shadow: 0 0 0 1px #ffffff40; }
+    .language-name { flex: 1; text-align: left; }
+    .language-chevron { color: #aab5d6; font-size: 13px; }
+    .language-menu { position: absolute; z-index: 20; top: calc(100% + 7px); right: 0; width: max-content; min-width: 180px; padding: 6px; border: 1px solid #303b60; border-radius: 12px; background: #101831; box-shadow: 0 18px 45px #02061799; }
+    .language-option { width: 100%; display: flex; align-items: center; gap: 10px; border-color: transparent; background: transparent; text-align: left; }
+    .language-option[aria-selected="true"] { border-color: #5065a8; background: #1d294d; }
+    .skill-add-row { display: flex; gap: 8px; margin-top: 10px; max-width: 620px; }
+    .skill-add-row input { min-width: 0; }
     .task-state { margin-top: 8px; font-size: 13px; color: #aab5d6; }
+    .session-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+    .session-card { border: 1px solid #303b60; border-radius: 14px; padding: 16px; background: #101831; }
+    .session-card h3 { margin: 0 0 5px; font-size: 17px; }
+    .session-status { color: #f5b942; font-weight: 700; }
+    .session-status.authorized { color: #6ee7b7; }
+    .vacancy-filters { display: grid; grid-template-columns: minmax(220px, 2fr) repeat(4, minmax(125px, 1fr)); gap: 10px; align-items: end; }
+    .vacancy-list { display: grid; gap: 12px; margin-top: 18px; }
+    .vacancy-card { border: 1px solid #303b60; border-radius: 14px; padding: 16px; background: #101831; }
+    .vacancy-card .actions { align-items: center; justify-content: space-between; }
+    .match-details { margin-top: 12px; padding: 14px; border: 1px solid #303b60; border-radius: 12px; background: #0d152b; }
+    .match-details h4 { margin: 8px 0 5px; }
+    .match-details ul { margin: 5px 0 10px; padding-left: 20px; color: #c5cdef; }
+    .pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 18px; }
+    .filter-actions { display: flex; gap: 8px; margin-top: 12px; }
+    .danger { background: #541f2b; border-color: #8d3447; }
+    .blacklist-list { display: grid; gap: 10px; margin-top: 18px; }
+    .blacklist-entry { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid #303b60; border-radius: 12px; background: #101831; }
+    .summary-affordance { display: block; color: #8da2fb; font-size: 13px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; cursor: help; }
+    .summary-affordance:focus { outline: 1px solid #8da2fb; outline-offset: 2px; }
+    @media (max-width: 850px) {
+      main.dashboard-shell { grid-template-columns: 1fr; }
+      .sidebar { position: static; display: flex; overflow-x: auto; }
+      .menu-button { width: auto; white-space: nowrap; }
+      .vacancy-filters { grid-template-columns: 1fr 1fr; }
+      .card-actions { display: flex; overflow-x: auto; padding-bottom: 3px; }
+      .card-actions > button, .card-actions > .link-btn { flex: 0 0 190px; }
+      .card-actions > .more-actions { flex: 0 0 44px; }
+    }
+    @media (max-width: 520px) { .vacancy-filters { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <header>
-    <div class="eyebrow">Личный кабинет</div>
-    <h1>Поиск и отклик на вакансии</h1>
+    <div>
+      <div class="eyebrow">Личный кабинет</div>
+      <h1>Поиск и отклик на вакансии</h1>
+    </div>
+    <div id="language-selector" class="language-selector">
+      <button id="language-toggle" class="language-toggle" type="button"
+              aria-haspopup="listbox" aria-expanded="false" aria-controls="language-menu"
+              title="Текущий язык: Русский" aria-label="Текущий язык: Русский">
+        <svg class="language-flag" viewBox="0 0 3 2" aria-hidden="true" focusable="false">
+          <rect width="3" height="2" fill="#fff"></rect>
+          <rect y="0.6667" width="3" height="0.6667" fill="#0039a6"></rect>
+          <rect y="1.3333" width="3" height="0.6667" fill="#d52b1e"></rect>
+        </svg>
+        <span class="language-name">Русский</span>
+        <span class="language-chevron" aria-hidden="true">▾</span>
+      </button>
+      <div id="language-menu" class="language-menu" role="listbox" aria-label="Язык интерфейса" hidden></div>
+    </div>
   </header>
-  <main>
+  <main class="dashboard-shell">
+    <nav class="sidebar" aria-label="Разделы личного кабинета">
+      <button class="menu-button active" type="button" data-menu="vacancies">Все вакансии</button>
+      <button class="menu-button" type="button" data-menu="search">Поиск</button>
+      <button class="menu-button" type="button" data-menu="blacklist">Чёрный список</button>
+      <button class="menu-button" type="button" data-menu="resume">Резюме</button>
+      <button class="menu-button" type="button" data-menu="sessions">Сессии сайтов</button>
+      <button class="menu-button" type="button" data-menu="model">Модель</button>
+      <button class="menu-button" type="button" data-menu="access">Доступ</button>
+    </nav>
+    <div class="dashboard-content">
     <div id="status" role="status" aria-live="polite"></div>
 
-    <section class="step">
-      <h2>0. Доступ</h2>
+    <section class="step active" data-panel="vacancies">
+      <h2>Все сохранённые вакансии</h2>
+      <div class="hint">Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.</div>
+      <div class="vacancy-filters">
+        <div><label for="vacancy-query">Текст</label><input id="vacancy-query" placeholder="должность, компания или описание"></div>
+        <div><label for="vacancy-source">Источник</label><select id="vacancy-source"><option value="all">Все</option><option value="headhunter">hh.ru</option><option value="linkedin">LinkedIn</option><option value="greenhouse">Greenhouse</option><option value="registry">Реестр</option><option value="other">Другие</option></select></div>
+        <div><label for="vacancy-status">Статус</label><select id="vacancy-status"><option value="all">Все</option><option value="saved">Сохранена</option><option value="awaiting_review">Ожидает решения</option><option value="approved">Принята</option><option value="rejected">Отклонена</option><option value="skipped">Пропущена</option><option value="submitted">Отправлена</option><option value="interview">Собеседование</option></select></div>
+        <div><label for="vacancy-location">Локация</label><input id="vacancy-location" placeholder="например, Москва"></div>
+        <div><label for="vacancy-score">Соответствие от</label><input id="vacancy-score" type="number" min="0" max="100" value="0"></div>
+        <div><label for="vacancy-published-from">Опубликована с</label><input id="vacancy-published-from" type="date"></div>
+        <div><label for="vacancy-published-to">Опубликована по</label><input id="vacancy-published-to" type="date"></div>
+        <div><label for="vacancy-work-format">Формат работы</label><select id="vacancy-work-format"><option value="all">Все</option><option value="remote">Удалённо</option><option value="hybrid">Гибрид</option><option value="office">Офис</option><option value="unspecified">Не указан</option></select></div>
+        <div><label for="vacancy-employment-type">Тип занятости</label><select id="vacancy-employment-type"><option value="all">Все</option><option value="full_time">Полная занятость</option><option value="part_time">Частичная занятость</option><option value="contract">Контракт</option><option value="project">Проект</option><option value="temporary">Временная работа</option><option value="internship">Стажировка</option></select></div>
+      </div>
+      <div class="filter-actions">
+        <button id="apply-vacancy-filters" type="button" class="primary">Применить</button>
+        <button id="reset-vacancy-filters" type="button">Сбросить</button>
+      </div>
+      <div id="vacancy-summary" class="task-state"></div>
+      <div id="vacancy-list" class="vacancy-list"></div>
+      <div class="pagination">
+        <button id="vacancy-previous" type="button">← Назад</button>
+        <span id="vacancy-page">Страница 1</span>
+        <button id="vacancy-next" type="button">Вперёд →</button>
+      </div>
+    </section>
+
+    <section class="step" data-panel="blacklist">
+      <h2>Чёрный список компаний</h2>
+      <div class="hint">Вакансии этих компаний не появляются в каталоге и не добавляются повторно при новом поиске. Удаление компании из списка снова разрешает её вакансии.</div>
+      <div class="row">
+        <div><label for="blacklist-company">Компания</label><input id="blacklist-company" placeholder="Название компании"></div>
+        <div style="flex:0"><button id="add-blacklist-company" type="button" class="danger">Добавить</button></div>
+      </div>
+      <div id="blacklist-list" class="blacklist-list"></div>
+    </section>
+
+    <section class="step" data-panel="access">
+      <h2>Доступ</h2>
       <div class="hint">API-ключ (если сервис настроен без ключа — оставьте пустым). ID пользователя сохраняется в браузере.</div>
       <div class="row">
-        <div><label>API key</label><input id="api-key" type="password" autocomplete="off"></div>
+        <div><label>Ключ доступа к приложению</label><input id="api-key" type="password" autocomplete="off" placeholder="обычно пусто для локального запуска"></div>
         <div><label>User ID</label><input id="user-id" placeholder="ещё не создан"></div>
+        <div style="flex:0"><button id="load-user" type="button">Загрузить профиль</button></div>
         <div style="flex:0"><button id="create-user" type="button">Создать пользователя</button></div>
       </div>
     </section>
 
-    <section class="step">
-      <h2>1. Резюме</h2>
-      <div class="hint">PDF или DOCX. Мы извлечём текст и попросим модель выделить навыки и суммировать опыт — вы всё сможете поправить перед сохранением.</div>
+    <section class="step" data-panel="model">
+      <h2>Языковая модель</h2>
+      <div class="hint">Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Получите список доступных моделей, выберите одну и сохраните.</div>
       <div class="row">
-        <div><input id="resume-file" type="file" accept=".pdf,.docx"></div>
-        <div style="flex:0"><button id="upload-resume" type="button" class="primary">Загрузить и проанализировать</button></div>
+        <div><label>Провайдер</label><select id="llm-provider"><option value="gemini">Google Gemini</option><option value="anthropic">Anthropic Claude</option></select></div>
+        <div><label>API-ключ провайдера</label><input id="llm-api-key" type="password" autocomplete="new-password" placeholder="вставьте ключ"></div>
+        <div style="flex:0"><button id="load-models" type="button">Получить модели</button></div>
       </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label>Модель</label><input id="llm-model" list="llm-model-options" placeholder="выберите или введите ID модели"><datalist id="llm-model-options"></datalist></div>
+        <div style="flex:0"><button id="save-llm" type="button" class="primary">Сохранить настройку</button></div>
+      </div>
+      <div id="llm-state" class="task-state"></div>
+    </section>
+
+    <section class="step" data-panel="sessions">
+      <h2>Сессии сайтов</h2>
+      <div class="hint">Вход выполняется вручную в Chromium на локальном браузерном экране. Приложение не получает пароль, код подтверждения или CAPTCHA — сохраняются только зашифрованные cookies и состояние сайта.</div>
+      <div id="browser-sessions" class="session-grid">
+        <article class="session-card" data-site="headhunter">
+          <h3>hh.ru</h3>
+          <div id="headhunter-session-status" class="session-status">Проверяем…</div>
+          <div id="headhunter-session-details" class="task-state"></div>
+          <div class="actions">
+            <button id="headhunter-login" type="button">Войти в hh.ru</button>
+            <button id="headhunter-confirm" type="button" class="primary" hidden>Я вошёл — сохранить</button>
+            <button id="headhunter-cancel" type="button" hidden>Отмена</button>
+          </div>
+        </article>
+        <article class="session-card" data-site="linkedin">
+          <h3>LinkedIn</h3>
+          <div id="linkedin-session-status" class="session-status">Проверяем…</div>
+          <div id="linkedin-session-details" class="task-state"></div>
+          <div class="actions">
+            <button id="linkedin-login" type="button">Войти в LinkedIn</button>
+            <button id="linkedin-confirm" type="button" class="primary" hidden>Я вошёл — сохранить</button>
+            <button id="linkedin-cancel" type="button" hidden>Отмена</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="step" data-panel="resume">
+      <h2>Резюме</h2>
+      <div class="hint">Можно хранить несколько резюме. Навыки, ключевые слова и сводка опыта сохраняются отдельно для каждого файла. Выбранное резюме используется для поиска, оценки и сопроводительных писем.</div>
+      <div class="row">
+        <div><input id="resume-file" type="file" multiple accept=".pdf,.docx,.doc,.txt,.rtf,.odt,.html,.htm,.md"></div>
+        <div style="flex:0"><button id="upload-resume" type="button" class="primary">Загрузить файлы</button></div>
+      </div>
+      <div class="row" style="margin-top:16px;">
+        <div><label for="resume-selector">Мои резюме</label><select id="resume-selector"></select></div>
+        <div style="flex:0"><label>&nbsp;</label><button id="analyze-resume" type="button">Проанализировать выбранное</button></div>
+        <div style="flex:0"><label>&nbsp;</label><button id="delete-resume" type="button" class="danger">Удалить выбранное</button></div>
+      </div>
+      <div id="resume-state" class="hint"></div>
       <div id="draft-block" style="display:none; margin-top:16px;">
         <label>Найденные навыки (снимите галочку, если что-то лишнее)</label>
         <div id="skills-chips" class="chips"></div>
+        <div class="skill-add-row">
+          <input id="manual-skill" maxlength="200" placeholder="Добавить навык вручную">
+          <button id="add-manual-skill" type="button">Добавить</button>
+        </div>
         <label style="margin-top:14px;">Краткое summary опыта</label>
         <textarea id="summary-text"></textarea>
+        <label style="margin-top:14px;">Суммарный опыт, лет</label>
+        <input id="experience-years" type="number" min="0" max="80" step="0.5">
         <label style="margin-top:14px;">Ключевые слова для поиска</label>
         <input id="keywords-text">
         <div class="row" style="margin-top:14px;">
@@ -84,33 +270,63 @@
       </div>
     </section>
 
-    <section class="step">
-      <h2>2. Локации</h2>
+    <section class="step" data-panel="search">
+      <h2>Локации</h2>
       <div class="hint">Через запятую, например: Москва, Санкт-Петербург. Оставьте пустым для поиска везде.</div>
       <div class="row">
         <div><input id="locations" placeholder="везде"></div>
         <div style="flex:0"><label>&nbsp;</label><label class="chip"><input id="anywhere" type="checkbox" checked> Везде</label></div>
       </div>
+      <label for="search-resume-selector" style="margin-top:14px;">Резюме для этого поиска</label>
+      <select id="search-resume-selector"></select>
     </section>
 
-    <section class="step">
-      <h2>3. Поиск</h2>
-      <div class="hint">Ищем на hh.ru по вашим подтверждённым навыкам, создаём черновики откликов с подобранным сопроводительным письмом.</div>
+    <section class="step" data-panel="search">
+      <h2>Поиск</h2>
+      <div class="hint">hh.ru и LinkedIn ищутся через управляемый браузер с вашими сессиями. Greenhouse использует официальный публичный read-only интерфейс досок компаний и не требует входа.</div>
+      <div class="chips" style="margin-bottom:14px;">
+        <label class="chip"><input id="source-headhunter" type="checkbox" checked> hh.ru</label>
+        <label class="chip"><input id="source-linkedin" type="checkbox" checked> LinkedIn</label>
+        <label class="chip"><input id="source-greenhouse" type="checkbox" checked> Greenhouse</label>
+      </div>
+      <label for="greenhouse-boards">Доски Greenhouse</label>
+      <textarea id="greenhouse-boards" placeholder="По одной ссылке на строку, например https://boards.greenhouse.io/company. Если оставить пустым, используются Greenhouse-доски из уже сохранённых вакансий."></textarea>
       <button id="search" type="button" class="primary">Найти вакансии</button>
     </section>
 
-    <section id="results"></section>
+    <section id="results" class="step" data-panel="search"></section>
+    </div>
   </main>
   <script>
     const statusNode = document.querySelector('#status');
     const keyInput = document.querySelector('#api-key');
     const userIdInput = document.querySelector('#user-id');
+    const greenhouseBoardsInput = document.querySelector('#greenhouse-boards');
+    const GREENHOUSE_BOARDS_STORAGE_KEY = 'dashboardGreenhouseBoards';
     keyInput.value = sessionStorage.getItem('dashboardApiKey') || '';
     userIdInput.value = localStorage.getItem('dashboardUserId') || '';
+    greenhouseBoardsInput.value = localStorage.getItem(GREENHOUSE_BOARDS_STORAGE_KEY) || '';
+    const saveGreenhouseBoards = () => {
+      localStorage.setItem(GREENHOUSE_BOARDS_STORAGE_KEY, greenhouseBoardsInput.value);
+    };
     const headers = (json) => {
       const h = keyInput.value ? {'X-API-Key': keyInput.value} : {};
       if (json) h['Content-Type'] = 'application/json';
       return h;
+    };
+    const fetchWithTimeout = async (url, options = {}, timeoutMs = 15000) => {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(url, {...options, signal: controller.signal});
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          throw new Error('Сервер не ответил вовремя. Проверьте Docker и повторите действие.');
+        }
+        throw error;
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
     };
     const element = (name, text, className) => {
       const node = document.createElement(name);
@@ -118,6 +334,286 @@
       if (className) node.className = className;
       return node;
     };
+    const TRANSLATIONS = {
+      'Личный кабинет': 'Dashboard',
+      'Поиск и отклик на вакансии': 'Job search and applications',
+      'Разделы личного кабинета': 'Dashboard sections',
+      'Все вакансии': 'All vacancies',
+      'Поиск': 'Search',
+      'Чёрный список': 'Blacklist',
+      'Резюме': 'Resumes',
+      'Сессии сайтов': 'Site sessions',
+      'Модель': 'Model',
+      'Доступ': 'Access',
+      'Все сохранённые вакансии': 'All saved vacancies',
+      'Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.': 'Vacancies from search and imported sources. Filters apply to the entire database, not only the current page.',
+      'Текст': 'Text',
+      'Источник': 'Source',
+      'Статус': 'Status',
+      'Локация': 'Location',
+      'Соответствие от': 'Minimum match',
+      'Опубликована с': 'Published from',
+      'Опубликована по': 'Published to',
+      'Формат работы': 'Work format',
+      'Тип занятости': 'Employment type',
+      'Все': 'All',
+      'Удалённо': 'Remote',
+      'Гибрид': 'Hybrid',
+      'Офис': 'Office',
+      'Не указан': 'Unspecified',
+      'Полная занятость': 'Full-time',
+      'Частичная занятость': 'Part-time',
+      'Контракт': 'Contract',
+      'Проект': 'Project',
+      'Временная работа': 'Temporary',
+      'Стажировка': 'Internship',
+      'Применить': 'Apply filters',
+      'Сбросить': 'Reset',
+      '← Назад': '← Previous',
+      'Вперёд →': 'Next →',
+      'Чёрный список компаний': 'Company blacklist',
+      'Вакансии этих компаний не появляются в каталоге и не добавляются повторно при новом поиске. Удаление компании из списка снова разрешает её вакансии.': 'Vacancies from these companies are hidden from the catalog and future searches. Removing a company allows its vacancies again.',
+      'Компания': 'Company',
+      'Добавить': 'Add',
+      'Ключ доступа к приложению': 'Application access key',
+      'API-ключ (если сервис настроен без ключа — оставьте пустым). ID пользователя сохраняется в браузере.': 'API key (leave empty if the service does not require one). The user ID is stored in this browser.',
+      'Загрузить профиль': 'Load profile',
+      'Создать пользователя': 'Create user',
+      'Языковая модель': 'Language model',
+      'Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Получите список доступных моделей, выберите одну и сохраните.': 'The key is encrypted before storage and is never displayed again. Load available models, select one, and save it.',
+      'Провайдер': 'Provider',
+      'API-ключ провайдера': 'Provider API key',
+      'Получить модели': 'Load models',
+      'Сохранить настройку': 'Save settings',
+      'Проверяем…': 'Checking…',
+      'Вход выполняется вручную в Chromium на локальном браузерном экране. Приложение не получает пароль, код подтверждения или CAPTCHA — сохраняются только зашифрованные cookies и состояние сайта.': 'Sign-in is completed manually in Chromium on the local browser screen. The app never receives passwords, verification codes, or CAPTCHA answers; only encrypted cookies and site state are stored.',
+      'Войти в hh.ru': 'Sign in to hh.ru',
+      'Войти в LinkedIn': 'Sign in to LinkedIn',
+      'Я вошёл — сохранить': 'I am signed in — save',
+      'Отмена': 'Cancel',
+      'Загрузить файлы': 'Upload files',
+      'Можно хранить несколько резюме. Навыки, ключевые слова и сводка опыта сохраняются отдельно для каждого файла. Выбранное резюме используется для поиска, оценки и сопроводительных писем.': 'You can store multiple resumes. Skills, keywords, and experience summaries are saved per file. The selected resume is used for search, matching, and cover letters.',
+      'Мои резюме': 'My resumes',
+      'Проанализировать выбранное': 'Analyze selected resume',
+      'Удалить выбранное': 'Delete selected resume',
+      'Найденные навыки (снимите галочку, если что-то лишнее)': 'Detected skills (uncheck anything irrelevant)',
+      'Добавить навык вручную': 'Add a skill manually',
+      'Краткое summary опыта': 'Experience summary',
+      'Суммарный опыт, лет': 'Total experience, years',
+      'Ключевые слова для поиска': 'Search keywords',
+      'Подтвердить и сохранить': 'Confirm and save',
+      'Локации': 'Locations',
+      'Через запятую, например: Москва, Санкт-Петербург. Оставьте пустым для поиска везде.': 'Comma-separated, for example: Moscow, Saint Petersburg. Leave empty to search anywhere.',
+      'Везде': 'Anywhere',
+      'Резюме для этого поиска': 'Resume for this search',
+      'Доски Greenhouse': 'Greenhouse boards',
+      'hh.ru и LinkedIn ищутся через управляемый браузер с вашими сессиями. Greenhouse использует официальный публичный read-only интерфейс досок компаний и не требует входа.': 'hh.ru and LinkedIn are searched through a managed browser using your sessions. Greenhouse uses the official public read-only company board interface and does not require sign-in.',
+      'везде': 'anywhere',
+      'По одной ссылке на строку, например https://boards.greenhouse.io/company. Если оставить пустым, используются Greenhouse-доски из уже сохранённых вакансий.': 'One URL per line, for example https://boards.greenhouse.io/company. Leave empty to use Greenhouse boards from saved vacancies.',
+      'Найти вакансии': 'Find vacancies',
+      'Сопроводительное письмо (можно отредактировать)': 'Cover letter (editable)',
+      'Принять и откликнуться': 'Accept and apply',
+      'Открыть для рассмотрения': 'Open for review',
+      'Отклик отправлен': 'Application sent',
+      'Отклонить': 'Reject',
+      'Компания в чёрный список': 'Blacklist company',
+      'Открыть вакансию': 'Open vacancy',
+      'Материалы и решение': 'Materials and decision',
+      'Почему подходит': 'Why it matches',
+      'Формат не указан': 'Format unspecified',
+      'Сохранена': 'Saved',
+      'Ожидает решения': 'Awaiting decision',
+      'Принята': 'Accepted',
+      'Отклонена': 'Rejected',
+      'Пропущена': 'Skipped',
+      'Отправлена': 'Submitted',
+      'Собеседование': 'Interview',
+      'Черновик': 'Draft',
+      'уже был в списке ранее': 'already appeared in the list'
+    };
+    let currentLanguage = localStorage.getItem('dashboardLanguage') === 'en' ? 'en' : 'ru';
+    const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+    const LANGUAGE_OPTIONS = [
+      {code: 'ru', names: {ru: 'Русский', en: 'Russian'}},
+      {code: 'en', names: {ru: 'Английский', en: 'English'}}
+    ];
+    const originalTextNodes = new WeakMap();
+    const originalAttributes = new WeakMap();
+
+    function createSvgNode(name, attributes) {
+      const node = document.createElementNS(SVG_NAMESPACE, name);
+      Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, value));
+      return node;
+    }
+
+    function createLanguageFlag(languageCode) {
+      const svg = createSvgNode('svg', {
+        class: 'language-flag',
+        viewBox: languageCode === 'ru' ? '0 0 3 2' : '0 0 60 36',
+        'aria-hidden': 'true',
+        focusable: 'false'
+      });
+      if (languageCode === 'ru') {
+        svg.append(
+          createSvgNode('rect', {width: '3', height: '2', fill: '#fff'}),
+          createSvgNode('rect', {y: '0.6667', width: '3', height: '0.6667', fill: '#0039a6'}),
+          createSvgNode('rect', {y: '1.3333', width: '3', height: '0.6667', fill: '#d52b1e'})
+        );
+        return svg;
+      }
+      svg.append(
+        createSvgNode('rect', {width: '60', height: '36', fill: '#012169'}),
+        createSvgNode('path', {d: 'M0 0 60 36M60 0 0 36', stroke: '#fff', 'stroke-width': '8'}),
+        createSvgNode('path', {d: 'M0 0 60 36M60 0 0 36', stroke: '#c8102e', 'stroke-width': '4'}),
+        createSvgNode('path', {d: 'M30 0V36M0 18H60', stroke: '#fff', 'stroke-width': '11'}),
+        createSvgNode('path', {d: 'M30 0V36M0 18H60', stroke: '#c8102e', 'stroke-width': '6'})
+      );
+      return svg;
+    }
+
+    function setLanguageMenuOpen(isOpen, {focusSelected = false} = {}) {
+      const toggle = document.querySelector('#language-toggle');
+      const menu = document.querySelector('#language-menu');
+      toggle.setAttribute('aria-expanded', String(isOpen));
+      menu.hidden = !isOpen;
+      if (isOpen && focusSelected) {
+        menu.querySelector('[aria-selected="true"]')?.focus();
+      }
+    }
+
+    function focusAdjacentLanguageOption(currentOption, direction) {
+      const options = Array.from(document.querySelectorAll('#language-menu .language-option'));
+      const currentIndex = options.indexOf(currentOption);
+      options[(currentIndex + direction + options.length) % options.length]?.focus();
+    }
+
+    function renderLanguageSelector() {
+      const toggle = document.querySelector('#language-toggle');
+      const menu = document.querySelector('#language-menu');
+      const selectedLanguage = LANGUAGE_OPTIONS.find(option => option.code === currentLanguage) || LANGUAGE_OPTIONS[0];
+      const selectedName = selectedLanguage.names[selectedLanguage.code];
+      const name = document.createElement('span');
+      name.className = 'language-name';
+      name.textContent = selectedName;
+      const chevron = document.createElement('span');
+      chevron.className = 'language-chevron';
+      chevron.setAttribute('aria-hidden', 'true');
+      chevron.textContent = '▾';
+      toggle.replaceChildren(createLanguageFlag(selectedLanguage.code), name, chevron);
+      toggle.title = currentLanguage === 'en'
+        ? `Current language: ${selectedName}`
+        : `Текущий язык: ${selectedName}`;
+      toggle.setAttribute('aria-label', toggle.title);
+      menu.setAttribute('aria-label', currentLanguage === 'en' ? 'Interface language' : 'Язык интерфейса');
+      menu.replaceChildren();
+      LANGUAGE_OPTIONS.forEach(language => {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'language-option';
+        option.dataset.languageCode = language.code;
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', String(language.code === currentLanguage));
+        const optionName = document.createElement('span');
+        optionName.textContent = language.names[currentLanguage];
+        option.append(createLanguageFlag(language.code), optionName);
+        option.addEventListener('click', () => selectLanguage(language.code));
+        option.addEventListener('keydown', event => {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            focusAdjacentLanguageOption(option, event.key === 'ArrowDown' ? 1 : -1);
+          }
+        });
+        menu.append(option);
+      });
+      setLanguageMenuOpen(false);
+    }
+
+    function translatedStaticText(text) {
+      const leading = text.match(/^\s*/)?.[0] || '';
+      const trailing = text.match(/\s*$/)?.[0] || '';
+      const trimmed = text.trim();
+      return TRANSLATIONS[trimmed] ? `${leading}${TRANSLATIONS[trimmed]}${trailing}` : text;
+    }
+
+    function translateTree(root = document.body) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let textNode;
+      while ((textNode = walker.nextNode())) {
+        if (['SCRIPT', 'STYLE'].includes(textNode.parentElement?.tagName)) continue;
+        if (!originalTextNodes.has(textNode)) originalTextNodes.set(textNode, textNode.nodeValue);
+        const original = originalTextNodes.get(textNode);
+        textNode.nodeValue = currentLanguage === 'en' ? translatedStaticText(original) : original;
+      }
+      const elements = root.querySelectorAll ? [root, ...root.querySelectorAll('*')] : [];
+      elements.forEach(node => {
+        if (!(node instanceof Element)) return;
+        if (node.id === 'language-toggle') return;
+        if (!originalAttributes.has(node)) {
+          originalAttributes.set(node, {
+            placeholder: node.getAttribute('placeholder'),
+            title: node.getAttribute('title'),
+            ariaLabel: node.getAttribute('aria-label')
+          });
+        }
+        const originals = originalAttributes.get(node);
+        [['placeholder', originals.placeholder], ['title', originals.title], ['aria-label', originals.ariaLabel]]
+          .forEach(([attribute, original]) => {
+            if (original === null) return;
+            node.setAttribute(
+              attribute,
+              currentLanguage === 'en' ? (TRANSLATIONS[original] || original) : original
+            );
+          });
+      });
+      document.documentElement.lang = currentLanguage;
+    }
+
+    function selectLanguage(languageCode) {
+      if (!LANGUAGE_OPTIONS.some(option => option.code === languageCode)) return;
+      if (currentLanguage === languageCode) {
+        setLanguageMenuOpen(false);
+        return;
+      }
+      currentLanguage = languageCode;
+      localStorage.setItem('dashboardLanguage', currentLanguage);
+      translateTree();
+      renderLanguageSelector();
+      loadSavedVacancies(vacancyPage).catch(showError);
+      restoreSearchResults();
+    }
+
+    document.querySelector('#language-toggle').addEventListener('click', () => {
+      const isOpen = document.querySelector('#language-toggle').getAttribute('aria-expanded') !== 'true';
+      setLanguageMenuOpen(isOpen);
+    });
+    document.querySelector('#language-toggle').addEventListener('keydown', event => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setLanguageMenuOpen(true, {focusSelected: true});
+      }
+    });
+    document.querySelector('#language-menu').addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setLanguageMenuOpen(false);
+        document.querySelector('#language-toggle').focus();
+      }
+    });
+    document.addEventListener('click', event => {
+      if (!document.querySelector('#language-selector').contains(event.target)) {
+        setLanguageMenuOpen(false);
+      }
+    });
+    const translationObserver = new MutationObserver(mutations => {
+      if (currentLanguage !== 'en') return;
+      mutations.forEach(mutation => {
+        mutation.addedNodes.forEach(node => {
+          if (node.nodeType === Node.ELEMENT_NODE) translateTree(node);
+          if (node.nodeType === Node.TEXT_NODE && node.parentElement) translateTree(node.parentElement);
+        });
+      });
+    });
+    translationObserver.observe(document.body, {childList: true, subtree: true});
     function showError(error) { statusNode.textContent = error.message; }
     function showStatus(text) { statusNode.textContent = text; }
     async function asJson(response) {
@@ -128,6 +624,167 @@
       return response.json();
     }
 
+    function activatePanel(panelName) {
+      document.querySelectorAll('[data-panel]').forEach(node => {
+        node.classList.toggle('active', node.dataset.panel === panelName);
+      });
+      document.querySelectorAll('[data-menu]').forEach(button => {
+        const isActive = button.dataset.menu === panelName;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-current', isActive ? 'page' : 'false');
+      });
+      localStorage.setItem('dashboardActivePanel', panelName);
+    }
+
+    document.querySelectorAll('[data-menu]').forEach(button => {
+      button.addEventListener('click', () => {
+        activatePanel(button.dataset.menu);
+        if (button.dataset.menu === 'vacancies') loadSavedVacancies().catch(showError);
+        if (button.dataset.menu === 'blacklist') loadCompanyBlacklist().catch(showError);
+      });
+    });
+
+    function createMatchMeter(matchScore) {
+      const score = Math.max(0, Math.min(100, Number(matchScore) || 0));
+      const meter = element('div', undefined, 'match-meter');
+      meter.style.setProperty('--match', String(score));
+      meter.setAttribute('role', 'progressbar');
+      meter.setAttribute('aria-label', currentLanguage === 'en' ? 'Match score' : 'Степень соответствия');
+      meter.setAttribute('aria-valuemin', '0');
+      meter.setAttribute('aria-valuemax', '100');
+      meter.setAttribute('aria-valuenow', String(score));
+      meter.append(element('div', currentLanguage === 'en' ? `${score}% match` : `${score}% подходит`));
+      const track = element('div', undefined, 'match-meter__track');
+      track.append(element('div', undefined, 'match-meter__fill'));
+      meter.append(track);
+      return meter;
+    }
+
+    const browserSiteLabels = {headhunter: 'hh.ru', linkedin: 'LinkedIn'};
+    let browserSessionStatuses = {};
+
+    function renderBrowserSessionStatus(session) {
+      browserSessionStatuses[session.site_key] = session;
+      const site = session.site_key;
+      const status = document.querySelector(`#${site}-session-status`);
+      const details = document.querySelector(`#${site}-session-details`);
+      const loginButton = document.querySelector(`#${site}-login`);
+      const confirmButton = document.querySelector(`#${site}-confirm`);
+      const cancelButton = document.querySelector(`#${site}-cancel`);
+      status.classList.toggle('authorized', session.is_authorized);
+      if (session.is_waiting_for_login) {
+        status.textContent = 'Ожидаем вход';
+        details.textContent = 'Завершите вход в открытом окне, затем сохраните сессию.';
+        loginButton.hidden = true;
+        confirmButton.hidden = false;
+        cancelButton.hidden = false;
+      } else if (session.is_authorized) {
+        status.textContent = 'Авторизовано';
+        details.textContent = session.check_error
+          ? `Сессия сохранена, но сейчас не удалось проверить сайт: ${session.check_error}.`
+          : session.updated_at
+          ? `Сессия сохранена ${new Date(session.updated_at).toLocaleString('ru-RU')}. Если сайт попросит войти снова, повторите авторизацию.`
+          : 'Зашифрованная сессия сохранена.';
+        loginButton.textContent = `Войти заново в ${browserSiteLabels[site]}`;
+        loginButton.hidden = false;
+        confirmButton.hidden = true;
+        cancelButton.hidden = true;
+      } else {
+        status.textContent = 'Не авторизовано';
+        details.textContent = session.is_live === false
+          ? `Проверка ${session.checked_at ? new Date(session.checked_at).toLocaleString('ru-RU') : ''} показала, что сайт снова требует вход.`
+          : 'Нажмите кнопку входа — откроется отдельное окно сайта.';
+        loginButton.textContent = `Войти в ${browserSiteLabels[site]}`;
+        loginButton.hidden = false;
+        confirmButton.hidden = true;
+        cancelButton.hidden = true;
+      }
+    }
+
+    function renderBrowserSessionsWithoutUser() {
+      browserSessionStatuses = {};
+      ['headhunter', 'linkedin'].forEach(site => renderBrowserSessionStatus({
+        site_key: site, is_authorized: false, is_waiting_for_login: false
+      }));
+      document.querySelectorAll('.session-card .session-status').forEach(node => {
+        node.textContent = 'Сначала создайте пользователя';
+      });
+    }
+
+    async function loadBrowserSessionStatuses(probe = false) {
+      const userId = userIdInput.value.trim();
+      if (!userId) {
+        renderBrowserSessionsWithoutUser();
+        return [];
+      }
+      const probeQuery = probe ? '?probe=true' : '';
+      const sessions = await asJson(await fetch(`/v1/users/${userId}/browser-sessions${probeQuery}`, {
+        headers: headers(false)
+      }));
+      sessions.forEach(renderBrowserSessionStatus);
+      return sessions;
+    }
+
+    ['headhunter', 'linkedin'].forEach(site => {
+      document.querySelector(`#${site}-login`).addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        const loginWindow = window.open('about:blank', `job-assistant-login-${site}`);
+        try {
+          const userId = userIdInput.value.trim();
+          if (!userId) throw new Error('Сначала создайте или укажите User ID');
+          if (!loginWindow) {
+            throw new Error('Браузер заблокировал окно входа. Разрешите всплывающие окна для 127.0.0.1');
+          }
+          button.disabled = true;
+          showStatus(`Открываем окно входа ${browserSiteLabels[site]}…`);
+          await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${site}/start`, {
+            method: 'POST', headers: headers(false)
+          }));
+          const viewerUrl = new URL(`http://${window.location.hostname}:7900/vnc.html`);
+          viewerUrl.searchParams.set('autoconnect', 'true');
+          viewerUrl.searchParams.set('resize', 'scale');
+          viewerUrl.searchParams.set('path', 'websockify');
+          loginWindow.location.replace(viewerUrl.toString());
+          renderBrowserSessionStatus({
+            site_key: site,
+            is_authorized: Boolean(browserSessionStatuses[site]?.is_authorized),
+            is_waiting_for_login: true
+          });
+          showStatus(`Войдите в ${browserSiteLabels[site]} в открывшемся окне, затем нажмите «Я вошёл — сохранить».`);
+        } catch (error) {
+          if (loginWindow && !loginWindow.closed) loginWindow.close();
+          showError(error);
+        }
+        finally { button.disabled = false; }
+      });
+
+      document.querySelector(`#${site}-confirm`).addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        try {
+          const userId = userIdInput.value.trim();
+          button.disabled = true;
+          showStatus(`Проверяем вход и сохраняем сессию ${browserSiteLabels[site]}…`);
+          await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${site}/confirm`, {
+            method: 'POST', headers: headers(false)
+          }));
+          await loadBrowserSessionStatuses();
+          showStatus(`${browserSiteLabels[site]}: авторизация сохранена.`);
+        } catch (error) { showError(error); }
+        finally { button.disabled = false; }
+      });
+
+      document.querySelector(`#${site}-cancel`).addEventListener('click', async () => {
+        try {
+          const userId = userIdInput.value.trim();
+          await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${site}/cancel`, {
+            method: 'POST', headers: headers(false)
+          }));
+          await loadBrowserSessionStatuses();
+          showStatus(`Вход в ${browserSiteLabels[site]} отменён.`);
+        } catch (error) { showError(error); }
+      });
+    });
+
     document.querySelector('#create-user').addEventListener('click', async () => {
       try {
         keyInput.dispatchEvent(new Event('change'));
@@ -137,54 +794,254 @@
         }));
         userIdInput.value = user.id;
         localStorage.setItem('dashboardUserId', user.id);
+        await loadBrowserSessionStatuses();
+        await loadSavedVacancies();
+        await loadCvFiles();
         showStatus(`Пользователь создан: ${user.id}`);
       } catch (error) { showError(error); }
     });
 
-    let lastCvFileId = null;
+    let cvFiles = [];
+
+    function mergeSkills(...skillLists) {
+      const merged = [];
+      const seen = new Set();
+      skillLists.flat().forEach(rawSkill => {
+        const skill = String(rawSkill || '').trim();
+        const key = skill.toLocaleLowerCase();
+        if (!skill || seen.has(key)) return;
+        seen.add(key);
+        merged.push(skill);
+      });
+      return merged;
+    }
+
+    function selectedSkills() {
+      return [...document.querySelectorAll('#skills-chips input:checked')].map(input => input.value);
+    }
+
+    function renderSkills(skills) {
+      const chips = document.querySelector('#skills-chips'); chips.replaceChildren();
+      mergeSkills(skills).forEach(skill => {
+        const chip = element('label', undefined, 'chip');
+        const checkbox = element('input'); checkbox.type = 'checkbox'; checkbox.checked = true; checkbox.value = skill;
+        chip.append(checkbox, document.createTextNode(skill));
+        chips.append(chip);
+      });
+    }
+
+    function addManualSkill() {
+      const input = document.querySelector('#manual-skill');
+      const skill = input.value.trim();
+      if (!skill) return;
+      renderSkills(mergeSkills(selectedSkills(), skill));
+      input.value = '';
+      input.focus();
+    }
+
+    document.querySelector('#add-manual-skill').addEventListener('click', addManualSkill);
+    document.querySelector('#manual-skill').addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        addManualSkill();
+      }
+    });
+
+    function renderResumeProfile(cvFile) {
+      const draftBlock = document.querySelector('#draft-block');
+      if (!cvFile) {
+        draftBlock.style.display = 'none';
+        document.querySelector('#resume-state').textContent = 'Загрузите хотя бы одно резюме.';
+        return;
+      }
+      renderSkills(cvFile.skills || []);
+      document.querySelector('#summary-text').value = cvFile.experience_summary || '';
+      document.querySelector('#keywords-text').value = cvFile.search_keywords || '';
+      document.querySelector('#experience-years').value = cvFile.years_of_experience ?? '';
+      draftBlock.style.display = 'block';
+      document.querySelector('#resume-state').textContent = cvFile.analyzed_at
+        ? `Активно: ${cvFile.original_filename}. Анализ сохранён, навыков: ${cvFile.skills.length}.`
+        : `${cvFile.original_filename}: анализ ещё не сохранён.`;
+    }
+
+    function renderCvFileSelectors(preferredCvFileId = null) {
+      const resumeSelector = document.querySelector('#resume-selector');
+      const searchSelector = document.querySelector('#search-resume-selector');
+      const activeCvFile = cvFiles.find(cvFile => cvFile.is_active);
+      const selectedCvFileId = preferredCvFileId || activeCvFile?.id || cvFiles[0]?.id || '';
+      resumeSelector.replaceChildren();
+      searchSelector.replaceChildren();
+      if (!cvFiles.length) {
+        resumeSelector.append(new Option('Нет загруженных резюме', ''));
+        searchSelector.append(new Option('Сначала загрузите и проанализируйте резюме', ''));
+        renderResumeProfile(null);
+        return;
+      }
+      cvFiles.forEach(cvFile => {
+        const suffix = `${cvFile.is_active ? ' — активно' : ''}${cvFile.analyzed_at ? '' : ' — не проанализировано'}`;
+        resumeSelector.append(new Option(`${cvFile.original_filename}${suffix}`, cvFile.id));
+        if (cvFile.analyzed_at) {
+          searchSelector.append(new Option(`${cvFile.original_filename}${cvFile.is_active ? ' — активно' : ''}`, cvFile.id));
+        }
+      });
+      resumeSelector.value = selectedCvFileId;
+      if ([...searchSelector.options].some(option => option.value === selectedCvFileId)) {
+        searchSelector.value = selectedCvFileId;
+      }
+      renderResumeProfile(cvFiles.find(cvFile => cvFile.id === selectedCvFileId));
+    }
+
+    async function loadCvFiles(preferredCvFileId = null) {
+      const userId = userIdInput.value.trim();
+      if (!userId) { cvFiles = []; renderCvFileSelectors(); return []; }
+      cvFiles = await asJson(await fetch(`/v1/users/${userId}/cv-files`, {headers: headers(false)}));
+      renderCvFileSelectors(preferredCvFileId);
+      return cvFiles;
+    }
+
+    async function selectCvFile(cvFileId) {
+      const userId = userIdInput.value.trim();
+      if (!cvFileId) return;
+      await asJson(await fetch(`/v1/users/${userId}/active-cv-file`, {
+        method: 'PUT', headers: headers(true), body: JSON.stringify({cv_file_id: cvFileId})
+      }));
+      cvFiles = cvFiles.map(cvFile => ({...cvFile, is_active: cvFile.id === cvFileId}));
+      renderCvFileSelectors(cvFileId);
+    }
+
+    async function loadSavedLlmPreference() {
+      const userId = userIdInput.value.trim();
+      if (!userId) return;
+      const response = await fetch(`/v1/users/${userId}/llm-preference`, {headers: headers(false)});
+      if (!response.ok) return;
+      const preference = await response.json();
+      if (!preference) return;
+      document.querySelector('#llm-provider').value = preference.provider;
+      document.querySelector('#llm-model').value = preference.model;
+      document.querySelector('#llm-state').textContent = `Сохранено: ${preference.provider} / ${preference.model}. Ключ уже настроен.`;
+    }
+
+    document.querySelector('#load-models').addEventListener('click', async () => {
+      try {
+        const provider = document.querySelector('#llm-provider').value;
+        const apiKey = document.querySelector('#llm-api-key').value.trim();
+        if (!apiKey) throw new Error('Введите API-ключ провайдера');
+        showStatus('Получаем доступные модели…');
+        const payload = await asJson(await fetch('/v1/llm/models', {
+          method: 'POST', headers: headers(true), body: JSON.stringify({provider, api_key: apiKey})
+        }));
+        const modelOptions = document.querySelector('#llm-model-options');
+        modelOptions.replaceChildren();
+        payload.models.forEach(model => modelOptions.append(new Option(model, model)));
+        if (!payload.models.length) throw new Error('Провайдер не вернул подходящих моделей');
+        showStatus(`Доступно моделей: ${payload.models.length}`);
+      } catch (error) { showError(error); }
+    });
+
+    document.querySelector('#save-llm').addEventListener('click', async () => {
+      try {
+        const userId = userIdInput.value.trim();
+        if (!userId) throw new Error('Сначала создайте пользователя');
+        const provider = document.querySelector('#llm-provider').value;
+        const model = document.querySelector('#llm-model').value;
+        if (!model) throw new Error('Выберите модель');
+        const apiKey = document.querySelector('#llm-api-key').value.trim();
+        const body = {provider, model}; if (apiKey) body.api_key = apiKey;
+        const preference = await asJson(await fetch(`/v1/users/${userId}/llm-preference`, {
+          method: 'PUT', headers: headers(true), body: JSON.stringify(body)
+        }));
+        document.querySelector('#llm-api-key').value = '';
+        document.querySelector('#llm-state').textContent = `Сохранено: ${preference.provider} / ${preference.model}.`;
+        showStatus('Настройка LLM сохранена в зашифрованном виде.');
+      } catch (error) { showError(error); }
+    });
 
     document.querySelector('#upload-resume').addEventListener('click', async () => {
       try {
         sessionStorage.setItem('dashboardApiKey', keyInput.value);
         const userId = userIdInput.value.trim();
         if (!userId) throw new Error('Сначала создайте или укажите User ID');
-        const file = document.querySelector('#resume-file').files[0];
-        if (!file) throw new Error('Выберите файл резюме (PDF или DOCX)');
-        showStatus('Загружаем резюме…');
-        const form = new FormData(); form.append('file', file);
-        const cvFile = await asJson(await fetch(`/v1/users/${userId}/cv-files`, {
-          method: 'POST', headers: headers(false), body: form
-        }));
-        lastCvFileId = cvFile.id;
+        const files = [...document.querySelector('#resume-file').files];
+        if (!files.length) throw new Error('Выберите хотя бы один файл резюме');
+        showStatus(`Загружаем резюме: ${files.length}…`);
+        let lastUploadedCvFile = null;
+        for (const file of files) {
+          const form = new FormData(); form.append('file', file);
+          lastUploadedCvFile = await asJson(await fetch(`/v1/users/${userId}/cv-files`, {
+            method: 'POST', headers: headers(false), body: form
+          }));
+        }
+        await loadCvFiles(lastUploadedCvFile.id);
+        await selectCvFile(lastUploadedCvFile.id);
+        document.querySelector('#resume-file').value = '';
+        showStatus(`Загружено резюме: ${files.length}. Выберите файл и запустите анализ.`);
+      } catch (error) { showError(error); }
+    });
+
+    document.querySelector('#analyze-resume').addEventListener('click', async () => {
+      try {
+        const userId = userIdInput.value.trim();
+        const cvFileId = document.querySelector('#resume-selector').value;
+        if (!cvFileId) throw new Error('Выберите загруженное резюме');
+        await selectCvFile(cvFileId);
         showStatus('Анализируем резюме (это может занять до минуты)…');
-        const draft = await asJson(await fetch(`/v1/users/${userId}/cv-files/${cvFile.id}/extract-profile`, {
+        const draft = await asJson(await fetch(`/v1/users/${userId}/cv-files/${cvFileId}/extract-profile`, {
           method: 'POST', headers: headers(false)
         }));
-        const chips = document.querySelector('#skills-chips'); chips.replaceChildren();
-        draft.skills.forEach(skill => {
-          const chip = element('label', undefined, 'chip');
-          const checkbox = element('input'); checkbox.type = 'checkbox'; checkbox.checked = true; checkbox.value = skill;
-          chip.append(checkbox, document.createTextNode(skill));
-          chips.append(chip);
-        });
+        const savedSkills = cvFiles.find(cvFile => cvFile.id === cvFileId)?.skills || [];
+        renderSkills(mergeSkills(savedSkills, draft.skills));
         document.querySelector('#summary-text').value = draft.experience_summary || '';
         document.querySelector('#keywords-text').value = draft.search_keywords || '';
+        document.querySelector('#experience-years').value = draft.years_of_experience ?? '';
         document.querySelector('#draft-block').style.display = 'block';
         showStatus(`Найдено навыков: ${draft.skills.length}. Проверьте список и подтвердите.`);
+      } catch (error) { showError(error); }
+    });
+
+    document.querySelector('#delete-resume').addEventListener('click', async () => {
+      try {
+        const userId = userIdInput.value.trim();
+        const cvFileId = document.querySelector('#resume-selector').value;
+        const cvFile = cvFiles.find(item => item.id === cvFileId);
+        if (!userId || !cvFile) throw new Error('Выберите загруженное резюме');
+        const question = currentLanguage === 'en'
+          ? `Delete resume "${cvFile.original_filename}"? Applications using it will no longer have a selected resume.`
+          : `Удалить резюме «${cvFile.original_filename}»? В откликах, где оно выбрано, резюме будет сброшено.`;
+        if (!window.confirm(question)) return;
+        const response = await fetch(`/v1/users/${userId}/cv-files/${cvFileId}`, {
+          method: 'DELETE', headers: headers(false)
+        });
+        if (!response.ok) await asJson(response);
+        await loadCvFiles();
+        showStatus(currentLanguage === 'en' ? 'Resume deleted.' : 'Резюме удалено.');
       } catch (error) { showError(error); }
     });
 
     document.querySelector('#confirm-facts').addEventListener('click', async () => {
       try {
         const userId = userIdInput.value.trim();
-        const skills = [...document.querySelectorAll('#skills-chips input:checked')].map(c => c.value);
+        const cvFileId = document.querySelector('#resume-selector').value;
+        if (!cvFileId) throw new Error('Выберите резюме');
+        const skills = selectedSkills();
         const experience_summary = document.querySelector('#summary-text').value;
+        const search_keywords = document.querySelector('#keywords-text').value.trim();
+        const yearsText = document.querySelector('#experience-years').value;
+        const years_of_experience = yearsText ? Number(yearsText) : null;
         showStatus('Сохраняем подтверждённые факты…');
-        await asJson(await fetch(`/v1/users/${userId}/confirm-profile-facts`, {
-          method: 'POST', headers: headers(true), body: JSON.stringify({skills, experience_summary})
+        await asJson(await fetch(`/v1/users/${userId}/cv-files/${cvFileId}/profile`, {
+          method: 'PUT', headers: headers(true),
+          body: JSON.stringify({skills, experience_summary, search_keywords, years_of_experience})
         }));
+        await loadCvFiles(cvFileId);
         showStatus(`Сохранено навыков: ${skills.length}. Теперь можно искать вакансии.`);
       } catch (error) { showError(error); }
+    });
+
+    document.querySelector('#resume-selector').addEventListener('change', event => {
+      selectCvFile(event.target.value).catch(showError);
+    });
+    document.querySelector('#search-resume-selector').addEventListener('change', event => {
+      selectCvFile(event.target.value).catch(showError);
     });
 
     document.querySelector('#anywhere').addEventListener('change', (event) => {
@@ -192,46 +1049,889 @@
     });
     document.querySelector('#locations').disabled = document.querySelector('#anywhere').checked;
 
+    const applicationTaskTerminalStates = new Set([
+      'completed', 'failed', 'cancelled', 'interrupted', 'waiting_for_user'
+    ]);
+
+    function applicationTaskMessage(task) {
+      const transition = task.transitions?.at(-1);
+      const reason = transition?.reason || '';
+      const evidence = transition?.evidence || [];
+      if (task.state === 'completed' && evidence.includes('submission:true')) {
+        return 'Отклик успешно отправлен.';
+      }
+      if (task.state === 'completed' && evidence.includes('submission:already_applied')) {
+        return 'На эту вакансию уже был отправлен отклик.';
+      }
+      if (task.state === 'waiting_for_user') {
+        return `Нужно действие пользователя: ${reason || 'повторите авторизацию на сайте.'}`;
+      }
+      if (task.state === 'failed') {
+        const technicalDetail = evidence.find(item => !item.startsWith('submission:'));
+        return `Отклик не отправлен: ${technicalDetail || reason || 'фоновая задача завершилась с ошибкой.'}`;
+      }
+      if (task.state === 'cancelled' || task.state === 'interrupted') {
+        return `Отправка остановлена: ${reason || task.state}.`;
+      }
+      return `Отправка выполняется: ${task.state}.`;
+    }
+
+    function isSubmissionConfirmed(task) {
+      if (!task || task.state !== 'completed') return false;
+      const evidence = task.transitions?.at(-1)?.evidence || [];
+      return evidence.includes('submission:true') || evidence.includes('submission:already_applied');
+    }
+
+    async function waitForApplicationTask(applicationId, taskState) {
+      const deadline = Date.now() + 180000;
+      while (Date.now() < deadline) {
+        const task = await asJson(await fetch(`/v1/applications/${applicationId}/task`, {
+          headers: headers(false)
+        }));
+        taskState.textContent = applicationTaskMessage(task);
+        if (applicationTaskTerminalStates.has(task.state)) {
+          return task;
+        }
+        await new Promise(resolve => setTimeout(resolve, 2500));
+      }
+      taskState.textContent = 'Отправка всё ещё выполняется. Статус обновится при повторном открытии списка.';
+      return null;
+    }
+
+    const workFormatLabels = {
+      ru: {remote: 'Удалённо', hybrid: 'Гибрид', office: 'Офис', unspecified: 'Формат не указан'},
+      en: {remote: 'Remote', hybrid: 'Hybrid', office: 'Office', unspecified: 'Format unspecified'}
+    };
+    const employmentTypeLabels = {
+      ru: {
+        full_time: 'Полная занятость', part_time: 'Частичная занятость',
+        contract: 'Контракт', project: 'Проект', temporary: 'Временная работа',
+        internship: 'Стажировка'
+      },
+      en: {
+        full_time: 'Full-time', part_time: 'Part-time', contract: 'Contract',
+        project: 'Project', temporary: 'Temporary', internship: 'Internship'
+      }
+    };
+
+    function createWorkFormatBadge(workFormat) {
+      const labels = workFormatLabels[currentLanguage];
+      const format = workFormat && labels[workFormat] ? workFormat : 'unspecified';
+      return element('span', labels[format], 'badge');
+    }
+
+    function createVacancyAttributeTags(item) {
+      const tags = element('div', undefined, 'attribute-tags');
+      if (item.location) tags.append(element('span', item.location, 'badge location'));
+      tags.append(createWorkFormatBadge(item.work_format));
+      Array.from(item.employment_types || []).forEach(employmentType => {
+        const label = employmentTypeLabels[currentLanguage][employmentType];
+        if (label) {
+          tags.append(element('span', label, 'badge'));
+        }
+      });
+      if (item.salary_text) tags.append(element('span', item.salary_text, 'badge salary'));
+      return tags;
+    }
+
+    function createKeySkillTags(skills) {
+      const normalizedSkills = Array.from(skills || []).map(String).filter(Boolean);
+      if (!normalizedSkills.length) return null;
+      const block = element('div', undefined, 'key-skills');
+      block.append(element(
+        'div',
+        currentLanguage === 'en' ? 'Key skills' : 'Ключевые навыки',
+        'key-skills__label'
+      ));
+      const tags = element('div', undefined, 'chips');
+      normalizedSkills.forEach(skill => tags.append(element('span', skill, 'chip')));
+      block.append(tags);
+      return block;
+    }
+
+    const editableApplicationStatuses = [
+      'draft', 'saved', 'awaiting_review', 'approved',
+      'rejected', 'skipped', 'submitted', 'interview'
+    ];
+
+    async function setApplicationStatus(applicationId, newStatus) {
+      const application = await asJson(await fetchWithTimeout(`/v1/applications/${applicationId}/status`, {
+        method: 'PATCH',
+        headers: headers(true),
+        body: JSON.stringify({status: newStatus})
+      }));
+      updateCachedSearchResultStatus(applicationId, application.status);
+      return application.status;
+    }
+
+    function createStatusEditor(item, statusProperty, onChanged) {
+      const editor = element('div', undefined, 'status-editor');
+      const select = element('select');
+      select.setAttribute(
+        'aria-label',
+        currentLanguage === 'en' ? 'Application status' : 'Статус отклика'
+      );
+      editableApplicationStatuses.forEach(status => {
+        const option = element(
+          'option',
+          vacancyStatusLabels[currentLanguage][status] || status
+        );
+        option.value = status;
+        option.selected = item[statusProperty] === status;
+        select.append(option);
+      });
+      const save = element(
+        'button',
+        currentLanguage === 'en' ? 'Change status' : 'Изменить статус'
+      );
+      save.type = 'button';
+      save.addEventListener('click', async () => {
+        save.disabled = true;
+        try {
+          item[statusProperty] = await setApplicationStatus(item.application_id, select.value);
+          await onChanged(item[statusProperty]);
+        } finally {
+          save.disabled = false;
+        }
+      });
+      editor.append(select, save);
+      return editor;
+    }
+
+    function createSummaryAffordance(text) {
+      if (!text) return null;
+      const truncated = text.length > 120 ? text.substring(0, 120) + '…' : text;
+      const node = element('span', truncated, 'summary-affordance');
+      node.setAttribute('tabindex', '0');
+      node.setAttribute('title', text);
+      return node;
+    }
+
     function renderResult(item) {
       const card = element('article');
+      card.dataset.searchResultKey = item.application_id || item.source_url;
+      card.dataset.matchScore = String(Number(item.match_score) || 0);
       const top = element('div', undefined, 'topline');
       const title = element('div');
       title.append(element('div', item.company, 'company'), element('h3', item.title));
-      top.append(title, element('div', `${item.match_score}%`, 'score'));
+      top.append(title, createMatchMeter(item.match_score));
       card.append(top);
+      if (item.matching_status === 'processing') {
+        card.append(element(
+          'span',
+          currentLanguage === 'en' ? 'Calculating detailed match…' : 'Рассчитываем соответствие…',
+          'badge'
+        ));
+      } else if (item.matching_error) {
+        card.append(element('span', item.matching_error, 'badge'));
+      }
       if (item.status === 'already_existed') card.append(element('span', 'уже был в списке ранее', 'badge'));
+      card.append(createVacancyAttributeTags(item));
+      const keySkills = createKeySkillTags(item.key_skills);
+      if (keySkills) card.append(keySkills);
+      const summaryNode = createSummaryAffordance(item.vacancy_summary);
+      if (summaryNode) card.append(summaryNode);
       const meta = element('div', undefined, 'meta');
-      const link = element('a', 'Открыть вакансию на hh.ru'); link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
+      const sourceLabel = vacancySourceLabels[currentLanguage][item.source] || item.source;
+      const link = element(
+        'a',
+        currentLanguage === 'en'
+          ? `Open vacancy on ${sourceLabel}`
+          : `Открыть вакансию на ${sourceLabel}`
+      ); link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
       card.append(meta);
       const coverBlock = element('div', undefined, 'cover-letter');
-      coverBlock.append(element('label', 'Сопроводительное письмо (можно отредактировать)'));
+      const coverHeader = element('div', undefined, 'cover-letter__header');
+      coverHeader.append(element('label', 'Сопроводительное письмо (можно отредактировать)'));
       const coverText = element('textarea'); coverText.id = `cover-${item.application_id}`;
-      coverBlock.append(coverText);
+      coverText.value = item.cover_letter_text || '';
+      coverText.readOnly = item.materials_status === 'processing';
+      if (coverText.readOnly) {
+        coverText.placeholder = currentLanguage === 'en'
+          ? 'Generating a tailored cover letter…'
+          : 'Генерируем индивидуальное сопроводительное письмо…';
+      }
+      coverBlock.append(coverHeader, coverText);
       card.append(coverBlock);
       const taskState = element('div', '', 'task-state'); taskState.id = `state-${item.application_id}`;
-      const actions = element('div', undefined, 'actions');
-      const accept = element('button', 'Принять и откликнуться', 'accept'); accept.type = 'button';
+      if (item.materials_status === 'processing') {
+        taskState.textContent = currentLanguage === 'en'
+          ? 'Cover letter generation is in progress.'
+          : 'Сейчас идёт генерация сопроводительного письма.';
+      } else if (item.materials_error) {
+        taskState.textContent = item.materials_error;
+      }
+      const actions = element('div', undefined, 'actions card-actions');
+      const accept = element(
+        'button',
+        item.source === 'greenhouse' ? 'Открыть для рассмотрения' : 'Принять и откликнуться',
+        'accept'
+      ); accept.type = 'button';
+      if (['submitted', 'interview'].includes(item.application_status)) {
+        accept.textContent = 'Отклик отправлен';
+        accept.disabled = true;
+      }
       accept.addEventListener('click', async () => {
+        if (item.source === 'greenhouse') {
+          window.location.href = `/review?application_id=${encodeURIComponent(item.application_id)}`;
+          return;
+        }
         accept.disabled = true;
         try {
-          taskState.textContent = 'Отправляем отклик…';
-          const task = await asJson(await fetch(`/v1/applications/${item.application_id}/apply-headhunter`, {
+          taskState.textContent = 'Сохраняем письмо и ставим отклик в очередь…';
+          await asJson(await fetch(`/v1/applications/${item.application_id}/materials`, {
+            method: 'PATCH', headers: headers(true),
+            body: JSON.stringify({cover_letter_text: coverText.value, screening_answers: []})
+          }));
+          const applyRoute = item.source === 'linkedin' ? 'apply-linkedin' : 'apply-headhunter';
+          const task = await asJson(await fetch(`/v1/applications/${item.application_id}/${applyRoute}`, {
             method: 'POST', headers: headers(true),
             body: JSON.stringify({confirmation: 'submit_real_application_i_understand_the_platform_tos_risk'})
           }));
-          taskState.textContent = `Статус: ${task.state}. Обновите вручную через /v1/applications/${item.application_id}/task, если статус waiting_for_user.`;
+          taskState.textContent = applicationTaskMessage(task);
+          let finalTask = task;
+          if (!applicationTaskTerminalStates.has(task.state)) {
+            finalTask = await waitForApplicationTask(item.application_id, taskState);
+          }
+          if (isSubmissionConfirmed(finalTask)) {
+            item.application_status = 'submitted';
+            accept.textContent = 'Отклик отправлен';
+            updateCachedSearchResultStatus(item.application_id, 'submitted');
+            card.replaceWith(renderResult(item));
+            loadSavedVacancies(vacancyPage).catch(showError);
+            return;
+          }
         } catch (error) {
           taskState.textContent = `Не удалось отправить автоматически: ${error.message}. Откройте вакансию по ссылке и откликнитесь вручную.`;
-        } finally { accept.disabled = false; }
+        } finally {
+          if (item.application_status !== 'submitted') accept.disabled = false;
+        }
       });
-      actions.append(accept, link);
+      const reject = element('button', 'Отклонить', 'danger'); reject.type = 'button';
+      reject.addEventListener('click', () => rejectVacancy(item.application_id, card).catch(showError));
+      const blacklist = element('button', 'Компания в чёрный список'); blacklist.type = 'button';
+      blacklist.addEventListener('click', () => {
+        blacklistCompany(item.company, true).catch(showError);
+      });
+      const manualSubmitted = element(
+        'button',
+        currentLanguage === 'en' ? 'I applied manually' : 'Я откликнулся вручную'
+      );
+      manualSubmitted.type = 'button';
+      manualSubmitted.addEventListener('click', async () => {
+        manualSubmitted.disabled = true;
+        taskState.textContent = currentLanguage === 'en'
+          ? 'Saving the manual application status…'
+          : 'Сохраняем отметку о ручном отклике…';
+        try {
+          item.application_status = await setApplicationStatus(
+            item.application_id, 'submitted'
+          );
+          taskState.textContent = currentLanguage === 'en'
+            ? 'Manual application marked as submitted.'
+            : 'Ручной отклик отмечен как отправленный.';
+          card.replaceWith(renderResult(item));
+          loadSavedVacancies(vacancyPage).catch(showError);
+        } catch (error) {
+          taskState.textContent = currentLanguage === 'en'
+            ? `Could not save the manual application status: ${error.message}`
+            : `Не удалось сохранить ручной отклик: ${error.message}`;
+        } finally {
+          if (item.application_status !== 'submitted') {
+            manualSubmitted.disabled = false;
+          }
+        }
+      });
+      const regenerateLetter = element('button', undefined, 'icon-button');
+      regenerateLetter.type = 'button';
+      regenerateLetter.title = currentLanguage === 'en'
+        ? 'Regenerate cover letter'
+        : 'Перегенерировать письмо';
+      regenerateLetter.setAttribute('aria-label', regenerateLetter.title);
+      regenerateLetter.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg>';
+      regenerateLetter.addEventListener('click', async () => {
+        regenerateLetter.disabled = true;
+        regenerateLetter.classList.add('is-spinning');
+        taskState.textContent = currentLanguage === 'en'
+          ? 'Generating a cover letter in the vacancy language…'
+          : 'Генерируем письмо на языке вакансии…';
+        try {
+          const materials = await asJson(await fetchWithTimeout(
+            `/v1/applications/${item.application_id}/generate-materials`,
+            {method: 'POST', headers: headers(false)},
+            150000
+          ));
+          coverText.value = materials.cover_letter_text || '';
+          taskState.textContent = currentLanguage === 'en'
+            ? 'Cover letter regenerated.'
+            : 'Сопроводительное письмо перегенерировано.';
+        } catch (error) {
+          taskState.textContent = error.message;
+        } finally {
+          regenerateLetter.disabled = false;
+          regenerateLetter.classList.remove('is-spinning');
+        }
+      });
+      coverHeader.append(regenerateLetter);
+      const isSubmitted = ['submitted', 'interview'].includes(item.application_status);
+      const moreActions = element('div', undefined, 'more-actions');
+      const moreToggle = element('button', '⋯', 'more-actions__toggle');
+      moreToggle.type = 'button';
+      moreToggle.title = currentLanguage === 'en' ? 'More actions' : 'Другие действия';
+      moreToggle.setAttribute('aria-label', moreToggle.title);
+      moreToggle.setAttribute('aria-haspopup', 'menu');
+      moreToggle.setAttribute('aria-expanded', 'false');
+      const moreMenu = element('div', undefined, 'more-actions__menu');
+      moreMenu.hidden = true;
+      moreMenu.setAttribute('role', 'menu');
+      const changeStatus = element(
+        'button',
+        currentLanguage === 'en' ? 'Change status' : 'Изменить статус'
+      );
+      changeStatus.type = 'button';
+      const statusPopup = element('div', undefined, 'status-popup');
+      statusPopup.hidden = true;
+      statusPopup.setAttribute('role', 'menu');
+      editableApplicationStatuses.forEach(status => {
+        const statusButton = element(
+          'button',
+          vacancyStatusLabels[currentLanguage][status] || status
+        );
+        statusButton.type = 'button';
+        statusButton.disabled = item.application_status === status;
+        statusButton.addEventListener('click', async () => {
+          statusButton.disabled = true;
+          try {
+            item.application_status = await setApplicationStatus(item.application_id, status);
+            card.replaceWith(renderResult(item));
+            await loadSavedVacancies(vacancyPage);
+          } catch (error) {
+            taskState.textContent = error.message;
+            statusButton.disabled = false;
+          }
+        });
+        statusPopup.append(statusButton);
+      });
+      changeStatus.addEventListener('click', () => {
+        statusPopup.hidden = !statusPopup.hidden;
+      });
+      moreToggle.addEventListener('click', () => {
+        moreMenu.hidden = !moreMenu.hidden;
+        statusPopup.hidden = true;
+        moreToggle.setAttribute('aria-expanded', String(!moreMenu.hidden));
+      });
+      if (!isSubmitted) moreMenu.append(manualSubmitted);
+      moreMenu.append(blacklist, changeStatus);
+      moreActions.append(moreToggle, moreMenu, statusPopup);
+      actions.append(accept, reject, link, moreActions);
       card.append(actions, taskState);
       // Load current materials (cover letter) for this application.
       fetch(`/v1/applications/${item.application_id}/materials`, {headers: headers(false)})
         .then(response => response.ok ? response.json() : null)
-        .then(materials => { if (materials) coverText.value = materials.cover_letter_text || ''; });
+        .then(materials => {
+          if (!materials) return;
+          coverText.value = materials.cover_letter_text || '';
+          if (!materials.cover_letter_language_matches && materials.cover_letter_text) {
+            taskState.textContent = currentLanguage === 'en'
+              ? `The cover letter does not match the vacancy language (${materials.vacancy_language}). Regenerate it.`
+              : `Язык письма не совпадает с языком вакансии (${materials.vacancy_language}). Перегенерируйте письмо.`;
+          }
+          const metadataChanged = (
+            materials.work_format !== item.work_format
+            || materials.location !== item.location
+            || materials.vacancy_summary !== item.vacancy_summary
+            || JSON.stringify(materials.employment_types || []) !== JSON.stringify(item.employment_types || [])
+            || JSON.stringify(materials.key_skills || []) !== JSON.stringify(item.key_skills || [])
+          );
+          item.work_format = materials.work_format;
+          item.location = materials.location || '';
+          item.vacancy_summary = materials.vacancy_summary;
+          item.employment_types = materials.employment_types || [];
+          item.key_skills = materials.key_skills || [];
+          if (['rejected', 'skipped', 'submitted', 'interview'].includes(materials.application_status)) {
+            item.application_status = materials.application_status;
+            updateCachedSearchResults(
+              candidate => candidate.application_id !== item.application_id
+            );
+            card.remove();
+            return;
+          }
+          if (materials.application_status !== item.application_status || metadataChanged) {
+            item.application_status = materials.application_status;
+            updateCachedSearchResultStatus(item.application_id, item.application_status);
+            card.replaceWith(renderResult(item));
+          }
+        });
       return card;
     }
+
+    function insertProgressiveSearchResult(results, item) {
+      const score = Number(item.match_score) || 0;
+      const resultKey = item.application_id || item.source_url;
+      Array.from(results.children).find(
+        candidate => candidate.dataset.searchResultKey === resultKey
+      )?.remove();
+      const card = renderResult(item);
+      const nextLowerScoredCard = Array.from(results.children).find(
+        candidate => candidate.matches('article')
+          && Number(candidate.dataset.matchScore || 0) < score
+      );
+      results.insertBefore(card, nextLowerScoredCard || null);
+    }
+
+    const SEARCH_RESULTS_STORAGE_PREFIX = 'dashboardSearchResults:';
+    const SEARCH_RESULTS_VERSION = 6;
+
+    function searchResultsStorageKey() {
+      const userId = userIdInput.value.trim();
+      return userId ? `${SEARCH_RESULTS_STORAGE_PREFIX}${userId}` : null;
+    }
+
+    function normalizeSearchResult(item) {
+      const source = String(item?.source || '');
+      const normalized = {
+        application_id: String(item?.application_id || ''),
+        vacancy_id: String(item?.vacancy_id || ''),
+        title: String(item?.title || ''),
+        company: String(item?.company || ''),
+        source_url: String(item?.source_url || ''),
+        location: String(item?.location || ''),
+        match_score: Number(item?.match_score),
+        status: String(item?.status || ''),
+        source,
+        application_status: String(item?.application_status || ''),
+        vacancy_summary: String(item?.vacancy_summary || ''),
+        work_format: String(item?.work_format || 'unspecified'),
+        salary_text: String(item?.salary_text || ''),
+        employment_types: Array.isArray(item?.employment_types)
+          ? item.employment_types.map(String)
+          : [],
+        key_skills: Array.isArray(item?.key_skills)
+          ? item.key_skills.map(String)
+          : []
+      };
+      if (
+        !normalized.application_id || !normalized.vacancy_id || !normalized.title
+        || !normalized.source_url || !Number.isFinite(normalized.match_score)
+        || !['headhunter', 'linkedin', 'greenhouse'].includes(source)
+        || ['rejected', 'skipped', 'submitted', 'interview'].includes(normalized.application_status)
+      ) return null;
+      normalized.match_score = Math.max(0, Math.min(100, normalized.match_score));
+      return normalized;
+    }
+
+    function persistSearchResults(outcomes) {
+      const storageKey = searchResultsStorageKey();
+      if (!storageKey) return;
+      const normalized = outcomes.map(normalizeSearchResult).filter(Boolean);
+      localStorage.setItem(storageKey, JSON.stringify({
+        version: SEARCH_RESULTS_VERSION,
+        outcomes: normalized
+      }));
+    }
+
+    function updateCachedSearchResults(predicate) {
+      const storageKey = searchResultsStorageKey();
+      if (!storageKey) return;
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return;
+      try {
+        const cached = JSON.parse(raw);
+        if (cached?.version !== SEARCH_RESULTS_VERSION || !Array.isArray(cached.outcomes)) {
+          localStorage.removeItem(storageKey);
+          return;
+        }
+        persistSearchResults(cached.outcomes.map(normalizeSearchResult).filter(Boolean).filter(predicate));
+      } catch {
+        localStorage.removeItem(storageKey);
+      }
+    }
+
+    function updateCachedSearchResultStatus(applicationId, newStatus) {
+      const storageKey = searchResultsStorageKey();
+      if (!storageKey) return;
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return;
+      try {
+        const cached = JSON.parse(raw);
+        if (cached?.version !== SEARCH_RESULTS_VERSION || !Array.isArray(cached.outcomes)) {
+          localStorage.removeItem(storageKey);
+          return;
+        }
+        cached.outcomes = cached.outcomes.map(item => {
+          if (item.application_id === applicationId) {
+            return { ...item, application_status: newStatus };
+          }
+          return item;
+        }).filter(item => !['rejected', 'skipped', 'submitted', 'interview'].includes(
+          item.application_status
+        ));
+        localStorage.setItem(storageKey, JSON.stringify(cached));
+      } catch {
+        localStorage.removeItem(storageKey);
+      }
+    }
+
+    function restoreSearchResults() {
+      const storageKey = searchResultsStorageKey();
+      const results = document.querySelector('#results');
+      if (!storageKey) return false;
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return false;
+      try {
+        const cached = JSON.parse(raw);
+        if (cached?.version !== SEARCH_RESULTS_VERSION || !Array.isArray(cached.outcomes)) {
+          throw new Error('Unsupported search-result cache');
+        }
+        const outcomes = cached.outcomes.map(normalizeSearchResult);
+        if (outcomes.some(item => item === null)) throw new Error('Malformed search-result cache');
+        outcomes.sort((left, right) => right.match_score - left.match_score);
+        results.replaceChildren();
+        if (!outcomes.length) {
+          results.append(element('div', 'Последний поиск не дал результатов.', 'empty'));
+        } else {
+          outcomes.forEach(item => results.append(renderResult(item)));
+        }
+        return true;
+      } catch {
+        localStorage.removeItem(storageKey);
+        return false;
+      }
+    }
+
+    const vacancySourceLabels = {
+      ru: {
+        headhunter: 'hh.ru', linkedin: 'LinkedIn', greenhouse: 'Greenhouse',
+        registry: 'Импортированный реестр', other: 'Другой источник'
+      },
+      en: {
+        headhunter: 'hh.ru', linkedin: 'LinkedIn', greenhouse: 'Greenhouse',
+        registry: 'Imported registry', other: 'Other source'
+      }
+    };
+    const vacancyStatusLabels = {
+      ru: {
+        saved: 'Сохранена', awaiting_review: 'Ожидает решения', approved: 'Принята',
+        rejected: 'Отклонена', skipped: 'Пропущена', submitted: 'Отправлена',
+        interview: 'Собеседование', draft: 'Черновик'
+      },
+      en: {
+        saved: 'Saved', awaiting_review: 'Awaiting decision', approved: 'Accepted',
+        rejected: 'Rejected', skipped: 'Skipped', submitted: 'Submitted',
+        interview: 'Interview', draft: 'Draft'
+      }
+    };
+    let vacancyPage = 1;
+    let vacancyTotalPages = 1;
+
+    function renderSavedVacancy(item) {
+      const card = element('article', undefined, 'vacancy-card');
+      const top = element('div', undefined, 'topline');
+      const title = element('div');
+      title.append(element('div', item.company, 'company'), element('h3', item.title));
+      const metadata = [
+        vacancySourceLabels[currentLanguage][item.source] || item.source,
+        item.location || (currentLanguage === 'en' ? 'Location unspecified' : 'Локация не указана'),
+        vacancyStatusLabels[currentLanguage][item.status] || item.status,
+        item.published_at
+          ? currentLanguage === 'en'
+            ? `Published ${new Date(item.published_at).toLocaleDateString('en-US')}`
+            : `Опубликована ${new Date(item.published_at).toLocaleDateString('ru-RU')}`
+          : currentLanguage === 'en' ? 'Publication date unspecified' : 'Дата публикации не указана'
+      ];
+      title.append(element('div', metadata.join(' · '), 'meta'));
+      top.append(title, createMatchMeter(item.match_score));
+      card.append(top);
+      card.append(createVacancyAttributeTags(item));
+      const keySkills = createKeySkillTags(item.key_skills);
+      if (keySkills) card.append(keySkills);
+      const summaryNode = createSummaryAffordance(item.vacancy_summary);
+      if (summaryNode) card.append(summaryNode);
+      const actions = element('div', undefined, 'actions');
+      const link = element('a', 'Открыть вакансию');
+      link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
+      const applicationLink = element('a', 'Материалы и решение');
+      applicationLink.href = `/review?application_id=${encodeURIComponent(item.application_id)}`;
+      applicationLink.className = 'link-btn';
+      const reject = element('button', 'Отклонить', 'danger'); reject.type = 'button';
+      reject.addEventListener('click', () => rejectVacancy(item.application_id, card).catch(showError));
+      const blacklist = element('button', 'Компания в чёрный список'); blacklist.type = 'button';
+      blacklist.addEventListener('click', () => blacklistCompany(item.company, true).catch(showError));
+      const detailsButton = element('button', 'Почему подходит'); detailsButton.type = 'button';
+      const details = element('div', undefined, 'match-details'); details.hidden = true;
+      detailsButton.addEventListener('click', () => {
+        loadMatchDetails(item.application_id, details, detailsButton).catch(showError);
+      });
+      if (!['submitted', 'interview'].includes(item.status)) {
+        actions.append(reject, blacklist);
+      }
+      actions.append(detailsButton, applicationLink, link);
+      const statusEditor = createStatusEditor(item, 'status', async () => {
+        await loadSavedVacancies(vacancyPage);
+        restoreSearchResults();
+      });
+      card.append(top, actions, statusEditor, details);
+      return card;
+    }
+
+    async function loadMatchDetails(applicationId, container, button) {
+      if (!container.hidden) {
+        container.hidden = true;
+        button.textContent = 'Почему подходит';
+        return;
+      }
+      container.hidden = false;
+      button.disabled = true;
+      container.replaceChildren(element('div', 'Загрузка подробного расчёта…', 'task-state'));
+      try {
+        const response = await fetch(`/v1/applications/${applicationId}/match-details`, {
+          headers: headers(false)
+        });
+        if (response.status === 404) {
+          const emptyState = element('div', undefined, 'task-state');
+          emptyState.append(element('div', 'Подробный расчёт ещё не выполнен.'));
+          const calculate = element('button', 'Рассчитать подробно');
+          calculate.type = 'button';
+          calculate.addEventListener('click', () => {
+            calculateDetailedMatch(applicationId, container, button).catch(error => {
+              container.replaceChildren(element('div', error.message, 'error'));
+            });
+          });
+          emptyState.append(calculate);
+          container.replaceChildren(emptyState);
+          return;
+        }
+        const payload = await asJson(response);
+        const heading = element(
+          'strong',
+          `Matching v2: ${Math.round(payload.final_score)}% · статус ${payload.status}`
+        );
+        const summary = element(
+          'div',
+          `Обязательных требований найдено: ${payload.matched_required_count}; не найдено: ${payload.missing_required_count}.`,
+          'task-state'
+        );
+        container.replaceChildren(heading, summary);
+        if (payload.fallback_reason) {
+          container.append(element('div', `Fallback: ${payload.fallback_reason}`, 'task-state'));
+        }
+        const blockers = payload.requirements.filter(requirement => requirement.match_level === 'blocker');
+        const missing = payload.requirements.filter(
+          requirement => ['missing', 'theoretical_only'].includes(requirement.match_level)
+        );
+        const supported = payload.requirements.filter(requirement => requirement.evidence_text);
+        appendMatchDetailList(
+          container,
+          'Блокирующие требования',
+          blockers,
+          requirement => requirement.requirement_text
+        );
+        appendMissingSkillsTags(
+          container,
+          'Чего не хватает',
+          missing,
+          requirement => requirement.requirement_text
+        );
+        appendMatchDetailList(
+          container,
+          'Подтверждения в резюме',
+          supported,
+          requirement => `${requirement.requirement_text}: ${requirement.evidence_source_fragment || requirement.evidence_text}`
+        );
+        button.textContent = 'Скрыть объяснение';
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function calculateDetailedMatch(applicationId, container, button) {
+      container.replaceChildren(element('div', 'Запускаем подробный расчёт…', 'task-state'));
+      await asJson(await fetch(`/v1/applications/${applicationId}/recalculate-match`, {
+        method: 'POST', headers: headers(false)
+      }));
+      const deadline = Date.now() + 180000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        const response = await fetch(`/v1/applications/${applicationId}/match-details`, {
+          headers: headers(false)
+        });
+        if (!response.ok) {
+          if (response.status === 404) continue;
+          await asJson(response);
+        }
+        const payload = await response.json();
+        if (payload.status === 'scored' || payload.status === 'failed') {
+          container.hidden = true;
+          button.textContent = 'Почему подходит';
+          await loadMatchDetails(applicationId, container, button);
+          return;
+        }
+        container.replaceChildren(element(
+          'div',
+          `Подробный расчёт выполняется: ${payload.status}.`,
+          'task-state'
+        ));
+      }
+      container.replaceChildren(element(
+        'div',
+        'Расчёт продолжается в фоне. Откройте «Почему подходит» немного позже.',
+        'task-state'
+      ));
+    }
+
+    function appendMatchDetailList(container, title, items, textForItem) {
+      if (!items.length) return;
+      container.append(element('h4', title));
+      const list = element('ul');
+      items.forEach(item => list.append(element('li', textForItem(item))));
+      container.append(list);
+    }
+
+    function appendMissingSkillsTags(container, title, items, textForItem) {
+      if (!items.length) return;
+      container.append(element('h4', title));
+      const tagsContainer = element('div', undefined, 'chips');
+      items.forEach(item => tagsContainer.append(element('span', textForItem(item), 'chip')));
+      container.append(tagsContainer);
+    }
+
+    async function rejectVacancy(applicationId, card) {
+      await asJson(await fetch(`/v1/applications/${applicationId}/reject-vacancy`, {
+        method: 'POST', headers: headers(false)
+      }));
+      updateCachedSearchResults(item => item.application_id !== applicationId);
+      card.remove();
+      showStatus('Вакансия отклонена и больше не будет показана в общем списке.');
+    }
+
+    async function blacklistCompany(company, askForConfirmation = false) {
+      if (askForConfirmation && !confirm(`Добавить компанию «${company}» в чёрный список?`)) return;
+      const userId = userIdInput.value.trim();
+      if (!userId) throw new Error('Сначала создайте или укажите User ID');
+      await asJson(await fetch(`/v1/users/${userId}/company-blacklist`, {
+        method: 'POST', headers: headers(true), body: JSON.stringify({company})
+      }));
+      const normalizedCompany = company.trim().toLocaleLowerCase();
+      updateCachedSearchResults(
+        item => item.company.trim().toLocaleLowerCase() !== normalizedCompany
+      );
+      showStatus(`Компания «${company}» добавлена в чёрный список.`);
+      await Promise.all([loadCompanyBlacklist(), loadSavedVacancies(1)]);
+    }
+
+    async function loadCompanyBlacklist() {
+      const userId = userIdInput.value.trim();
+      const list = document.querySelector('#blacklist-list');
+      if (!userId) {
+        list.replaceChildren(element('div', 'Укажите User ID в разделе «Доступ».', 'empty'));
+        return;
+      }
+      const entries = await asJson(await fetch(`/v1/users/${userId}/company-blacklist`, {
+        headers: headers(false)
+      }));
+      list.replaceChildren();
+      if (!entries.length) {
+        list.append(element('div', 'Чёрный список пуст.', 'empty'));
+        return;
+      }
+      entries.forEach(entry => {
+        const row = element('div', undefined, 'blacklist-entry');
+        row.append(element('strong', entry.company));
+        const remove = element('button', 'Убрать из списка'); remove.type = 'button';
+        remove.addEventListener('click', async () => {
+          try {
+            const response = await fetch(`/v1/users/${userId}/company-blacklist/${entry.id}`, {
+              method: 'DELETE', headers: headers(false)
+            });
+            if (!response.ok) {
+              const payload = await response.json().catch(() => ({}));
+              throw new Error(payload.detail || `Request failed (${response.status})`);
+            }
+            showStatus(`Компания «${entry.company}» удалена из чёрного списка.`);
+            await Promise.all([loadCompanyBlacklist(), loadSavedVacancies(1)]);
+          } catch (error) { showError(error); }
+        });
+        row.append(remove); list.append(row);
+      });
+    }
+
+    document.querySelector('#add-blacklist-company').addEventListener('click', async () => {
+      try {
+        const input = document.querySelector('#blacklist-company');
+        const company = input.value.trim();
+        if (!company) throw new Error('Введите название компании');
+        await blacklistCompany(company);
+        input.value = '';
+      } catch (error) { showError(error); }
+    });
+
+    async function loadSavedVacancies(requestedPage = vacancyPage) {
+      const userId = userIdInput.value.trim();
+      const list = document.querySelector('#vacancy-list');
+      if (!userId) {
+        list.replaceChildren(element('div', 'Укажите User ID в разделе «Доступ».', 'empty'));
+        document.querySelector('#vacancy-summary').textContent = '';
+        return;
+      }
+      const parameters = new URLSearchParams({
+        query: document.querySelector('#vacancy-query').value.trim(),
+        source: document.querySelector('#vacancy-source').value,
+        status_filter: document.querySelector('#vacancy-status').value,
+        location: document.querySelector('#vacancy-location').value.trim(),
+        min_match_score: document.querySelector('#vacancy-score').value || '0',
+        work_format: document.querySelector('#vacancy-work-format').value,
+        employment_type: document.querySelector('#vacancy-employment-type').value,
+        page: String(requestedPage),
+        page_size: '20'
+      });
+      const publishedFrom = document.querySelector('#vacancy-published-from').value;
+      const publishedTo = document.querySelector('#vacancy-published-to').value;
+      if (publishedFrom) parameters.set('published_from', publishedFrom);
+      if (publishedTo) parameters.set('published_to', publishedTo);
+      list.replaceChildren(element('div', 'Загружаем вакансии…', 'empty'));
+      const payload = await asJson(await fetch(`/v1/users/${userId}/vacancies?${parameters}`, {
+        headers: headers(false)
+      }));
+      vacancyPage = payload.page;
+      vacancyTotalPages = payload.total_pages;
+      list.replaceChildren();
+      if (!payload.items.length) {
+        list.append(element('div', 'По заданным фильтрам вакансий нет.', 'empty'));
+      } else {
+        payload.items.forEach(item => list.append(renderSavedVacancy(item)));
+      }
+      const start = payload.total ? (payload.page - 1) * payload.page_size + 1 : 0;
+      const end = Math.min(payload.page * payload.page_size, payload.total);
+      document.querySelector('#vacancy-summary').textContent = currentLanguage === 'en'
+        ? `Showing ${start}–${end} of ${payload.total}`
+        : `Показано ${start}–${end} из ${payload.total}`;
+      document.querySelector('#vacancy-page').textContent = currentLanguage === 'en'
+        ? `Page ${payload.page} of ${payload.total_pages}`
+        : `Страница ${payload.page} из ${payload.total_pages}`;
+      document.querySelector('#vacancy-previous').disabled = payload.page <= 1;
+      document.querySelector('#vacancy-next').disabled = payload.page >= payload.total_pages;
+    }
+
+    document.querySelector('#apply-vacancy-filters').addEventListener('click', () => {
+      vacancyPage = 1; loadSavedVacancies().catch(showError);
+    });
+    document.querySelector('#reset-vacancy-filters').addEventListener('click', () => {
+      document.querySelector('#vacancy-query').value = '';
+      document.querySelector('#vacancy-source').value = 'all';
+      document.querySelector('#vacancy-status').value = 'all';
+      document.querySelector('#vacancy-location').value = '';
+      document.querySelector('#vacancy-score').value = '0';
+      document.querySelector('#vacancy-published-from').value = '';
+      document.querySelector('#vacancy-published-to').value = '';
+      document.querySelector('#vacancy-work-format').value = 'all';
+      document.querySelector('#vacancy-employment-type').value = 'all';
+      vacancyPage = 1; loadSavedVacancies().catch(showError);
+    });
+    document.querySelector('#vacancy-previous').addEventListener('click', () => loadSavedVacancies(vacancyPage - 1).catch(showError));
+    document.querySelector('#vacancy-next').addEventListener('click', () => loadSavedVacancies(vacancyPage + 1).catch(showError));
+    document.querySelector('#vacancy-query').addEventListener('keydown', event => {
+      if (event.key === 'Enter') { vacancyPage = 1; loadSavedVacancies().catch(showError); }
+    });
 
     document.querySelector('#search').addEventListener('click', async () => {
       try {
@@ -239,16 +1939,162 @@
         if (!userId) throw new Error('Сначала создайте или укажите User ID');
         const anywhere = document.querySelector('#anywhere').checked;
         const locations = anywhere ? [] : document.querySelector('#locations').value.split(',').map(s => s.trim()).filter(Boolean);
-        showStatus('Ищем вакансии на hh.ru и готовим отклики…');
+        showStatus('Ищем вакансии на выбранных источниках и готовим материалы…');
         const results = document.querySelector('#results'); results.replaceChildren();
-        const outcomes = await asJson(await fetch(`/v1/users/${userId}/discover-headhunter-vacancies`, {
-          method: 'POST', headers: headers(true), body: JSON.stringify({locations, limit: 15})
-        }));
-        if (!outcomes.length) { results.append(element('div', 'Ничего не найдено. Попробуйте другие ключевые слова или локации.', 'empty')); showStatus('0 результатов'); return; }
-        outcomes.forEach(item => results.append(renderResult(item)));
-        showStatus(`Найдено: ${outcomes.length}`);
+        const cvFileId = document.querySelector('#search-resume-selector').value;
+        if (!cvFileId) throw new Error('Выберите проанализированное резюме для поиска');
+        const searchText = document.querySelector('#keywords-text').value.trim() || null;
+        const sources = [];
+        if (document.querySelector('#source-headhunter').checked) sources.push({source: 'headhunter', route: 'discover-headhunter-vacancies', requiresSession: true});
+        if (document.querySelector('#source-linkedin').checked) sources.push({source: 'linkedin', route: 'discover-linkedin-vacancies', requiresSession: true});
+        if (document.querySelector('#source-greenhouse').checked) sources.push({source: 'greenhouse', route: 'discover-greenhouse-vacancies', requiresSession: false});
+        if (!sources.length) throw new Error('Выберите хотя бы один сайт для поиска');
+        await loadBrowserSessionStatuses();
+        const missingSessions = sources
+          .filter(source => source.requiresSession && !browserSessionStatuses[source.source]?.is_authorized)
+          .map(source => source.source);
+        if (missingSessions.length) {
+          activatePanel('sessions');
+          document.querySelector('#browser-sessions').scrollIntoView({behavior: 'smooth', block: 'center'});
+          throw new Error(`Сначала авторизуйтесь: ${missingSessions.map(source => browserSiteLabels[source]).join(', ')}`);
+        }
+        saveGreenhouseBoards();
+        const greenhouseBoards = greenhouseBoardsInput.value
+          .split(/[\n,]+/).map(value => value.trim()).filter(Boolean);
+        const outcomes = [];
+        const failures = [];
+        const seenResults = new Set();
+        let completedSources = 0;
+        const updateSearchProgress = () => {
+          const progress = currentLanguage === 'en'
+            ? `Found: ${outcomes.length}. Sources completed: ${completedSources}/${sources.length}`
+            : `Найдено: ${outcomes.length}. Источников завершено: ${completedSources}/${sources.length}`;
+          showStatus(failures.length ? `${progress}. ${failures.join('; ')}` : progress);
+        };
+        updateSearchProgress();
+        const response = await fetch(`/v1/users/${userId}/discover-vacancies-stream`, {
+          method: 'POST',
+          headers: headers(true),
+          body: JSON.stringify({
+            sources: sources.map(({source}) => source),
+            board_urls: greenhouseBoards,
+            locations,
+            limit: 15,
+            search_text: searchText,
+            cv_file_id: cvFileId
+          })
+        });
+        if (!response.ok) throw new Error(await response.text());
+        if (!response.body) throw new Error('Поток поиска не поддерживается браузером');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let bufferedText = '';
+        const handleStreamEvent = event => {
+          if (event.event === 'vacancy') {
+            const item = {
+              ...event.item,
+              source: event.source,
+              matching_status: 'processing',
+              materials_status: 'processing'
+            };
+            if (['rejected', 'skipped', 'submitted', 'interview'].includes(
+              item.application_status
+            )) return;
+            const resultKey = item.application_id || item.source_url;
+            if (!resultKey || seenResults.has(resultKey)) return;
+            seenResults.add(resultKey);
+            outcomes.push(item);
+            insertProgressiveSearchResult(results, item);
+            outcomes.sort((left, right) => right.match_score - left.match_score);
+            persistSearchResults(outcomes);
+            updateSearchProgress();
+          } else if (event.application_id) {
+            const item = outcomes.find(
+              candidate => candidate.application_id === event.application_id
+            );
+            if (!item) return;
+            if (event.event === 'enrichment_started') {
+              item.matching_status = 'processing';
+              item.materials_status = 'processing';
+            } else if (event.event === 'materials_ready') {
+              item.materials_status = 'ready';
+              item.cover_letter_text = event.cover_letter_text || '';
+              delete item.materials_error;
+            } else if (event.event === 'materials_error') {
+              item.materials_status = 'error';
+              item.materials_error = event.error;
+            } else if (event.event === 'matching_ready') {
+              item.matching_status = event.matching_status || 'ready';
+              item.match_score = Number(event.match_score) || 0;
+              delete item.matching_error;
+              outcomes.sort((left, right) => right.match_score - left.match_score);
+            } else if (event.event === 'matching_error') {
+              item.matching_status = 'error';
+              item.matching_error = event.error;
+            } else {
+              return;
+            }
+            insertProgressiveSearchResult(results, item);
+            persistSearchResults(outcomes);
+          } else if (event.event === 'source_error') {
+            failures.push(
+              `${vacancySourceLabels[currentLanguage][event.source] || event.source}: ${event.error}`
+            );
+            updateSearchProgress();
+          } else if (event.event === 'source_complete') {
+            completedSources += 1;
+            updateSearchProgress();
+          }
+        };
+        while (true) {
+          const {value, done} = await reader.read();
+          bufferedText += decoder.decode(value || new Uint8Array(), {stream: !done});
+          const lines = bufferedText.split('\n');
+          bufferedText = lines.pop() || '';
+          lines.filter(Boolean).forEach(line => handleStreamEvent(JSON.parse(line)));
+          if (done) break;
+        }
+        if (bufferedText.trim()) handleStreamEvent(JSON.parse(bufferedText));
+        loadSavedVacancies(1).catch(() => {});
+        if (!outcomes.length) {
+          persistSearchResults([]);
+          results.append(element('div', failures.length ? 'Поиск не выполнен: проверьте настройку браузерных сессий.' : 'Ничего не найдено. Попробуйте другие ключевые слова или локации.', 'empty'));
+          showStatus(failures.length ? failures.join('; ') : '0 результатов');
+          return;
+        }
+        showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
       } catch (error) { showError(error); }
     });
+    async function loadUserWorkspace() {
+      localStorage.setItem('dashboardUserId', userIdInput.value.trim());
+      loadSavedLlmPreference();
+      await Promise.all([
+        loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles()
+      ]);
+      restoreSearchResults();
+    }
+    keyInput.addEventListener('change', () => sessionStorage.setItem('dashboardApiKey', keyInput.value));
+    greenhouseBoardsInput.addEventListener('input', saveGreenhouseBoards);
+    userIdInput.addEventListener('change', () => loadUserWorkspace().catch(showError));
+    document.querySelector('#load-user').addEventListener('click', () => {
+      loadUserWorkspace().then(() => showStatus('Профиль загружен.')).catch(showError);
+    });
+    translateTree();
+    renderLanguageSelector();
+    const requestedPanel = new URLSearchParams(window.location.search).get('panel');
+    const initialPanel = [
+      'vacancies', 'search', 'blacklist', 'resume', 'sessions', 'model', 'access'
+    ].includes(requestedPanel)
+      ? requestedPanel
+      : (localStorage.getItem('dashboardActivePanel') || 'vacancies');
+    activatePanel(initialPanel);
+    restoreSearchResults();
+    loadSavedLlmPreference();
+    loadBrowserSessionStatuses(true).catch(showError);
+    window.setInterval(() => loadBrowserSessionStatuses(true).catch(() => {}), 300000);
+    loadSavedVacancies().catch(showError);
+    loadCompanyBlacklist().catch(showError);
+    loadCvFiles().catch(showError);
   </script>
 </body>
 </html>

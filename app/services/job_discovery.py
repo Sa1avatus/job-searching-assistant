@@ -12,27 +12,82 @@ submission.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChallenge, LoginRequired
-from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter
-from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
+from adapters.job_boards.greenhouse_api import (
+    GreenhouseBoardReference,
+    GreenhouseJobBoardApi,
+    GreenhouseSearchHit,
+)
+from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter, HeadHunterSearchHit
+from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter, LinkedInSearchHit
+from app.config import get_settings
+from app.domain.vacancy_attributes import detect_employment_types
+from app.matching.jobs import MatchingJobService
+from app.services.company_blacklist import CompanyBlacklistService
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError, RecruitmentService
-from app.storage.tables import ApplicationRow, UserRow, VacancyRow
+from app.services.vacancy_metadata import (
+    detect_work_format,
+    extract_key_skills,
+    summarize_vacancy,
+)
+from app.storage.tables import ApplicationRow, CvFileRow, UserRow, VacancyRow
 
 
 class LinkedInSessionRequiredError(RuntimeError):
-    """LinkedIn search needs a captured session; run scripts/browser_login_capture.py linkedin."""
+    """LinkedIn search needs a signed-in browser session."""
+
 
 _DEFAULT_LIMIT = 15
 _MAX_LIMIT = 50
+_MAX_SEARCH_QUERIES = 8
+_MAX_CANDIDATES = 200
+_PER_QUERY_LIMIT = 50
+_TERMINAL_DISCOVERY_STATUSES = frozenset(
+    {"rejected", "skipped", "submitted", "interview"}
+)
+
+
+def _normalize_skill(skill: str) -> str:
+    return " ".join(skill.casefold().split())
+
+
+def _normalize_duplicate_key(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _contains_skill(text: str, normalized_skill: str) -> bool:
+    if not normalized_skill:
+        return False
+    flexible_skill = r"\s+".join(re.escape(part) for part in normalized_skill.split())
+    return re.search(rf"(?<!\w){flexible_skill}(?!\w)", text.casefold()) is not None
+
+
+def _detect_extracted_work_format(
+    *,
+    title: str,
+    location: str,
+    description_text: str,
+    employment_text: str,
+) -> str:
+    bounded_format = detect_work_format("", location, employment_text)
+    if bounded_format != "unspecified":
+        return bounded_format
+    return detect_work_format(title, location, description_text)
 
 
 class NoSearchKeywordsError(RuntimeError):
     """The candidate has no verified skills/keywords to search with."""
+
+
+class GreenhouseDiscoveryError(RuntimeError):
+    """No configured Greenhouse board could be searched."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,8 +97,45 @@ class DiscoveryOutcome:
     title: str
     company: str
     source_url: str
+    location: str
     match_score: int
     status: str  # "created" | "already_existed"
+    application_status: str
+    vacancy_summary: str
+    work_format: str
+    salary_text: str = ""
+    employment_types: tuple[str, ...] = ()
+    key_skills: tuple[str, ...] = ()
+
+DiscoveryOutcomeCallback = Callable[[DiscoveryOutcome], Awaitable[None]]
+
+
+def build_search_queries(search_text: str) -> list[str]:
+    """Expand a candidate-entered phrase into a small, site-friendly query set."""
+    normalized_text = " ".join(search_text.split()).strip(" ,;|")
+    if not normalized_text:
+        return []
+
+    phrases = [
+        " ".join(phrase.split()) for phrase in re.split(r"[,;|\n]+", search_text) if phrase.strip()
+    ]
+    candidates = [normalized_text, *phrases]
+    for phrase in phrases:
+        words = re.findall(r"[\w#+.-]{2,}", phrase, flags=re.UNICODE)
+        candidates.extend(words)
+
+    queries: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized_candidate = candidate.strip(" ,;|")
+        key = normalized_candidate.casefold()
+        if not normalized_candidate or key in seen:
+            continue
+        seen.add(key)
+        queries.append(normalized_candidate)
+        if len(queries) == _MAX_SEARCH_QUERIES:
+            break
+    return queries
 
 
 class JobDiscoveryService:
@@ -58,35 +150,57 @@ class JobDiscoveryService:
         locations: list[str],
         limit: int = _DEFAULT_LIMIT,
         search_text: str | None = None,
+        cv_file_id: str | None = None,
+        on_outcome: DiscoveryOutcomeCallback | None = None,
     ) -> list[DiscoveryOutcome]:
         recruitment = RecruitmentService(self._session)
         user = self._session.get(UserRow, user_id)
         if user is None:
             raise EntityNotFoundError("User not found")
-        text = (search_text or self._build_search_text(user_facts=user.facts)).strip()
+        cv_file = recruitment.active_cv_file(user_id, cv_file_id)
+        text = self._resolve_search_text(user, cv_file, search_text)
         if not text:
             raise NoSearchKeywordsError(
                 "No search keywords available; add verified skill facts or pass search_text"
             )
 
         limit = min(max(limit, 1), _MAX_LIMIT)
-        try:
-            hits = await headhunter_adapter.search(
-                text=text, location_names=locations, limit=limit
-            )
-        except (CaptchaChallenge, ApplyBlocked):
-            # A CAPTCHA/blocked search page mid-run should surface as "found nothing this time"
-            # rather than a hard failure; the caller can retry once the challenge is resolved.
-            return []
+        terminal_urls = self._terminal_source_urls(user_id)
+        candidate_limit = min(_MAX_CANDIDATES, max(limit * 2, _PER_QUERY_LIMIT))
+        hits_by_url: dict[str, HeadHunterSearchHit] = {}
+        for query in build_search_queries(text):
+            try:
+                query_hits = await headhunter_adapter.search(
+                    text=query, location_names=locations, limit=_PER_QUERY_LIMIT
+                )
+            except (CaptchaChallenge, ApplyBlocked):
+                # Preserve results collected before a challenge appeared on a later query.
+                break
+            for hit in query_hits:
+                if hit.source_url in terminal_urls:
+                    continue
+                hits_by_url.setdefault(hit.source_url, hit)
+                if len(hits_by_url) == candidate_limit:
+                    break
+            if len(hits_by_url) == candidate_limit:
+                break
 
         outcomes: list[DiscoveryOutcome] = []
-        for hit in hits:
+        for hit in hits_by_url.values():
             outcome = await self._stage_one(
-                recruitment, headhunter_adapter, user_id, hit.source_url
+                recruitment,
+                headhunter_adapter,
+                user_id,
+                hit.source_url,
+                cv_file.id if cv_file else None,
             )
             if outcome is not None:
                 outcomes.append(outcome)
-        return outcomes
+                if on_outcome is not None:
+                    await on_outcome(outcome)
+                if len(outcomes) == limit:
+                    break
+        return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
 
     async def _stage_one(
         self,
@@ -94,16 +208,53 @@ class JobDiscoveryService:
         headhunter_adapter: HeadHunterBrowserAdapter,
         user_id: str,
         source_url: str,
+        cv_file_id: str | None,
     ) -> DiscoveryOutcome | None:
-        existing_vacancy = self._session.scalar(
+        vacancy: VacancyRow | None = self._session.scalar(
             select(VacancyRow).where(VacancyRow.source_url == source_url)
         )
-        if existing_vacancy is None:
+        if vacancy is not None and (
+            vacancy.work_format == "unspecified" or not vacancy.location
+        ):
+            try:
+                refreshed = await headhunter_adapter.extract_vacancy(source_url)
+            except Exception:  # noqa: BLE001 - keep the previously saved vacancy available
+                pass
+            else:
+                vacancy.location = refreshed.location or vacancy.location
+                vacancy.description_text = refreshed.description_text or vacancy.description_text
+                vacancy.required_skills = list(refreshed.required_skills) or vacancy.required_skills
+                vacancy.salary_text = refreshed.salary_text or vacancy.salary_text
+                vacancy.published_at = refreshed.published_at or vacancy.published_at
+                refreshed_work_format = _detect_extracted_work_format(
+                    title=refreshed.title,
+                    location=refreshed.location,
+                    description_text=refreshed.description_text,
+                    employment_text=refreshed.employment_text,
+                )
+                if refreshed_work_format != "unspecified":
+                    vacancy.work_format = refreshed_work_format
+                refreshed_employment_types = detect_employment_types(
+                    refreshed.employment_text,
+                    refreshed.title,
+                    refreshed.location,
+                    refreshed.description_text,
+                )
+                if refreshed_employment_types:
+                    vacancy.employment_types = list(refreshed_employment_types)
+                self._session.commit()
+        if vacancy is None:
             try:
                 extracted = await headhunter_adapter.extract_vacancy(source_url)
             except Exception:  # noqa: BLE001 - a single unreadable search hit should not abort the run
                 return None
             try:
+                work_format = _detect_extracted_work_format(
+                    title=extracted.title,
+                    location=extracted.location,
+                    description_text=extracted.description_text,
+                    employment_text=extracted.employment_text,
+                )
                 vacancy = recruitment.create_vacancy(
                     source_url=extracted.source_url,
                     title=extracted.title,
@@ -125,6 +276,15 @@ class JobDiscoveryService:
                         for field in extracted.form_fields
                     ],
                     requires_sensitive_review=extracted.requires_sensitive_review,
+                    published_at=extracted.published_at,
+                    salary_text=extracted.salary_text,
+                    work_format=work_format,
+                    employment_types=detect_employment_types(
+                        extracted.employment_text,
+                        extracted.title,
+                        extracted.location,
+                        extracted.description_text,
+                    ),
                 )
             except DuplicateEntityError:
                 vacancy = self._session.scalar(
@@ -132,8 +292,10 @@ class JobDiscoveryService:
                 )
                 if vacancy is None:
                     return None
-        else:
-            vacancy = existing_vacancy
+        if vacancy is None:
+            return None
+        if CompanyBlacklistService(self._session).contains(user_id, vacancy.company):
+            return None
 
         existing_application = self._session.scalar(
             select(ApplicationRow).where(
@@ -141,28 +303,51 @@ class JobDiscoveryService:
             )
         )
         if existing_application is not None:
+            if existing_application.status in {"rejected", "skipped", "submitted", "interview"}:
+                return None
+            existing_application.selected_cv_file_id = cv_file_id
+            self._rescore_from_text(existing_application, vacancy, cv_file_id)
             return DiscoveryOutcome(
                 application_id=existing_application.id,
                 vacancy_id=vacancy.id,
                 title=vacancy.title,
                 company=vacancy.company,
                 source_url=vacancy.source_url,
+                location=vacancy.location,
                 match_score=existing_application.match_score,
                 status="already_existed",
+                application_status=existing_application.status,
+                vacancy_summary=summarize_vacancy(vacancy.description_text),
+                work_format=vacancy.work_format,
+                salary_text=vacancy.salary_text,
+                employment_types=tuple(vacancy.employment_types or ()),
+                key_skills=extract_key_skills(
+                    vacancy.description_text, vacancy.required_skills or ()
+                ),
             )
 
         try:
-            application = recruitment.prepare_application(user_id, vacancy.id)
+            application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
         except (EntityNotFoundError, DuplicateEntityError):
             return None
+        self._rescore_from_text(application, vacancy, cv_file_id)
         return DiscoveryOutcome(
             application_id=application.id,
             vacancy_id=vacancy.id,
             title=vacancy.title,
             company=vacancy.company,
             source_url=vacancy.source_url,
+            location=vacancy.location,
             match_score=application.match_score,
             status="created",
+            application_status=application.status,
+            vacancy_summary=summarize_vacancy(vacancy.description_text),
+            work_format=vacancy.work_format,
+            salary_text=vacancy.salary_text,
+            employment_types=tuple(vacancy.employment_types or ()),
+            key_skills=extract_key_skills(
+                vacancy.description_text, vacancy.required_skills or ()
+            ),
         )
 
     async def discover_linkedin_vacancies(
@@ -173,35 +358,60 @@ class JobDiscoveryService:
         locations: list[str],
         limit: int = _DEFAULT_LIMIT,
         search_text: str | None = None,
+        cv_file_id: str | None = None,
+        on_outcome: DiscoveryOutcomeCallback | None = None,
     ) -> list[DiscoveryOutcome]:
         recruitment = RecruitmentService(self._session)
         user = self._session.get(UserRow, user_id)
         if user is None:
             raise EntityNotFoundError("User not found")
-        text = (search_text or self._build_search_text(user_facts=user.facts)).strip()
+        cv_file = recruitment.active_cv_file(user_id, cv_file_id)
+        text = self._resolve_search_text(user, cv_file, search_text)
         if not text:
             raise NoSearchKeywordsError(
                 "No search keywords available; add verified skill facts or pass search_text"
             )
 
         limit = min(max(limit, 1), _MAX_LIMIT)
-        try:
-            hits = await linkedin_adapter.search(text=text, location_names=locations, limit=limit)
-        except LoginRequired as error:
-            raise LinkedInSessionRequiredError(
-                "No usable LinkedIn session; run scripts/browser_login_capture.py linkedin"
-            ) from error
-        except (CaptchaChallenge, ApplyBlocked):
-            return []
+        terminal_urls = self._terminal_source_urls(user_id)
+        candidate_limit = min(_MAX_CANDIDATES, max(limit * 2, _PER_QUERY_LIMIT))
+        hits_by_url: dict[str, LinkedInSearchHit] = {}
+        for query in build_search_queries(text):
+            try:
+                query_hits = await linkedin_adapter.search(
+                    text=query, location_names=locations, limit=_PER_QUERY_LIMIT
+                )
+            except LoginRequired as error:
+                raise LinkedInSessionRequiredError(
+                    "Сессия LinkedIn истекла. Авторизуйтесь заново в личном кабинете"
+                ) from error
+            except (CaptchaChallenge, ApplyBlocked):
+                break
+            for hit in query_hits:
+                if hit.source_url in terminal_urls:
+                    continue
+                hits_by_url.setdefault(hit.source_url, hit)
+                if len(hits_by_url) == candidate_limit:
+                    break
+            if len(hits_by_url) == candidate_limit:
+                break
 
         outcomes: list[DiscoveryOutcome] = []
-        for hit in hits:
+        for hit in hits_by_url.values():
             outcome = await self._stage_linkedin(
-                recruitment, linkedin_adapter, user_id, hit.source_url
+                recruitment,
+                linkedin_adapter,
+                user_id,
+                hit.source_url,
+                cv_file.id if cv_file else None,
             )
             if outcome is not None:
                 outcomes.append(outcome)
-        return outcomes
+                if on_outcome is not None:
+                    await on_outcome(outcome)
+                if len(outcomes) == limit:
+                    break
+        return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
 
     async def _stage_linkedin(
         self,
@@ -209,21 +419,53 @@ class JobDiscoveryService:
         linkedin_adapter: LinkedInBrowserAdapter,
         user_id: str,
         source_url: str,
+        cv_file_id: str | None,
     ) -> DiscoveryOutcome | None:
-        existing_vacancy = self._session.scalar(
+        application_submitted = False
+        vacancy: VacancyRow | None = self._session.scalar(
             select(VacancyRow).where(VacancyRow.source_url == source_url)
         )
-        if existing_vacancy is None:
+        if vacancy is not None:
+            try:
+                refreshed = await linkedin_adapter.extract_vacancy(source_url)
+            except Exception:  # noqa: BLE001 - keep the previously saved vacancy available
+                pass
+            else:
+                application_submitted = refreshed.application_submitted
+                vacancy.location = refreshed.location or vacancy.location
+                vacancy.description_text = refreshed.description_text or vacancy.description_text
+                vacancy.salary_text = refreshed.salary_text or vacancy.salary_text
+                vacancy.published_at = refreshed.published_at or vacancy.published_at
+                refreshed_work_format = _detect_extracted_work_format(
+                    title=refreshed.title,
+                    location=refreshed.location,
+                    description_text=refreshed.description_text,
+                    employment_text=refreshed.employment_text,
+                )
+                if refreshed_work_format != "unspecified":
+                    vacancy.work_format = refreshed_work_format
+                refreshed_employment_types = detect_employment_types(
+                    refreshed.employment_text,
+                    refreshed.title,
+                    refreshed.location,
+                    refreshed.description_text,
+                )
+                if refreshed_employment_types:
+                    vacancy.employment_types = list(refreshed_employment_types)
+                self._session.commit()
+        if vacancy is None:
             try:
                 extracted = await linkedin_adapter.extract_vacancy(source_url)
             except Exception:  # noqa: BLE001 - a single unreadable search hit should not abort the run
                 return None
-            if not extracted.has_easy_apply:
-                # Real submission is only supported for native Easy Apply jobs (see
-                # linkedin_browser.py); still stage it so the person can apply manually via the
-                # link, but skip it here to avoid cluttering results with unsupported jobs.
-                return None
             try:
+                application_submitted = extracted.application_submitted
+                work_format = _detect_extracted_work_format(
+                    title=extracted.title,
+                    location=extracted.location,
+                    description_text=extracted.description_text,
+                    employment_text=extracted.employment_text,
+                )
                 vacancy = recruitment.create_vacancy(
                     source_url=extracted.source_url,
                     title=extracted.title,
@@ -236,6 +478,15 @@ class JobDiscoveryService:
                     source_evidence_url=extracted.source_url,
                     application_fields=[],
                     requires_sensitive_review=False,
+                    published_at=extracted.published_at,
+                    salary_text=extracted.salary_text,
+                    work_format=work_format,
+                    employment_types=detect_employment_types(
+                        extracted.employment_text,
+                        extracted.title,
+                        extracted.location,
+                        extracted.description_text,
+                    ),
                 )
             except DuplicateEntityError:
                 vacancy = self._session.scalar(
@@ -243,8 +494,10 @@ class JobDiscoveryService:
                 )
                 if vacancy is None:
                     return None
-        else:
-            vacancy = existing_vacancy
+        if vacancy is None:
+            return None
+        if CompanyBlacklistService(self._session).contains(user_id, vacancy.company):
+            return None
 
         existing_application = self._session.scalar(
             select(ApplicationRow).where(
@@ -252,18 +505,41 @@ class JobDiscoveryService:
             )
         )
         if existing_application is not None:
+            if existing_application.status in {"rejected", "skipped", "submitted", "interview"}:
+                return None
+            if application_submitted:
+                existing_application.status = "submitted"
+                self._mark_linkedin_duplicates_submitted(user_id, vacancy)
+                return None
+            existing_application.selected_cv_file_id = cv_file_id
+            self._rescore_from_text(existing_application, vacancy, cv_file_id)
             return DiscoveryOutcome(
                 application_id=existing_application.id,
                 vacancy_id=vacancy.id,
                 title=vacancy.title,
                 company=vacancy.company,
                 source_url=vacancy.source_url,
+                location=vacancy.location,
                 match_score=existing_application.match_score,
                 status="already_existed",
+                application_status=existing_application.status,
+                vacancy_summary=summarize_vacancy(vacancy.description_text),
+                work_format=vacancy.work_format,
+                salary_text=vacancy.salary_text,
+                employment_types=tuple(vacancy.employment_types or ()),
+                key_skills=extract_key_skills(
+                    vacancy.description_text, vacancy.required_skills or ()
+                ),
             )
         try:
-            application = recruitment.prepare_application(user_id, vacancy.id)
+            application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
         except (EntityNotFoundError, DuplicateEntityError):
+            return None
+        self._rescore_from_text(application, vacancy, cv_file_id)
+        if application_submitted:
+            application.status = "submitted"
+            self._mark_linkedin_duplicates_submitted(user_id, vacancy)
+            self._session.commit()
             return None
         return DiscoveryOutcome(
             application_id=application.id,
@@ -271,9 +547,376 @@ class JobDiscoveryService:
             title=vacancy.title,
             company=vacancy.company,
             source_url=vacancy.source_url,
+            location=vacancy.location,
             match_score=application.match_score,
             status="created",
+            application_status=application.status,
+            vacancy_summary=summarize_vacancy(vacancy.description_text),
+            work_format=vacancy.work_format,
+            salary_text=vacancy.salary_text,
+            employment_types=tuple(vacancy.employment_types or ()),
+            key_skills=extract_key_skills(
+                vacancy.description_text, vacancy.required_skills or ()
+            ),
         )
+
+    def _mark_linkedin_duplicates_submitted(
+        self, user_id: str, submitted_vacancy: VacancyRow
+    ) -> None:
+        """Keep exact LinkedIn reposts from appearing actionable after submission."""
+        submitted_key = tuple(
+            _normalize_duplicate_key(value)
+            for value in (
+                submitted_vacancy.title,
+                submitted_vacancy.company,
+                submitted_vacancy.location,
+            )
+        )
+        duplicate_rows = self._session.execute(
+            select(ApplicationRow, VacancyRow)
+            .join(VacancyRow, VacancyRow.id == ApplicationRow.vacancy_id)
+            .where(
+                ApplicationRow.user_id == user_id,
+                VacancyRow.adapter_name == "linkedin-reference",
+            )
+        ).all()
+        for application, vacancy in duplicate_rows:
+            vacancy_key = tuple(
+                _normalize_duplicate_key(value)
+                for value in (vacancy.title, vacancy.company, vacancy.location)
+            )
+            if vacancy_key == submitted_key:
+                application.status = "submitted"
+        self._session.commit()
+
+    async def discover_greenhouse_vacancies(
+        self,
+        user_id: str,
+        *,
+        greenhouse_adapter: GreenhouseJobBoardApi,
+        board_urls: list[str],
+        locations: list[str],
+        limit: int = _DEFAULT_LIMIT,
+        search_text: str | None = None,
+        cv_file_id: str | None = None,
+        on_outcome: DiscoveryOutcomeCallback | None = None,
+    ) -> list[DiscoveryOutcome]:
+        recruitment = RecruitmentService(self._session)
+        user = self._session.get(UserRow, user_id)
+        if user is None:
+            raise EntityNotFoundError("User not found")
+        cv_file = recruitment.active_cv_file(user_id, cv_file_id)
+        text = self._resolve_search_text(user, cv_file, search_text)
+        queries = build_search_queries(text)
+        if not queries:
+            raise NoSearchKeywordsError(
+                "No search keywords available; add verified skill facts or pass search_text"
+            )
+        if not board_urls:
+            board_urls = self.known_greenhouse_board_urls()
+        if not board_urls:
+            raise GreenhouseDiscoveryError(
+                "Добавьте хотя бы одну ссылку на доску Greenhouse в настройках поиска"
+            )
+
+        limit = min(max(limit, 1), _MAX_LIMIT)
+        terminal_urls = self._terminal_source_urls(user_id)
+        candidate_limit = min(_MAX_CANDIDATES, max(limit * 2, _PER_QUERY_LIMIT))
+        normalized_queries = [query.casefold() for query in queries]
+        normalized_locations = [location.casefold() for location in locations if location.strip()]
+        hits_by_url: dict[str, GreenhouseSearchHit] = {}
+        failed_boards = 0
+        for board_url in dict.fromkeys(board_urls):
+            try:
+                board_hits = await greenhouse_adapter.list_jobs(board_url)
+            except Exception:  # noqa: BLE001 - continue with other explicitly configured boards
+                failed_boards += 1
+                continue
+            for hit in board_hits:
+                if hit.source_url in terminal_urls:
+                    continue
+                searchable_text = " ".join(
+                    (hit.title, hit.company, hit.location, hit.description_text)
+                ).casefold()
+                if not any(query in searchable_text for query in normalized_queries):
+                    continue
+                if normalized_locations and not any(
+                    location in hit.location.casefold() for location in normalized_locations
+                ):
+                    continue
+                hits_by_url.setdefault(hit.source_url, hit)
+                if len(hits_by_url) == candidate_limit:
+                    break
+            if len(hits_by_url) == candidate_limit:
+                break
+        if failed_boards == len(set(board_urls)):
+            raise GreenhouseDiscoveryError("Не удалось прочитать указанные доски Greenhouse")
+
+        outcomes: list[DiscoveryOutcome] = []
+        for hit in hits_by_url.values():
+            outcome = await self._stage_greenhouse(
+                recruitment,
+                greenhouse_adapter,
+                user_id,
+                hit.source_url,
+                cv_file.id if cv_file else None,
+            )
+            if outcome is not None:
+                outcomes.append(outcome)
+                if on_outcome is not None:
+                    await on_outcome(outcome)
+                if len(outcomes) == limit:
+                    break
+        return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
+
+    async def _stage_greenhouse(
+        self,
+        recruitment: RecruitmentService,
+        greenhouse_adapter: GreenhouseJobBoardApi,
+        user_id: str,
+        source_url: str,
+        cv_file_id: str | None,
+    ) -> DiscoveryOutcome | None:
+        vacancy = self._session.scalar(
+            select(VacancyRow).where(VacancyRow.source_url == source_url)
+        )
+        if vacancy is None:
+            try:
+                extracted = await greenhouse_adapter.extract_job(source_url)
+            except Exception:  # noqa: BLE001 - one removed job must not abort the board search
+                return None
+            if CompanyBlacklistService(self._session).contains(user_id, extracted.company):
+                return None
+            try:
+                work_format = _detect_extracted_work_format(
+                    title=extracted.title,
+                    location=extracted.location,
+                    description_text=extracted.description_text,
+                    employment_text=extracted.employment_text,
+                )
+                vacancy = recruitment.create_vacancy(
+                    source_url=extracted.source_url,
+                    title=extracted.title,
+                    company=extracted.company,
+                    required_skills=[],
+                    preferred_skills=[],
+                    location=extracted.location,
+                    description_text=extracted.description_text,
+                    adapter_name="greenhouse",
+                    source_evidence_url=extracted.evidence_api_url,
+                    application_fields=[
+                        {
+                            "field_id": field.field_id,
+                            "label": field.label,
+                            "field_type": field.field_type.value,
+                            "is_required": field.is_required,
+                            "semantic_category": field.semantic_category,
+                        }
+                        for field in extracted.form_fields
+                    ],
+                    requires_sensitive_review=extracted.requires_sensitive_review,
+                    published_at=extracted.published_at,
+                    salary_text=extracted.salary_text,
+                    work_format=work_format,
+                    employment_types=detect_employment_types(
+                        extracted.employment_text,
+                        extracted.title,
+                        extracted.location,
+                        extracted.description_text,
+                    ),
+                )
+            except DuplicateEntityError:
+                vacancy = self._session.scalar(
+                    select(VacancyRow).where(VacancyRow.source_url == source_url)
+                )
+        if vacancy is None or CompanyBlacklistService(self._session).contains(
+            user_id, vacancy.company
+        ):
+            return None
+        existing_application = self._session.scalar(
+            select(ApplicationRow).where(
+                ApplicationRow.user_id == user_id,
+                ApplicationRow.vacancy_id == vacancy.id,
+            )
+        )
+        if existing_application is not None:
+            if existing_application.status in {"rejected", "skipped", "submitted", "interview"}:
+                return None
+            existing_application.selected_cv_file_id = cv_file_id
+            self._rescore_from_text(existing_application, vacancy, cv_file_id)
+            return DiscoveryOutcome(
+                application_id=existing_application.id,
+                vacancy_id=vacancy.id,
+                title=vacancy.title,
+                company=vacancy.company,
+                source_url=vacancy.source_url,
+                location=vacancy.location,
+                match_score=existing_application.match_score,
+                status="already_existed",
+                application_status=existing_application.status,
+                vacancy_summary=summarize_vacancy(vacancy.description_text),
+                work_format=vacancy.work_format,
+                salary_text=vacancy.salary_text,
+                employment_types=tuple(vacancy.employment_types or ()),
+                key_skills=extract_key_skills(
+                    vacancy.description_text, vacancy.required_skills or ()
+                ),
+            )
+        try:
+            application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
+        except (EntityNotFoundError, DuplicateEntityError):
+            return None
+        self._rescore_from_text(application, vacancy, cv_file_id)
+        return DiscoveryOutcome(
+            application_id=application.id,
+            vacancy_id=vacancy.id,
+            title=vacancy.title,
+            company=vacancy.company,
+            source_url=vacancy.source_url,
+            location=vacancy.location,
+            match_score=application.match_score,
+            status="created",
+            application_status=application.status,
+            vacancy_summary=summarize_vacancy(vacancy.description_text),
+            work_format=vacancy.work_format,
+            salary_text=vacancy.salary_text,
+            employment_types=tuple(vacancy.employment_types or ()),
+            key_skills=extract_key_skills(
+                vacancy.description_text, vacancy.required_skills or ()
+            ),
+        )
+
+    def known_greenhouse_board_urls(self) -> list[str]:
+        board_urls: list[str] = []
+        seen_tokens: set[str] = set()
+        source_urls = self._session.scalars(
+            select(VacancyRow.source_url).where(VacancyRow.adapter_name == "greenhouse")
+        )
+        for source_url in source_urls:
+            try:
+                reference = GreenhouseBoardReference.from_url(source_url)
+            except ValueError:
+                continue
+            if reference.board_token in seen_tokens:
+                continue
+            seen_tokens.add(reference.board_token)
+            board_urls.append(reference.board_url)
+        return board_urls
+
+    def _terminal_source_urls(self, user_id: str) -> set[str]:
+        return set(
+            self._session.scalars(
+                select(VacancyRow.source_url)
+                .join(ApplicationRow, ApplicationRow.vacancy_id == VacancyRow.id)
+                .where(
+                    ApplicationRow.user_id == user_id,
+                    ApplicationRow.status.in_(_TERMINAL_DISCOVERY_STATUSES),
+                )
+            )
+        )
+
+    def _rescore_from_text(
+        self,
+        application: ApplicationRow,
+        vacancy: VacancyRow,
+        cv_file_id: str | None,
+    ) -> None:
+        user = self._session.get(UserRow, application.user_id)
+        if user is None:
+            return
+
+        cv_file = RecruitmentService(self._session).active_cv_file(
+            user.id,
+            cv_file_id,
+        )
+
+        candidate_skills = {
+            _normalize_skill(skill)
+            for skill in (
+                list(cv_file.skills)
+                if cv_file is not None
+                else [
+                    fact.name
+                    for fact in user.facts
+                    if (
+                        fact.category == "skill"
+                        and fact.is_verified
+                        and fact.name.strip()
+                    )
+                ]
+            )
+            if skill.strip()
+        }
+
+        required_skills = {
+            _normalize_skill(skill)
+            for skill in (vacancy.required_skills or [])
+            if skill.strip()
+        }
+
+        preferred_skills = {
+            _normalize_skill(skill)
+            for skill in (vacancy.preferred_skills or [])
+            if skill.strip()
+        }
+
+        vacancy_text = (
+            f"{vacancy.title}\n"
+            f"{vacancy.description_text or ''}"
+        ).casefold()
+
+        if not required_skills:
+            required_skills = {
+                skill
+                for skill in candidate_skills
+                if _contains_skill(vacancy_text, skill)
+            }
+
+        matched_required = candidate_skills & required_skills
+        matched_preferred = candidate_skills & preferred_skills
+
+        required_coverage = (
+            len(matched_required) / len(required_skills)
+            if required_skills
+            else 0.0
+        )
+
+        preferred_coverage = (
+            len(matched_preferred) / len(preferred_skills)
+            if preferred_skills
+            else 0.0
+        )
+
+        title = vacancy.title.casefold()
+        title_match = any(
+            _contains_skill(title, skill)
+            for skill in matched_required
+        )
+
+        score = (
+            required_coverage * 70
+            + preferred_coverage * 15
+            + (15 if title_match else 0)
+        )
+
+        if required_skills and required_coverage < 0.4:
+            score = min(score, 35)
+
+        application.match_score = min(100, round(score))
+        self._session.commit()
+        if get_settings().matching_v2_enabled and application.selected_cv_file_id is not None:
+            MatchingJobService(self._session).schedule(application.id)
+
+    def _resolve_search_text(
+        self, user: UserRow, cv_file: CvFileRow | None, search_text: str | None
+    ) -> str:
+        if cv_file is not None and cv_file.analyzed_at is None:
+            raise NoSearchKeywordsError("Analyze and confirm the selected CV before searching")
+        if search_text and search_text.strip():
+            return search_text.strip()
+        if cv_file is not None:
+            return (cv_file.search_keywords or " ".join(cv_file.skills[:8])).strip()
+        return self._build_search_text(user_facts=user.facts).strip()
 
     @staticmethod
     def _build_search_text(*, user_facts: list) -> str:  # type: ignore[type-arg]
