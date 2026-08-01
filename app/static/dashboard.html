@@ -194,6 +194,35 @@
         <div style="flex:0"><button id="load-user" type="button">Загрузить профиль</button></div>
         <div style="flex:0"><button id="create-user" type="button">Создать пользователя</button></div>
       </div>
+      <h3>Личные данные</h3>
+      <div class="hint">Эти значения сохраняются один раз и используются для заполнения анкет. Пустое поле удаляет ранее сохранённое значение.</div>
+      <div class="row">
+        <div><label>Полное имя</label><input id="profile-full-name" autocomplete="name"></div>
+        <div><label>Имя</label><input id="profile-first-name" autocomplete="given-name"></div>
+        <div><label>Фамилия</label><input id="profile-last-name" autocomplete="family-name"></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label>Email</label><input id="profile-email" type="email" autocomplete="email"></div>
+        <div><label>Телефон</label><input id="profile-phone" type="tel" autocomplete="tel"></div>
+        <div><label>LinkedIn URL</label><input id="profile-linkedin" type="url" placeholder="https://www.linkedin.com/in/..."></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label>Страна</label><input id="profile-country" autocomplete="country-name"></div>
+        <div><label>Город</label><input id="profile-city" autocomplete="address-level2"></div>
+        <div style="flex:0"><button id="save-personal-data" type="button" class="primary">Сохранить личные данные</button></div>
+      </div>
+      <label><input id="store-sensitive-personal-data" type="checkbox"> Я явно разрешаю хранить email и телефон в зашифрованном виде; перед их использованием требуется проверка.</label>
+      <div id="personal-data-state" class="task-state"></div>
+      <h3>Настройки отклика</h3>
+      <div class="hint">Значения по умолчанию для вопросов работодателя. Их можно будет переопределить для конкретной вакансии.</div>
+      <div class="row">
+        <div><label>Ожидаемая зарплата</label><input id="application-salary" type="number" min="0" step="any"></div>
+        <div><label>Валюта</label><input id="application-currency" maxlength="20" placeholder="USD, EUR, THB"></div>
+        <div><label>Срок выхода</label><input id="application-notice-period" placeholder="например, 2 недели"></div>
+        <div><label>Готовность к переезду</label><select id="application-relocation"><option value="">Не указано</option><option value="true">Да</option><option value="false">Нет</option></select></div>
+        <div style="flex:0"><button id="save-application-defaults" type="button" class="primary">Сохранить настройки отклика</button></div>
+      </div>
+      <div id="application-defaults-state" class="task-state"></div>
     </section>
 
     <section class="step" data-panel="model">
@@ -915,6 +944,86 @@
       cvFiles = cvFiles.map(cvFile => ({...cvFile, is_active: cvFile.id === cvFileId}));
       renderCvFileSelectors(cvFileId);
     }
+
+    const personalAutofillFields = [
+      {key: 'identity.full_name', id: 'profile-full-name', label: 'Полное имя', value_type: 'text', is_sensitive: false},
+      {key: 'identity.first_name', id: 'profile-first-name', label: 'Имя', value_type: 'text', is_sensitive: false},
+      {key: 'identity.last_name', id: 'profile-last-name', label: 'Фамилия', value_type: 'text', is_sensitive: false},
+      {key: 'contact.email', id: 'profile-email', label: 'Email', value_type: 'email', is_sensitive: true},
+      {key: 'contact.phone', id: 'profile-phone', label: 'Телефон', value_type: 'phone', is_sensitive: true},
+      {key: 'contact.linkedin_url', id: 'profile-linkedin', label: 'LinkedIn URL', value_type: 'url', is_sensitive: false},
+      {key: 'location.country', id: 'profile-country', label: 'Страна', value_type: 'text', is_sensitive: false},
+      {key: 'location.city', id: 'profile-city', label: 'Город', value_type: 'text', is_sensitive: false}
+    ];
+    const applicationAutofillFields = [
+      {key: 'job_preferences.expected_salary', id: 'application-salary', label: 'Ожидаемая зарплата', value_type: 'decimal', is_sensitive: false},
+      {key: 'job_preferences.currency', id: 'application-currency', label: 'Валюта', value_type: 'currency', is_sensitive: false},
+      {key: 'job_preferences.notice_period', id: 'application-notice-period', label: 'Срок выхода', value_type: 'duration', is_sensitive: false},
+      {key: 'job_preferences.relocation_ready', id: 'application-relocation', label: 'Готовность к переезду', value_type: 'boolean', is_sensitive: false}
+    ];
+    let autofillValuesByKey = new Map();
+
+    async function loadAutofillValues() {
+      const userId = userIdInput.value.trim();
+      if (!userId) return;
+      const values = await asJson(await fetch(
+        `/v1/users/${userId}/autofill-values`, {headers: headers(false)}
+      ));
+      autofillValuesByKey = new Map(values.map(value => [value.key, value]));
+      [...personalAutofillFields, ...applicationAutofillFields].forEach(field => {
+        document.querySelector(`#${field.id}`).value =
+          autofillValuesByKey.get(field.key)?.serialized_value || '';
+      });
+      document.querySelector('#personal-data-state').textContent =
+        `Сохранено личных полей: ${personalAutofillFields.filter(field => autofillValuesByKey.has(field.key)).length}. Требуют проверки: ${values.filter(value => value.requires_review).length}.`;
+      document.querySelector('#store-sensitive-personal-data').checked =
+        values.some(value => value.is_sensitive && personalAutofillFields.some(field => field.key === value.key));
+      document.querySelector('#application-defaults-state').textContent =
+        `Сохранено настроек отклика: ${applicationAutofillFields.filter(field => autofillValuesByKey.has(field.key)).length}`;
+    }
+
+    async function saveAutofillFields(fields) {
+      const userId = userIdInput.value.trim();
+      if (!userId) throw new Error('Сначала создайте или укажите User ID');
+      for (const field of fields) {
+          const serializedValue = document.querySelector(`#${field.id}`).value.trim();
+          if (
+            serializedValue && field.is_sensitive &&
+            !document.querySelector('#store-sensitive-personal-data').checked
+          ) throw new Error('Подтвердите зашифрованное хранение чувствительных данных');
+          const existing = autofillValuesByKey.get(field.key);
+          const endpoint = `/v1/users/${userId}/autofill-values/${encodeURIComponent(field.key)}`;
+          if (serializedValue && existing) {
+            await asJson(await fetch(endpoint, {
+              method: 'PUT', headers: headers(true),
+              body: JSON.stringify({serialized_value: serializedValue})
+            }));
+          } else if (serializedValue) {
+            await asJson(await fetch(`/v1/users/${userId}/autofill-values`, {
+              method: 'POST', headers: headers(true),
+              body: JSON.stringify({...field, serialized_value: serializedValue, id: undefined})
+            }));
+          } else if (existing) {
+            const response = await fetch(endpoint, {method: 'DELETE', headers: headers(false)});
+            if (!response.ok) throw new Error(await response.text());
+          }
+      }
+      await loadAutofillValues();
+    }
+
+    document.querySelector('#save-personal-data').addEventListener('click', async () => {
+      try {
+        await saveAutofillFields(personalAutofillFields);
+        showStatus('Личные данные сохранены.');
+      } catch (error) { showError(error); }
+    });
+
+    document.querySelector('#save-application-defaults').addEventListener('click', async () => {
+      try {
+        await saveAutofillFields(applicationAutofillFields);
+        showStatus('Настройки отклика сохранены.');
+      } catch (error) { showError(error); }
+    });
 
     async function loadSavedLlmPreference() {
       const userId = userIdInput.value.trim();
@@ -2094,7 +2203,8 @@
       localStorage.setItem('dashboardUserId', userIdInput.value.trim());
       loadSavedLlmPreference();
       await Promise.all([
-        loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles()
+        loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles(),
+        loadAutofillValues()
       ]);
       restoreSearchResults();
     }
@@ -2115,6 +2225,7 @@
     activatePanel(initialPanel);
     restoreSearchResults();
     loadSavedLlmPreference();
+    loadAutofillValues().catch(showError);
     loadBrowserSessionStatuses(true).catch(showError);
     window.setInterval(() => loadBrowserSessionStatuses(true).catch(() => {}), 300000);
     loadSavedVacancies().catch(showError);

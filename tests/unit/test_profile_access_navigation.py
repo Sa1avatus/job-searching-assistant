@@ -44,3 +44,62 @@ def test_dashboard_offers_custom_openai_compatible_provider() -> None:
     assert 'id="llm-base-url"' in dashboard
     assert "provider === 'openai_compatible'" in dashboard
     assert "base_url: baseUrl || null" in dashboard
+
+
+def test_dashboard_personal_data_uses_canonical_autofill_api() -> None:
+    dashboard = (PROJECT_ROOT / "app" / "static" / "dashboard.html").read_text(
+        encoding="utf-8"
+    )
+
+    for field_id in (
+        "profile-full-name",
+        "profile-first-name",
+        "profile-last-name",
+        "profile-email",
+        "profile-phone",
+        "profile-linkedin",
+        "profile-country",
+        "profile-city",
+    ):
+        assert f'id="{field_id}"' in dashboard
+    for key in (
+        "identity.full_name",
+        "identity.first_name",
+        "identity.last_name",
+        "contact.email",
+        "contact.phone",
+        "contact.linkedin_url",
+        "location.country",
+        "location.city",
+    ):
+        assert key in dashboard
+    assert "method: 'POST'" in dashboard
+    assert "method: 'PUT'" in dashboard
+    assert "method: 'DELETE'" in dashboard
+    assert "loadAutofillValues()" in dashboard
+    assert 'id="store-sensitive-personal-data"' in dashboard
+    assert "value.requires_review" in dashboard
+    assert "field.is_sensitive" in dashboard
+    assert "Подтвердите зашифрованное хранение чувствительных данных" in dashboard
+
+
+def test_dashboard_application_defaults_use_canonical_keys() -> None:
+    dashboard = (PROJECT_ROOT / "app" / "static" / "dashboard.html").read_text(
+        encoding="utf-8"
+    )
+
+    for field_id in (
+        "application-salary",
+        "application-currency",
+        "application-notice-period",
+        "application-relocation",
+    ):
+        assert f'id="{field_id}"' in dashboard
+    for key in (
+        "job_preferences.expected_salary",
+        "job_preferences.currency",
+        "job_preferences.notice_period",
+        "job_preferences.relocation_ready",
+    ):
+        assert key in dashboard
+    assert "saveAutofillFields(applicationAutofillFields)" in dashboard

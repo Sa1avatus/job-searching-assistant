@@ -74,6 +74,10 @@ def test_list_autofill_values_decrypts_sorted_user_values(session: Session) -> N
         "Bangkok",
     ]
     assert values[0].is_sensitive is True
+    assert values[0].requires_review is True
+    assert values[0].may_send_to_llm is False
+    assert values[1].requires_review is False
+    assert values[1].may_send_to_llm is True
     assert not session.new
     assert not session.dirty
     assert not session.deleted

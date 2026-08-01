@@ -10,12 +10,16 @@
   model discovery, and native model selection in the dashboard.
 - Added a user-scoped read/list API for canonical autofill values and optional endpoint storage
   through migration `0021`.
+- Added create, update, and delete autofill API operations plus dashboard sections for personal
+  data and application defaults.
+- Added fail-closed sensitive-value policy: sensitive values require review, cannot be sent to an
+  LLM, and require explicit encrypted-storage consent in the dashboard.
 - Renamed the dashboard navigation section to “Profile and access” while preserving its existing
   route and panel identifiers.
 - Added the `autofill_values` database migration and an ADR for canonical autofill data and
   declarative automation workflows.
-- Verified the autofill increment with Ruff and 112 focused unit tests; application submission
-  behavior remains unchanged.
+- Verified the Phase 1 boundary with full Ruff, Alembic head `0021`, and 521 passing tests;
+  application submission behavior remains unchanged.
 
 ## 1.1.300 — 2026-08-01
 

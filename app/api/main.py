@@ -44,7 +44,9 @@ from app.api.schemas import (
     ApplicationStatusUpdateRequest,
     AssessmentRequest,
     AssessmentResponse,
+    AutofillValueCreateRequest,
     AutofillValueResponse,
+    AutofillValueUpdateRequest,
     BrowserApplySubmitRequest,
     BrowserAuthorizationResponse,
     BrowserHandoffRequest,
@@ -100,6 +102,8 @@ from app.browser.session_probe import probe_browser_session
 from app.browser.session_service import BrowserSessionService
 from app.browser.session_store import InvalidBrowserState, delete_browser_state_file
 from app.config import Settings, get_settings
+from app.domain.autofill_keys import InvalidAutofillKey
+from app.domain.autofill_sensitivity import evaluate_autofill_usage
 from app.domain.models import ProfileFact, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy
 from app.domain.resume_text import UnreadableResumeError, extract_resume_text
@@ -119,7 +123,10 @@ from app.matching.jobs import MatchingJobNotReadyError, MatchingJobService
 from app.observability.logging import configure_logging
 from app.observability.metrics import metrics
 from app.security.autofill_encryption import InvalidAutofillValueEncryption
+from app.services.autofill_value_delete import delete_autofill_value
 from app.services.autofill_value_list import list_autofill_values
+from app.services.autofill_value_update import update_autofill_value
+from app.services.autofill_values import InvalidAutofillValue, create_autofill_value
 from app.services.browser_authorization import (
     BrowserAuthorizationError,
     BrowserAuthorizationManager,
@@ -747,6 +754,117 @@ def get_autofill_values(
             status_code=503, detail="Autofill values cannot be decrypted"
         ) from error
     return [AutofillValueResponse.model_validate(value, from_attributes=True) for value in values]
+
+
+@app.post(
+    "/v1/users/{user_id}/autofill-values",
+    response_model=AutofillValueResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_autofill_value(
+    user_id: str,
+    request: AutofillValueCreateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> AutofillValueResponse:
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail="APP_BROWSER_STATE_ENCRYPTION_KEY is required",
+        )
+    try:
+        row = create_autofill_value(
+            session,
+            user_id=user_id,
+            key=request.key,
+            label=request.label,
+            value_type=request.value_type,
+            serialized_value=request.serialized_value,
+            is_sensitive=request.is_sensitive,
+            encryption_key=encryption_key,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DuplicateEntityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (InvalidAutofillKey, InvalidAutofillValue, InvalidAutofillValueEncryption) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    usage_policy = evaluate_autofill_usage(is_sensitive=row.is_sensitive)
+    return AutofillValueResponse(
+        id=row.id,
+        user_id=row.user_id,
+        key=row.key,
+        label=row.label,
+        value_type=row.value_type,
+        serialized_value=request.serialized_value,
+        is_sensitive=row.is_sensitive,
+        requires_review=usage_policy.requires_review,
+        may_send_to_llm=usage_policy.may_send_to_llm,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+@app.put(
+    "/v1/users/{user_id}/autofill-values/{key:path}",
+    response_model=AutofillValueResponse,
+)
+def replace_autofill_value(
+    user_id: str,
+    key: str,
+    request: AutofillValueUpdateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> AutofillValueResponse:
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail="APP_BROWSER_STATE_ENCRYPTION_KEY is required",
+        )
+    try:
+        row = update_autofill_value(
+            session,
+            user_id=user_id,
+            key=key,
+            serialized_value=request.serialized_value,
+            encryption_key=encryption_key,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (InvalidAutofillKey, InvalidAutofillValueEncryption) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    usage_policy = evaluate_autofill_usage(is_sensitive=row.is_sensitive)
+    return AutofillValueResponse(
+        id=row.id,
+        user_id=row.user_id,
+        key=row.key,
+        label=row.label,
+        value_type=row.value_type,
+        serialized_value=request.serialized_value,
+        is_sensitive=row.is_sensitive,
+        requires_review=usage_policy.requires_review,
+        may_send_to_llm=usage_policy.may_send_to_llm,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+@app.delete(
+    "/v1/users/{user_id}/autofill-values/{key:path}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_autofill_value(
+    user_id: str,
+    key: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> Response:
+    try:
+        delete_autofill_value(session, user_id=user_id, key=key)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InvalidAutofillKey as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.put("/v1/users/{user_id}/llm-preference", response_model=LlmPreferenceResponse)

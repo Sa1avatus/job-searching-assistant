@@ -346,24 +346,28 @@ Tests:
 
 ## Small-task implementation sequence
 
+Progress as of 2026-08-01: Phase 0 and Phase 1 are complete on
+`feature/universal-site-automation-v1.2`. The full boundary suite passes with 521 tests; Alembic
+revision `0021` is the single head. Phase 2 is the next active phase.
+
 ### Phase 0 — baseline and documentation
 
-- [ ] Preserve or commit the uncommitted LinkedIn DOM snapshot fix.
-- [ ] Create a feature branch from `feature/progressive-search-v1.1`.
-- [ ] Run the full baseline test suite.
-- [ ] Add an ADR for declarative workflows and canonical autofill values.
+- [x] Preserve or commit the uncommitted LinkedIn DOM snapshot fix.
+- [x] Create a feature branch from `feature/progressive-search-v1.1`.
+- [x] Run the full baseline test suite.
+- [x] Add an ADR for declarative workflows and canonical autofill values.
 
 ### Phase 1 — canonical profile values
 
-- [ ] Add the typed autofill value enum.
-- [ ] Add one database table and migration for canonical values.
-- [ ] Add encryption and validation helpers for one stored value.
-- [ ] Implement create, read, update, and delete service functions separately.
-- [ ] Implement custom keys under a controlled `custom.*` namespace.
-- [ ] Rename the dashboard tab to “Profile and access”.
-- [ ] Add personal-data UI one subsection at a time.
-- [ ] Add application-default UI one subsection at a time.
-- [ ] Add sensitive-data review rules separately.
+- [x] Add the typed autofill value enum.
+- [x] Add one database table and migration for canonical values.
+- [x] Add encryption and validation helpers for one stored value.
+- [x] Implement create, read, update, and delete service functions separately.
+- [x] Implement custom keys under a controlled `custom.*` namespace.
+- [x] Rename the dashboard tab to “Profile and access”.
+- [x] Add personal-data UI one subsection at a time.
+- [x] Add application-default UI one subsection at a time.
+- [x] Add sensitive-data review rules separately.
 
 ### Phase 2 — arbitrary site definitions and sessions
 

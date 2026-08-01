@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, HttpUrl, SecretStr
 
 from app.domain.application_status import ApplicationStatus
+from app.domain.autofill import AutofillValueType
 
 WorkFormat = Literal["remote", "hybrid", "office", "unspecified"]
 EmploymentTypeName = Literal[
@@ -95,8 +96,22 @@ class AutofillValueResponse(BaseModel):
     value_type: str
     serialized_value: str
     is_sensitive: bool
+    requires_review: bool
+    may_send_to_llm: bool
     created_at: datetime
     updated_at: datetime
+
+
+class AutofillValueCreateRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=200)
+    label: str = Field(min_length=1, max_length=200)
+    value_type: AutofillValueType
+    serialized_value: str = Field(min_length=1)
+    is_sensitive: bool = False
+
+
+class AutofillValueUpdateRequest(BaseModel):
+    serialized_value: str = Field(min_length=1)
 
 
 class CvFileResponse(BaseModel):
