@@ -97,6 +97,23 @@ class ProfileFactRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class AutofillValueRow(Base):
+    __tablename__ = "autofill_values"
+    __table_args__ = (UniqueConstraint("user_id", "key", name="uq_autofill_values_user_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(200))
+    label: Mapped[str] = mapped_column(String(200))
+    value_type: Mapped[str] = mapped_column(String(30))
+    encrypted_value: Mapped[str] = mapped_column(Text)
+    is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
 class VacancyRow(Base):
     __tablename__ = "vacancies"
 

@@ -1,0 +1,26 @@
+from __future__ import annotations
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.domain.autofill_keys import validate_autofill_key
+from app.services.recruitment import EntityNotFoundError
+from app.storage.tables import AutofillValueRow, UserRow
+
+
+def delete_autofill_value(session: Session, *, user_id: str, key: str) -> None:
+    if session.get(UserRow, user_id) is None:
+        raise EntityNotFoundError("User not found")
+
+    validated_key = validate_autofill_key(key)
+    row = session.scalar(
+        select(AutofillValueRow).where(
+            AutofillValueRow.user_id == user_id,
+            AutofillValueRow.key == validated_key,
+        )
+    )
+    if row is None:
+        raise EntityNotFoundError("Autofill value not found")
+
+    session.delete(row)
+    session.commit()

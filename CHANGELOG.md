@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 (in progress) — 2026-08-01
+
+- Added canonical, user-scoped autofill values with validated fixed and custom keys.
+- Added encrypted storage helpers so persisted autofill plaintext is never stored directly.
+- Added create, read, update, and delete service operations with fail-closed validation and
+  user isolation.
+- Added the `autofill_values` database migration and an ADR for canonical autofill data and
+  declarative automation workflows.
+- Verified the autofill increment with Ruff and 112 focused unit tests; application submission
+  behavior remains unchanged.
+
 ## 1.1.300 — 2026-08-01
 
 - Detailed matching now shares uploaded resume artifacts with the dispatcher and uses the
