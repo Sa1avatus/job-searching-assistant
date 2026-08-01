@@ -87,6 +87,18 @@ class ProfileFactResponse(ProfileFactRequest):
     user_id: str
 
 
+class AutofillValueResponse(BaseModel):
+    id: str
+    user_id: str
+    key: str
+    label: str
+    value_type: str
+    serialized_value: str
+    is_sensitive: bool
+    created_at: datetime
+    updated_at: datetime
+
+
 class CvFileResponse(BaseModel):
     id: str
     user_id: str
@@ -352,8 +364,9 @@ class ConfirmedProfileFactResponse(BaseModel):
 
 
 class LlmModelsRequest(BaseModel):
-    provider: Literal["anthropic", "gemini"]
+    provider: Literal["anthropic", "gemini", "openai_compatible"]
     api_key: SecretStr
+    base_url: str | None = Field(default=None, max_length=2000)
 
 
 class LlmModelsResponse(BaseModel):
@@ -361,14 +374,16 @@ class LlmModelsResponse(BaseModel):
 
 
 class LlmPreferenceUpdateRequest(BaseModel):
-    provider: Literal["anthropic", "gemini"]
+    provider: Literal["anthropic", "gemini", "openai_compatible"]
     model: str = Field(min_length=1, max_length=200)
     api_key: SecretStr | None = None
+    base_url: str | None = Field(default=None, max_length=2000)
 
 
 class LlmPreferenceResponse(BaseModel):
-    provider: Literal["anthropic", "gemini"]
+    provider: Literal["anthropic", "gemini", "openai_compatible"]
     model: str
+    base_url: str | None = None
     api_key_configured: bool = True
 
 

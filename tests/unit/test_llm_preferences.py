@@ -34,6 +34,32 @@ def test_preference_service_encrypts_key_and_restores_selection() -> None:
         assert preference.provider == "gemini"
         assert preference.model == "gemini-test"
         assert preference.api_key == "secret-test-key"
+        assert preference.base_url is None
+
+
+def test_preference_service_normalizes_openai_compatible_base_url() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        user = UserRow(display_name="Candidate")
+        session.add(user)
+        session.commit()
+        service = LlmPreferenceService(
+            session, encryption_key=Fernet.generate_key().decode("ascii")
+        )
+
+        row = service.save(
+            user_id=user.id,
+            provider="openai_compatible",
+            model="custom-model",
+            api_key="secret-test-key",
+            base_url="https://models.example.test/v1/",
+        )
+        preference = service.load(user.id)
+
+        assert row.base_url == "https://models.example.test/v1"
+        assert preference is not None
+        assert preference.base_url == "https://models.example.test/v1"
 
 
 @pytest.mark.asyncio
@@ -60,3 +86,24 @@ async def test_fetch_available_gemini_models_filters_non_generation_models() -> 
         models = await fetch_available_models(client, provider="gemini", api_key="test-key")
 
     assert models == ["gemini-generate"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_available_openai_compatible_models_uses_custom_url() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL("https://models.example.test/v1/models")
+        assert request.headers["Authorization"] == "Bearer test-key"
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "model-b"}, {"id": "model-a"}, {"id": "model-a"}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        models = await fetch_available_models(
+            client,
+            provider="openai_compatible",
+            api_key="test-key",
+            base_url="https://models.example.test/v1/",
+        )
+
+    assert models == ["model-a", "model-b"]

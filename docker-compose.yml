@@ -46,6 +46,9 @@ services:
     volumes:
       - ./.artifacts:/app/.artifacts
       - ./config/browser:/app/config/browser:ro
+    networks:
+      - default
+      - local-code-worker
 
   postgres:
     image: postgres:16-alpine
@@ -110,6 +113,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./.artifacts:/app/.artifacts
+    networks:
+      - default
+      - local-code-worker
 
   browser-worker:
     profiles: ["browser"]
@@ -220,3 +226,8 @@ volumes:
   recruitment-redis:
   recruitment-opensearch:
   recruitment-model-cache:
+
+networks:
+  local-code-worker:
+    name: local-code-worker-network
+    external: true

@@ -49,6 +49,7 @@ class LlmPreferenceRow(Base):
     )
     provider: Mapped[str] = mapped_column(String(50))
     model: Mapped[str] = mapped_column(String(200))
+    base_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     encrypted_api_key: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

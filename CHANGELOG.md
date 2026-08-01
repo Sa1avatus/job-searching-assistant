@@ -6,6 +6,12 @@
 - Added encrypted storage helpers so persisted autofill plaintext is never stored directly.
 - Added create, read, update, and delete service operations with fail-closed validation and
   user isolation.
+- Added a user-configurable OpenAI-compatible provider with custom endpoint, encrypted API key,
+  model discovery, and native model selection in the dashboard.
+- Added a user-scoped read/list API for canonical autofill values and optional endpoint storage
+  through migration `0021`.
+- Renamed the dashboard navigation section to “Profile and access” while preserving its existing
+  route and panel identifiers.
 - Added the `autofill_values` database migration and an ADR for canonical autofill data and
   declarative automation workflows.
 - Verified the autofill increment with Ruff and 112 focused unit tests; application submission

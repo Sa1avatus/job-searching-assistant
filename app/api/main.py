@@ -44,6 +44,7 @@ from app.api.schemas import (
     ApplicationStatusUpdateRequest,
     AssessmentRequest,
     AssessmentResponse,
+    AutofillValueResponse,
     BrowserApplySubmitRequest,
     BrowserAuthorizationResponse,
     BrowserHandoffRequest,
@@ -112,10 +113,13 @@ from app.llm.preferences import (
 )
 from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
+from app.llm.providers.openai_compatible import OpenAICompatibleProvider
 from app.llm.router import ModelProvider, ModelRouter, NoModelAvailableError
 from app.matching.jobs import MatchingJobNotReadyError, MatchingJobService
 from app.observability.logging import configure_logging
 from app.observability.metrics import metrics
+from app.security.autofill_encryption import InvalidAutofillValueEncryption
+from app.services.autofill_value_list import list_autofill_values
 from app.services.browser_authorization import (
     BrowserAuthorizationError,
     BrowserAuthorizationManager,
@@ -348,7 +352,18 @@ def build_user_model_providers(
                 http_client, api_key=preference.api_key, model=preference.model
             ),
         )
-    return (GeminiProvider(http_client, api_key=preference.api_key, model=preference.model),)
+    if preference.provider == "gemini":
+        return (GeminiProvider(http_client, api_key=preference.api_key, model=preference.model),)
+    if preference.base_url is None:
+        raise InvalidLlmPreference("OpenAI-compatible base URL is required")
+    return (
+        OpenAICompatibleProvider(
+            http_client,
+            api_key=preference.api_key,
+            model=preference.model,
+            base_url=preference.base_url,
+        ),
+    )
 
 
 async def model_router() -> AsyncIterator[ModelRouter]:
@@ -685,6 +700,7 @@ async def list_llm_models(
             http_client,
             provider=request.provider,
             api_key=request.api_key.get_secret_value(),
+            base_url=request.base_url,
         )
     except (InvalidLlmPreference, LlmModelDiscoveryError, httpx.HTTPError) as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
@@ -701,7 +717,36 @@ def get_llm_preference(
     row = session.get(LlmPreferenceRow, user_id)
     if row is None:
         return None
-    return LlmPreferenceResponse(provider=row.provider, model=row.model)  # type: ignore[arg-type]
+    return LlmPreferenceResponse(  # type: ignore[arg-type]
+        provider=row.provider, model=row.model, base_url=row.base_url
+    )
+
+
+@app.get(
+    "/v1/users/{user_id}/autofill-values",
+    response_model=list[AutofillValueResponse],
+)
+def get_autofill_values(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[AutofillValueResponse]:
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail="APP_BROWSER_STATE_ENCRYPTION_KEY is required",
+        )
+    try:
+        values = list_autofill_values(
+            session, user_id=user_id, encryption_key=encryption_key
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InvalidAutofillValueEncryption as error:
+        raise HTTPException(
+            status_code=503, detail="Autofill values cannot be decrypted"
+        ) from error
+    return [AutofillValueResponse.model_validate(value, from_attributes=True) for value in values]
 
 
 @app.put("/v1/users/{user_id}/llm-preference", response_model=LlmPreferenceResponse)
@@ -717,12 +762,15 @@ def update_llm_preference(
             provider=request.provider,
             model=request.model,
             api_key=request.api_key.get_secret_value() if request.api_key is not None else None,
+            base_url=request.base_url,
         )
     except LlmPreferenceNotFound as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except InvalidLlmPreference as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return LlmPreferenceResponse(provider=row.provider, model=row.model)  # type: ignore[arg-type]
+    return LlmPreferenceResponse(  # type: ignore[arg-type]
+        provider=row.provider, model=row.model, base_url=row.base_url
+    )
 
 
 @app.get(
