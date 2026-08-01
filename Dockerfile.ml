@@ -1,14 +1,22 @@
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1.7
+
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
+
+WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=1000 \
+    PIP_NO_INPUT=1
 
-WORKDIR /service
 COPY requirements-ml.txt ./
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.4,<3"
-RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements-ml.txt
-COPY ml_service ./ml_service
+
+RUN --mount=type=cache,id=matching-pip-cache,target=/root/.cache/pip,sharing=locked \
+    pip install --retries 10 -r requirements-ml.txt
+
+COPY . .
 
 EXPOSE 8090
+
 CMD ["uvicorn", "ml_service.main:app", "--host", "0.0.0.0", "--port", "8090"]

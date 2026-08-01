@@ -4,7 +4,7 @@
 
 A recruitment assistant with a personal dashboard for resume analysis, vacancy discovery, candidate matching, cover-letter drafting, application review, and explicitly enabled browser submission. HeadHunter and LinkedIn search uses the user's saved browser sessions rather than job-seeker APIs.
 
-Current stable version: **1.0.0**.
+Current stable version: **1.1.300**.
 
 HeadHunter's changeable browser selectors and confirmation texts are stored in
 `config/browser/headhunter_apply.json`. Docker Compose mounts this profile read-only into the API

@@ -1760,7 +1760,7 @@
           await asJson(response);
         }
         const payload = await response.json();
-        if (payload.status === 'scored' || payload.status === 'failed') {
+        if (['scored', 'degraded', 'failed'].includes(payload.status)) {
           container.hidden = true;
           button.textContent = 'Почему подходит';
           await loadMatchDetails(applicationId, container, button);

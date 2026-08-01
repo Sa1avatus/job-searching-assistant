@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol, TypeVar
 
@@ -26,6 +26,7 @@ class ModelRequest:
     prompt: str
     max_cost_usd: float
     timeout_seconds: float = 30
+    response_schema: dict[str, object] | None = None
 
 
 class ModelProvider(Protocol):
@@ -60,8 +61,12 @@ class ModelRouter:
                 provider_errors.append(f"{provider.name}:budget_exceeded")
                 continue
             try:
+                provider_request = replace(
+                    request,
+                    response_schema=output_schema.model_json_schema(),
+                )
                 payload = await asyncio.wait_for(
-                    provider.complete(request), timeout=request.timeout_seconds
+                    provider.complete(provider_request), timeout=request.timeout_seconds
                 )
                 return output_schema.model_validate(payload)
             except Exception as error:

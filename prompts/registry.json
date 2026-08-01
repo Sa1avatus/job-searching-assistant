@@ -15,7 +15,7 @@
       "name": "extract_vacancy_requirements",
       "purpose": "Extract atomic, source-grounded vacancy requirements without assigning a match score.",
       "version": 1,
-      "template": "Extract only facts explicitly present in vacancy {vacancy_id}. Return role, seniority, responsibilities, constraints, hard_blockers, preferred_items, confidence, and atomic requirements. Every requirement must contain text, normalized_text, requirement_type, importance, weight, is_blocker, alternatives, an exact source_fragment copied from the vacancy, source_section, and confidence. Do not infer unstated requirements and do not calculate candidate suitability. Vacancy text:\\n{source_text}",
+      "template": "Extract only facts explicitly present in vacancy {vacancy_id}. Return exactly these top-level fields: role, seniority, responsibilities, requirements, constraints, hard_blockers, preferred_items, and confidence. The requirements field must be an array of atomic requirements; do not return an atomic_requirements field. Every item in requirements must contain text, normalized_text, requirement_type, importance, weight, is_blocker, alternatives, an exact source_fragment copied from the vacancy, source_section, and confidence. Do not infer unstated requirements and do not calculate candidate suitability. Vacancy text:\\n{source_text}",
       "input_schema": "VacancyExtractionInput",
       "output_schema": "VacancyExtraction",
       "model_task_class": "low_cost",

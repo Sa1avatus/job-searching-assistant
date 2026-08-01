@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.llm.router import ModelRouter
+from app.llm.router import ModelRequest, ModelRouter
 from app.matching.model_extractors import (
     RouterCandidateEvidenceExtractor,
     RouterVacancyRequirementExtractor,
@@ -17,6 +17,7 @@ class _StaticProvider:
 
     def __init__(self, payload: dict[str, object]) -> None:
         self.payload = payload
+        self.request: ModelRequest | None = None
 
     def supports(self, task_class: object) -> bool:
         return True
@@ -24,7 +25,8 @@ class _StaticProvider:
     def estimate_cost_usd(self, request: object) -> float:
         return 0.0
 
-    async def complete(self, request: object) -> dict[str, object]:
+    async def complete(self, request: ModelRequest) -> dict[str, object]:
+        self.request = request
         return self.payload
 
 
@@ -68,6 +70,9 @@ def test_router_vacancy_extractor_accepts_source_grounded_requirements() -> None
         extraction = await extractor.extract(vacancy_id="vacancy-1", source_text=source_text)
 
         assert extraction.requirements[0].normalized_text == "python production experience"
+        assert provider.request is not None
+        assert provider.request.response_schema is not None
+        assert provider.request.response_schema["title"] == "VacancyExtraction"
 
     asyncio.run(run())
 

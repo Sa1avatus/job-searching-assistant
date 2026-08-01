@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.300 — 2026-08-01
+
+- Detailed matching now shares uploaded resume artifacts with the dispatcher and uses the
+  internal matching-model service address reliably in Docker Compose.
+- Gemini structured outputs are constrained by a compatible JSON Schema subset, preventing
+  extraction tasks from returning invalid top-level arrays or mismatched fields.
+- Detailed-match polling now treats degraded fallback results as terminal instead of appearing
+  to remain pending indefinitely.
+- LinkedIn vacancy extraction waits for dynamically rendered semantic content, selects the most
+  complete description candidate, and removes Premium promotional blocks before persistence.
+- The optional local BGE embedding and reranking service now supports the configured CUDA runtime
+  and GPU device exposure through Docker Compose.
+- Verified the complete detailed-matching path against running Gemini, OpenSearch, PostgreSQL,
+  Redis, and the local embedding service; real application submission behavior remains unchanged.
+
 ## 1.1.100 — 2026-07-29
 
 - Search results now appear as soon as each selected source completes instead of

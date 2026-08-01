@@ -3,7 +3,11 @@ import json
 import httpx
 import pytest
 
-from app.llm.providers.gemini import GeminiProvider, GeminiResponseError
+from app.llm.providers.gemini import (
+    GeminiProvider,
+    GeminiResponseError,
+    _gemini_response_schema,
+)
 from app.llm.router import ModelRequest, ModelTaskClass
 
 
@@ -23,6 +27,43 @@ def test_rejects_empty_api_key() -> None:
         GeminiProvider(httpx.AsyncClient(), api_key="   ", model="gemini-2.5-flash")
 
 
+def test_gemini_response_schema_resolves_pydantic_definitions() -> None:
+    schema = {
+        "$defs": {
+            "Item": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"name": {"type": "string", "maxLength": 20}},
+                "required": ["name"],
+            }
+        },
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "items": {"type": "array", "items": {"$ref": "#/$defs/Item"}},
+            "note": {
+                "anyOf": [{"type": "string"}, {"type": "null"}],
+                "default": None,
+            },
+        },
+    }
+
+    assert _gemini_response_schema(schema) == {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                },
+            },
+            "note": {"type": "string"},
+        },
+    }
+
+
 @pytest.mark.asyncio
 async def test_complete_parses_json_text_part() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -31,6 +72,10 @@ async def test_complete_parses_json_text_part() -> None:
         body = json.loads(request.content)
         assert body["contents"][0]["parts"][0]["text"] == "draft a letter"
         assert body["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
+        assert body["generationConfig"]["responseJsonSchema"] == {
+            "type": "object",
+            "properties": {"cover_letter_text": {"type": "string"}},
+        }
         return httpx.Response(
             200,
             json={
@@ -46,7 +91,16 @@ async def test_complete_parses_json_text_part() -> None:
     async with _client(handler) as client:
         provider = GeminiProvider(client, api_key="test-key", model="gemini-2.5-flash")
         result = await provider.complete(
-            ModelRequest("t", ModelTaskClass.LOW_COST, "draft a letter", max_cost_usd=1)
+            ModelRequest(
+                "t",
+                ModelTaskClass.LOW_COST,
+                "draft a letter",
+                max_cost_usd=1,
+                response_schema={
+                    "type": "object",
+                    "properties": {"cover_letter_text": {"type": "string"}},
+                },
+            )
         )
     assert result == {"cover_letter_text": "Hello"}
 

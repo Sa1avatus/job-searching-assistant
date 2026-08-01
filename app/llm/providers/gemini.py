@@ -24,6 +24,9 @@ _API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 _INPUT_USD_PER_TOKEN = 0.10 / 1_000_000
 _OUTPUT_USD_PER_TOKEN = 0.40 / 1_000_000
 _MAX_OUTPUT_TOKENS = 4096
+_GEMINI_SCHEMA_KEYS = frozenset(
+    {"type", "properties", "required", "items", "enum", "anyOf", "description"}
+)
 
 
 class GeminiResponseError(RuntimeError):
@@ -55,6 +58,10 @@ class GeminiProvider(ModelProvider):
             "maxOutputTokens": _MAX_OUTPUT_TOKENS,
             "responseMimeType": "application/json",
         }
+        if request.response_schema is not None:
+            generation_config["responseJsonSchema"] = _gemini_response_schema(
+                request.response_schema
+            )
         thinking_config = _thinking_config(self._model)
         if thinking_config is not None:
             generation_config["thinkingConfig"] = thinking_config
@@ -118,6 +125,50 @@ class GeminiProvider(ModelProvider):
         if not isinstance(parsed, dict):
             raise GeminiResponseError("Gemini response JSON was not an object")
         return parsed
+
+
+def _gemini_response_schema(schema: dict[str, object]) -> dict[str, object]:
+    """Convert Pydantic JSON Schema to Gemini's supported structured-output subset."""
+
+    definitions = schema.get("$defs")
+    known_definitions = definitions if isinstance(definitions, dict) else {}
+
+    def convert(node: object) -> object:
+        if isinstance(node, list):
+            return [convert(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        reference = node.get("$ref")
+        if isinstance(reference, str) and reference.startswith("#/$defs/"):
+            definition = known_definitions.get(reference.removeprefix("#/$defs/"))
+            if isinstance(definition, dict):
+                return convert(definition)
+        alternatives = node.get("anyOf")
+        if isinstance(alternatives, list):
+            non_null = [
+                alternative
+                for alternative in alternatives
+                if not (isinstance(alternative, dict) and alternative.get("type") == "null")
+            ]
+            if len(non_null) == 1:
+                return convert(non_null[0])
+        converted: dict[str, object] = {}
+        for key, value in node.items():
+            if key not in _GEMINI_SCHEMA_KEYS:
+                continue
+            if key == "properties" and isinstance(value, dict):
+                converted[key] = {
+                    property_name: convert(property_schema)
+                    for property_name, property_schema in value.items()
+                }
+            else:
+                converted[key] = convert(value)
+        return converted
+
+    converted_schema = convert(schema)
+    if not isinstance(converted_schema, dict):
+        raise ValueError("Gemini response schema must be an object")
+    return converted_schema
 
 
 def _thinking_config(model: str) -> dict[str, object] | None:
