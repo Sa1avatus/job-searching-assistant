@@ -2,6 +2,16 @@
 
 ## 1.2.0 (in progress) — 2026-08-01
 
+- Added user-scoped arbitrary site definitions with strict HTTPS URL validation, exact host
+  allowlists, bounded authorization rules, soft archival, and Alembic migration `0022`.
+- Added create, list, update, and archive site-definition APIs with tenant isolation and reserved
+  compatibility keys for HeadHunter and LinkedIn.
+- Generalized browser authorization and session status reporting for custom sites while preserving
+  the existing known-site adapters and their login behavior.
+- Replaced fixed session cards with safe dynamic dashboard rendering and an arbitrary-site setup
+  form; browser credentials, CAPTCHA answers, and secrets remain outside application storage.
+- Verified the Phase 2 boundary with full Ruff, targeted mypy, JavaScript syntax validation,
+  Alembic head `0022`, and 617 passing tests; no real application was submitted.
 - Added canonical, user-scoped autofill values with validated fixed and custom keys.
 - Added encrypted storage helpers so persisted autofill plaintext is never stored directly.
 - Added create, read, update, and delete service operations with fail-closed validation and

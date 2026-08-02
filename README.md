@@ -130,6 +130,10 @@ Real submission is disabled by default. Set `APP_ENABLE_LINKEDIN_APPLY=true` to 
 | `GET /v1/users/{user_id}/cv-files` | List uploaded resumes. |
 | `POST /v1/users/{user_id}/cv-files` | Upload a validated resume. |
 | `GET /v1/users/{user_id}/browser-sessions` | Inspect saved site-session state. |
+| `GET /v1/users/{user_id}/site-definitions` | List configured arbitrary login sites. |
+| `POST /v1/users/{user_id}/site-definitions` | Add a validated HTTPS site definition. |
+| `PUT /v1/users/{user_id}/site-definitions/{id}` | Update mutable site access settings. |
+| `POST /v1/users/{user_id}/site-definitions/{id}/archive` | Soft-archive a site definition. |
 | `POST /v1/vacancies/import-greenhouse` | Import a public Greenhouse vacancy. |
 | `POST /v1/vacancies/import-headhunter` | Import a vacancy through the hh.ru browser session. |
 | `POST /v1/vacancies/import-linkedin-reference` | Save a policy-safe LinkedIn reference. |

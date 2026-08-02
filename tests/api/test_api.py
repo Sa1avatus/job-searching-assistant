@@ -52,8 +52,11 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert "/v1/llm/models" in response.text
     assert "llm-preference" in response.text
     assert "browser-sessions" in response.text
-    assert "headhunter-login" in response.text
-    assert "linkedin-login" in response.text
+    assert "site-definition-key" in response.text
+    assert "site-definition-login-url" in response.text
+    assert "add-site-definition" in response.text
+    assert "ensureBrowserSessionCard" in response.text
+    assert "encodeURIComponent(site)" in response.text
     assert "Я вошёл — сохранить" in response.text
     assert ".doc,.txt,.rtf,.odt,.html,.htm,.md" in response.text
     assert "Все сохранённые вакансии" in response.text

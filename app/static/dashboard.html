@@ -244,28 +244,17 @@
     <section class="step" data-panel="sessions">
       <h2>Сессии сайтов</h2>
       <div class="hint">Вход выполняется вручную в Chromium на локальном браузерном экране. Приложение не получает пароль, код подтверждения или CAPTCHA — сохраняются только зашифрованные cookies и состояние сайта.</div>
-      <div id="browser-sessions" class="session-grid">
-        <article class="session-card" data-site="headhunter">
-          <h3>hh.ru</h3>
-          <div id="headhunter-session-status" class="session-status">Проверяем…</div>
-          <div id="headhunter-session-details" class="task-state"></div>
-          <div class="actions">
-            <button id="headhunter-login" type="button">Войти в hh.ru</button>
-            <button id="headhunter-confirm" type="button" class="primary" hidden>Я вошёл — сохранить</button>
-            <button id="headhunter-cancel" type="button" hidden>Отмена</button>
-          </div>
-        </article>
-        <article class="session-card" data-site="linkedin">
-          <h3>LinkedIn</h3>
-          <div id="linkedin-session-status" class="session-status">Проверяем…</div>
-          <div id="linkedin-session-details" class="task-state"></div>
-          <div class="actions">
-            <button id="linkedin-login" type="button">Войти в LinkedIn</button>
-            <button id="linkedin-confirm" type="button" class="primary" hidden>Я вошёл — сохранить</button>
-            <button id="linkedin-cancel" type="button" hidden>Отмена</button>
-          </div>
-        </article>
+      <div class="row" style="margin-top:12px;">
+        <div><label for="site-definition-key">Ключ сайта</label><input id="site-definition-key" placeholder="company-careers"></div>
+        <div><label for="site-definition-name">Название</label><input id="site-definition-name" placeholder="Company Careers"></div>
       </div>
+      <div class="row">
+        <div><label for="site-definition-login-url">HTTPS URL входа</label><input id="site-definition-login-url" type="url" placeholder="https://careers.example.com/login"></div>
+        <div><label for="site-definition-hosts">Разрешённые хосты</label><input id="site-definition-hosts" placeholder="careers.example.com, auth.example.com"></div>
+        <div style="flex:0"><button id="add-site-definition" type="button" class="primary">Добавить сайт</button></div>
+      </div>
+      <div id="site-definition-state" class="task-state"></div>
+      <div id="browser-sessions" class="session-grid"></div>
     </section>
 
     <section class="step" data-panel="resume">
@@ -696,17 +685,61 @@
       return meter;
     }
 
-    const browserSiteLabels = {headhunter: 'hh.ru', linkedin: 'LinkedIn'};
+    const knownBrowserSiteLabels = {headhunter: 'hh.ru', linkedin: 'LinkedIn'};
     let browserSessionStatuses = {};
+
+    function browserSiteLabel(site) {
+      return browserSessionStatuses[site]?.site_name || knownBrowserSiteLabels[site] || site;
+    }
+
+    function ensureBrowserSessionCard(session) {
+      const container = document.querySelector('#browser-sessions');
+      let card = Array.from(container.querySelectorAll('.session-card')).find(
+        candidate => candidate.dataset.site === session.site_key
+      );
+      if (card) return card;
+      card = document.createElement('article');
+      card.className = 'session-card';
+      card.dataset.site = session.site_key;
+      const title = document.createElement('h3');
+      title.textContent = session.site_name || knownBrowserSiteLabels[session.site_key] || session.site_key;
+      const status = document.createElement('div');
+      status.className = 'session-status';
+      status.textContent = 'Проверяем…';
+      const details = document.createElement('div');
+      details.className = 'task-state';
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      const login = document.createElement('button');
+      login.type = 'button';
+      login.dataset.action = 'login';
+      const confirm = document.createElement('button');
+      confirm.type = 'button';
+      confirm.className = 'primary';
+      confirm.dataset.action = 'confirm';
+      confirm.textContent = 'Я вошёл — сохранить';
+      confirm.hidden = true;
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.dataset.action = 'cancel';
+      cancel.textContent = 'Отмена';
+      cancel.hidden = true;
+      actions.append(login, confirm, cancel);
+      card.append(title, status, details, actions);
+      container.append(card);
+      return card;
+    }
 
     function renderBrowserSessionStatus(session) {
       browserSessionStatuses[session.site_key] = session;
       const site = session.site_key;
-      const status = document.querySelector(`#${site}-session-status`);
-      const details = document.querySelector(`#${site}-session-details`);
-      const loginButton = document.querySelector(`#${site}-login`);
-      const confirmButton = document.querySelector(`#${site}-confirm`);
-      const cancelButton = document.querySelector(`#${site}-cancel`);
+      const card = ensureBrowserSessionCard(session);
+      const status = card.querySelector('.session-status');
+      const details = card.querySelector('.task-state');
+      const loginButton = card.querySelector('[data-action="login"]');
+      const confirmButton = card.querySelector('[data-action="confirm"]');
+      const cancelButton = card.querySelector('[data-action="cancel"]');
+      const label = browserSiteLabel(site);
       status.classList.toggle('authorized', session.is_authorized);
       if (session.is_waiting_for_login) {
         status.textContent = 'Ожидаем вход';
@@ -721,7 +754,7 @@
           : session.updated_at
           ? `Сессия сохранена ${new Date(session.updated_at).toLocaleString('ru-RU')}. Если сайт попросит войти снова, повторите авторизацию.`
           : 'Зашифрованная сессия сохранена.';
-        loginButton.textContent = `Войти заново в ${browserSiteLabels[site]}`;
+        loginButton.textContent = `Войти заново в ${label}`;
         loginButton.hidden = false;
         confirmButton.hidden = true;
         cancelButton.hidden = true;
@@ -730,7 +763,7 @@
         details.textContent = session.is_live === false
           ? `Проверка ${session.checked_at ? new Date(session.checked_at).toLocaleString('ru-RU') : ''} показала, что сайт снова требует вход.`
           : 'Нажмите кнопку входа — откроется отдельное окно сайта.';
-        loginButton.textContent = `Войти в ${browserSiteLabels[site]}`;
+        loginButton.textContent = `Войти в ${label}`;
         loginButton.hidden = false;
         confirmButton.hidden = true;
         cancelButton.hidden = true;
@@ -739,8 +772,10 @@
 
     function renderBrowserSessionsWithoutUser() {
       browserSessionStatuses = {};
-      ['headhunter', 'linkedin'].forEach(site => renderBrowserSessionStatus({
-        site_key: site, is_authorized: false, is_waiting_for_login: false
+      document.querySelector('#browser-sessions').replaceChildren();
+      Object.entries(knownBrowserSiteLabels).forEach(([site, siteName]) => renderBrowserSessionStatus({
+        site_key: site, site_name: siteName, is_custom: false,
+        is_authorized: false, is_waiting_for_login: false
       }));
       document.querySelectorAll('.session-card .session-status').forEach(node => {
         node.textContent = 'Сначала создайте пользователя';
@@ -757,13 +792,21 @@
       const sessions = await asJson(await fetch(`/v1/users/${userId}/browser-sessions${probeQuery}`, {
         headers: headers(false)
       }));
+      browserSessionStatuses = {};
+      document.querySelector('#browser-sessions').replaceChildren();
       sessions.forEach(renderBrowserSessionStatus);
       return sessions;
     }
 
-    ['headhunter', 'linkedin'].forEach(site => {
-      document.querySelector(`#${site}-login`).addEventListener('click', async (event) => {
-        const button = event.currentTarget;
+    document.querySelector('#browser-sessions').addEventListener('click', async (event) => {
+      const button = event.target.closest('button[data-action]');
+      if (!button) return;
+      const card = button.closest('.session-card');
+      const site = card?.dataset.site;
+      if (!site) return;
+      const action = button.dataset.action;
+      const label = browserSiteLabel(site);
+      if (action === 'login') {
         const loginWindow = window.open('about:blank', `job-assistant-login-${site}`);
         try {
           const userId = userIdInput.value.trim();
@@ -772,8 +815,8 @@
             throw new Error('Браузер заблокировал окно входа. Разрешите всплывающие окна для 127.0.0.1');
           }
           button.disabled = true;
-          showStatus(`Открываем окно входа ${browserSiteLabels[site]}…`);
-          await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${site}/start`, {
+          showStatus(`Открываем окно входа ${label}…`);
+          await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${encodeURIComponent(site)}/start`, {
             method: 'POST', headers: headers(false)
           }));
           const viewerUrl = new URL(`http://${window.location.hostname}:7900/vnc.html`);
@@ -783,42 +826,61 @@
           loginWindow.location.replace(viewerUrl.toString());
           renderBrowserSessionStatus({
             site_key: site,
+            site_name: label,
             is_authorized: Boolean(browserSessionStatuses[site]?.is_authorized),
             is_waiting_for_login: true
           });
-          showStatus(`Войдите в ${browserSiteLabels[site]} в открывшемся окне, затем нажмите «Я вошёл — сохранить».`);
+          showStatus(`Войдите в ${label} в открывшемся окне, затем нажмите «Я вошёл — сохранить».`);
         } catch (error) {
           if (loginWindow && !loginWindow.closed) loginWindow.close();
           showError(error);
         }
         finally { button.disabled = false; }
-      });
-
-      document.querySelector(`#${site}-confirm`).addEventListener('click', async (event) => {
-        const button = event.currentTarget;
+      } else if (action === 'confirm') {
         try {
           const userId = userIdInput.value.trim();
           button.disabled = true;
-          showStatus(`Проверяем вход и сохраняем сессию ${browserSiteLabels[site]}…`);
-          await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${site}/confirm`, {
+          showStatus(`Проверяем вход и сохраняем сессию ${label}…`);
+          await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${encodeURIComponent(site)}/confirm`, {
             method: 'POST', headers: headers(false)
           }));
           await loadBrowserSessionStatuses();
-          showStatus(`${browserSiteLabels[site]}: авторизация сохранена.`);
+          showStatus(`${label}: авторизация сохранена.`);
         } catch (error) { showError(error); }
         finally { button.disabled = false; }
-      });
-
-      document.querySelector(`#${site}-cancel`).addEventListener('click', async () => {
+      } else if (action === 'cancel') {
         try {
           const userId = userIdInput.value.trim();
-          await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${site}/cancel`, {
+          await asJson(await fetch(`/v1/users/${userId}/browser-sessions/${encodeURIComponent(site)}/cancel`, {
             method: 'POST', headers: headers(false)
           }));
           await loadBrowserSessionStatuses();
-          showStatus(`Вход в ${browserSiteLabels[site]} отменён.`);
+          showStatus(`Вход в ${label} отменён.`);
         } catch (error) { showError(error); }
-      });
+      }
+    });
+
+    document.querySelector('#add-site-definition').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      try {
+        const userId = userIdInput.value.trim();
+        if (!userId) throw new Error('Сначала создайте или укажите User ID');
+        const siteKey = document.querySelector('#site-definition-key').value.trim();
+        const name = document.querySelector('#site-definition-name').value.trim();
+        const loginUrl = document.querySelector('#site-definition-login-url').value.trim();
+        const allowedHosts = document.querySelector('#site-definition-hosts').value
+          .split(',').map(value => value.trim()).filter(Boolean);
+        button.disabled = true;
+        const definition = await asJson(await fetch(`/v1/users/${userId}/site-definitions`, {
+          method: 'POST', headers: headers(true), body: JSON.stringify({
+            site_key: siteKey, name, login_url: loginUrl, allowed_hosts: allowedHosts,
+            authorization_rules: {}
+          })
+        }));
+        document.querySelector('#site-definition-state').textContent = `${definition.name}: сайт добавлен.`;
+        await loadBrowserSessionStatuses();
+      } catch (error) { showError(error); }
+      finally { button.disabled = false; }
     });
 
     document.querySelector('#create-user').addEventListener('click', async () => {
@@ -2090,7 +2152,7 @@
         if (missingSessions.length) {
           activatePanel('sessions');
           document.querySelector('#browser-sessions').scrollIntoView({behavior: 'smooth', block: 'center'});
-          throw new Error(`Сначала авторизуйтесь: ${missingSessions.map(source => browserSiteLabels[source]).join(', ')}`);
+          throw new Error(`Сначала авторизуйтесь: ${missingSessions.map(browserSiteLabel).join(', ')}`);
         }
         saveGreenhouseBoards();
         const greenhouseBoards = greenhouseBoardsInput.value

@@ -8,6 +8,7 @@ from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 # Playwright launches the browser as a subprocess. On Windows, asyncio's default
 # SelectorEventLoop (which uvicorn ends up using in some run configurations, notably
@@ -88,6 +89,9 @@ from app.api.schemas import (
     SavedVacancyPageResponse,
     SavedVacancyResponse,
     ScreeningAnswerResponse,
+    SiteDefinitionCreateRequest,
+    SiteDefinitionResponse,
+    SiteDefinitionUpdateRequest,
     TaskTransitionResponse,
     UserRequest,
     UserResponse,
@@ -128,9 +132,10 @@ from app.services.autofill_value_list import list_autofill_values
 from app.services.autofill_value_update import update_autofill_value
 from app.services.autofill_values import InvalidAutofillValue, create_autofill_value
 from app.services.browser_authorization import (
+    KNOWN_AUTHORIZATION_SITES,
     BrowserAuthorizationError,
     BrowserAuthorizationManager,
-    BrowserSiteKey,
+    BrowserAuthorizationSite,
 )
 from app.services.browser_handoff import create_browser_handoff
 from app.services.company_blacklist import CompanyBlacklistService
@@ -154,6 +159,12 @@ from app.services.recruitment import (
     RecruitmentService,
 )
 from app.services.resume_intake import ResumeIntakeService
+from app.services.site_definition_archive import archive_site_definition
+from app.services.site_definition_update import (
+    InvalidSiteDefinitionUpdate,
+    update_site_definition,
+)
+from app.services.site_definitions import InvalidSiteDefinition, create_site_definition
 from app.services.vacancy_catalog import VacancyCatalogService
 from app.services.vacancy_metadata import (
     detect_work_format,
@@ -171,6 +182,7 @@ from app.storage.tables import (
     CvFileRow,
     LlmPreferenceRow,
     RequirementMatchRow,
+    SiteDefinitionRow,
     UserRow,
     VacancyRequirementRow,
     VacancyRow,
@@ -891,6 +903,160 @@ def update_llm_preference(
     )
 
 
+def _site_definition_response(row: SiteDefinitionRow) -> SiteDefinitionResponse:
+    return SiteDefinitionResponse(
+        id=row.id,
+        site_key=row.site_key,
+        name=row.name,
+        login_url=row.login_url,
+        allowed_hosts=list(row.allowed_hosts),
+        authorization_rules=dict(row.authorization_rules),
+        is_archived=row.archived_at is not None,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _custom_authorization_site(row: SiteDefinitionRow) -> BrowserAuthorizationSite:
+    raw_markers = row.authorization_rules.get("login_path_markers", [])
+    if not isinstance(raw_markers, list):
+        raw_markers = []
+    markers = tuple(
+        marker
+        for marker in raw_markers
+        if isinstance(marker, str)
+        and marker.startswith("/")
+        and len(marker) <= 500
+    )
+    if not markers:
+        login_path = urlsplit(row.login_url).path or "/"
+        markers = (login_path,)
+    return BrowserAuthorizationSite(
+        site_key=row.site_key,
+        login_url=row.login_url,
+        allowed_hosts=tuple(row.allowed_hosts),
+        login_path_markers=markers,
+    )
+
+
+def _authorization_site(
+    session: Session,
+    *,
+    user_id: str,
+    site_key: str,
+) -> BrowserAuthorizationSite:
+    known = KNOWN_AUTHORIZATION_SITES.get(site_key)
+    if known is not None:
+        return known
+    row = session.scalar(
+        select(SiteDefinitionRow).where(
+            SiteDefinitionRow.user_id == user_id,
+            SiteDefinitionRow.site_key == site_key,
+            SiteDefinitionRow.archived_at.is_(None),
+        )
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Site definition not found")
+    return _custom_authorization_site(row)
+
+
+@app.get(
+    "/v1/users/{user_id}/site-definitions",
+    response_model=list[SiteDefinitionResponse],
+)
+def get_site_definitions(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    include_archived: bool = False,
+) -> list[SiteDefinitionResponse]:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    statement = select(SiteDefinitionRow).where(SiteDefinitionRow.user_id == user_id)
+    if not include_archived:
+        statement = statement.where(SiteDefinitionRow.archived_at.is_(None))
+    rows = session.scalars(statement.order_by(SiteDefinitionRow.name, SiteDefinitionRow.site_key))
+    return [_site_definition_response(row) for row in rows]
+
+
+@app.post(
+    "/v1/users/{user_id}/site-definitions",
+    response_model=SiteDefinitionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_site_definition(
+    user_id: str,
+    request: SiteDefinitionCreateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> SiteDefinitionResponse:
+    if request.site_key.strip().casefold() in KNOWN_AUTHORIZATION_SITES:
+        raise HTTPException(status_code=409, detail="Site key is reserved")
+    try:
+        row = create_site_definition(
+            session,
+            user_id=user_id,
+            site_key=request.site_key,
+            name=request.name,
+            login_url=request.login_url,
+            allowed_hosts=request.allowed_hosts,
+            authorization_rules=request.authorization_rules,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DuplicateEntityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (InvalidSiteDefinition, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _site_definition_response(row)
+
+
+@app.put(
+    "/v1/users/{user_id}/site-definitions/{site_definition_id}",
+    response_model=SiteDefinitionResponse,
+)
+def replace_site_definition(
+    user_id: str,
+    site_definition_id: str,
+    request: SiteDefinitionUpdateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> SiteDefinitionResponse:
+    try:
+        row = update_site_definition(
+            session,
+            user_id=user_id,
+            site_definition_id=site_definition_id,
+            name=request.name,
+            login_url=request.login_url,
+            allowed_hosts=request.allowed_hosts,
+            authorization_rules=request.authorization_rules,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (InvalidSiteDefinitionUpdate, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _site_definition_response(row)
+
+
+@app.post(
+    "/v1/users/{user_id}/site-definitions/{site_definition_id}/archive",
+    response_model=SiteDefinitionResponse,
+)
+async def archive_user_site_definition(
+    user_id: str,
+    site_definition_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> SiteDefinitionResponse:
+    try:
+        row = archive_site_definition(
+            session,
+            user_id=user_id,
+            site_definition_id=site_definition_id,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    await BROWSER_AUTHORIZATION_MANAGER.cancel(user_id=user_id, site_key=row.site_key)
+    return _site_definition_response(row)
+
+
 @app.get(
     "/v1/users/{user_id}/browser-sessions",
     response_model=list[BrowserSessionStatusResponse],
@@ -908,8 +1074,24 @@ async def get_browser_session_statuses(
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
+    custom_sites = session.scalars(
+        select(SiteDefinitionRow)
+        .where(
+            SiteDefinitionRow.user_id == user_id,
+            SiteDefinitionRow.archived_at.is_(None),
+        )
+        .order_by(SiteDefinitionRow.name, SiteDefinitionRow.site_key)
+    ).all()
+    custom_sites = [
+        row for row in custom_sites if row.site_key not in KNOWN_AUTHORIZATION_SITES
+    ]
+    sites = [
+        ("headhunter", "hh.ru", False),
+        ("linkedin", "LinkedIn", False),
+        *((row.site_key, row.name, True) for row in custom_sites),
+    ]
     statuses: list[BrowserSessionStatusResponse] = []
-    for site_key in ("headhunter", "linkedin"):
+    for site_key, site_name, is_custom in sites:
         row = session.scalar(
             select(BrowserSessionRow).where(
                 BrowserSessionRow.user_id == user_id,
@@ -922,7 +1104,7 @@ async def get_browser_session_statuses(
             try:
                 stored_state = store.load(row.encrypted_state_path)
                 is_authorized = True
-                if probe:
+                if probe and site_key in KNOWN_AUTHORIZATION_SITES:
                     session_probe = await probe_browser_session(
                         site_key=site_key,
                         state=stored_state,
@@ -939,6 +1121,8 @@ async def get_browser_session_statuses(
         statuses.append(
             BrowserSessionStatusResponse(
                 site_key=site_key,
+                site_name=site_name,
+                is_custom=is_custom,
                 is_authorized=is_authorized,
                 is_waiting_for_login=BROWSER_AUTHORIZATION_MANAGER.is_waiting(
                     user_id=user_id, site_key=site_key
@@ -961,7 +1145,7 @@ async def get_browser_session_statuses(
 )
 async def start_browser_authorization(
     user_id: str,
-    site_key: BrowserSiteKey,
+    site_key: str,
     session: Annotated[Session, Depends(session_scope)],
 ) -> BrowserAuthorizationResponse:
     settings = get_settings()
@@ -972,12 +1156,14 @@ async def start_browser_authorization(
         )
     if session.get(UserRow, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
+    site = _authorization_site(session, user_id=user_id, site_key=site_key)
     try:
         await BROWSER_AUTHORIZATION_MANAGER.start(
             user_id=user_id,
             site_key=site_key,
             timeout_ms=settings.browser_timeout_ms,
             artifact_directory=settings.artifact_directory,
+            site=site,
         )
     except BrowserAuthorizationError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -995,11 +1181,12 @@ async def start_browser_authorization(
 )
 async def confirm_browser_authorization(
     user_id: str,
-    site_key: BrowserSiteKey,
+    site_key: str,
     session: Annotated[Session, Depends(session_scope)],
 ) -> BrowserAuthorizationResponse:
     if session.get(UserRow, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
+    _authorization_site(session, user_id=user_id, site_key=site_key)
     try:
         state, last_url = await BROWSER_AUTHORIZATION_MANAGER.confirm(
             user_id=user_id, site_key=site_key
@@ -1008,7 +1195,7 @@ async def confirm_browser_authorization(
         BrowserSessionService(session, store).save(
             user_id=user_id,
             site_key=site_key,
-            adapter_name=site_key,
+            adapter_name=site_key if site_key in KNOWN_AUTHORIZATION_SITES else "generic",
             state=state,
             last_url=last_url,
         )
@@ -1025,11 +1212,12 @@ async def confirm_browser_authorization(
 )
 async def cancel_browser_authorization(
     user_id: str,
-    site_key: BrowserSiteKey,
+    site_key: str,
     session: Annotated[Session, Depends(session_scope)],
 ) -> BrowserAuthorizationResponse:
     if session.get(UserRow, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
+    _authorization_site(session, user_id=user_id, site_key=site_key)
     await BROWSER_AUTHORIZATION_MANAGER.cancel(user_id=user_id, site_key=site_key)
     return BrowserAuthorizationResponse(site_key=site_key, state="cancelled")
 

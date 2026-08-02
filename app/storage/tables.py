@@ -115,6 +115,34 @@ class AutofillValueRow(Base):
     )
 
 
+class SiteDefinitionRow(Base):
+    __tablename__ = "site_definitions"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "site_key",
+            name="uq_site_definitions_user_site_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    site_key: Mapped[str] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(String(200))
+    login_url: Mapped[str] = mapped_column(Text)
+    allowed_hosts: Mapped[list[str]] = mapped_column(JSON, default=list)
+    authorization_rules: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
 class VacancyRow(Base):
     __tablename__ = "vacancies"
 

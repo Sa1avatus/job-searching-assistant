@@ -403,7 +403,9 @@ class LlmPreferenceResponse(BaseModel):
 
 
 class BrowserSessionStatusResponse(BaseModel):
-    site_key: Literal["headhunter", "linkedin"]
+    site_key: str
+    site_name: str
+    is_custom: bool = False
     is_authorized: bool
     is_live: bool | None = None
     is_waiting_for_login: bool
@@ -414,8 +416,35 @@ class BrowserSessionStatusResponse(BaseModel):
 
 
 class BrowserAuthorizationResponse(BaseModel):
-    site_key: Literal["headhunter", "linkedin"]
+    site_key: str
     state: Literal["waiting_for_login", "authorized", "cancelled"]
+
+
+class SiteDefinitionCreateRequest(BaseModel):
+    site_key: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=200)
+    login_url: str = Field(min_length=1, max_length=2000)
+    allowed_hosts: list[str] = Field(min_length=1, max_length=50)
+    authorization_rules: dict[str, object] = Field(default_factory=dict)
+
+
+class SiteDefinitionUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    login_url: str = Field(min_length=1, max_length=2000)
+    allowed_hosts: list[str] = Field(min_length=1, max_length=50)
+    authorization_rules: dict[str, object] = Field(default_factory=dict)
+
+
+class SiteDefinitionResponse(BaseModel):
+    id: str
+    site_key: str
+    name: str
+    login_url: str
+    allowed_hosts: list[str]
+    authorization_rules: dict[str, object]
+    is_archived: bool
+    created_at: datetime
+    updated_at: datetime
 
 
 class DiscoverHeadHunterVacanciesRequest(BaseModel):

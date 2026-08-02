@@ -346,9 +346,9 @@ Tests:
 
 ## Small-task implementation sequence
 
-Progress as of 2026-08-01: Phase 0 and Phase 1 are complete on
-`feature/universal-site-automation-v1.2`. The full boundary suite passes with 521 tests; Alembic
-revision `0021` is the single head. Phase 2 is the next active phase.
+Progress as of 2026-08-02: Phase 0, Phase 1, and Phase 2 are complete on
+`feature/universal-site-automation-v1.2`. The full boundary suite passes with 617 tests; Alembic
+revision `0022` is the single head. Phase 3 is the next active phase.
 
 ### Phase 0 — baseline and documentation
 
@@ -371,14 +371,14 @@ revision `0021` is the single head. Phase 2 is the next active phase.
 
 ### Phase 2 — arbitrary site definitions and sessions
 
-- [ ] Add `SiteDefinitionRow` and migration.
-- [ ] Add strict URL and host validation.
-- [ ] Implement create/read/update/archive service functions separately.
-- [ ] Generalize authorization manager inputs without removing known-site adapters.
-- [ ] Generalize browser-session status listing.
-- [ ] Add one API operation at a time.
-- [ ] Replace fixed dashboard cards with dynamic rendering.
-- [ ] Preserve HeadHunter and LinkedIn compatibility.
+- [x] Add `SiteDefinitionRow` and migration.
+- [x] Add strict URL and host validation.
+- [x] Implement create/read/update/archive service functions separately.
+- [x] Generalize authorization manager inputs without removing known-site adapters.
+- [x] Generalize browser-session status listing.
+- [x] Add one API operation at a time.
+- [x] Replace fixed dashboard cards with dynamic rendering.
+- [x] Preserve HeadHunter and LinkedIn compatibility.
 
 ### Phase 3 — fields, mappings, and overrides
 
