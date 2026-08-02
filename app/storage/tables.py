@@ -143,7 +143,35 @@ class SiteDefinitionRow(Base):
     )
 
 
+class WorkflowDefinitionRow(Base):
+    __tablename__ = "workflow_definitions"
+    __table_args__ = (
+        UniqueConstraint(
+            "site_definition_id",
+            "version",
+            name="uq_workflow_definitions_site_version",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'testing', 'active', 'broken', 'archived')",
+            name="ck_workflow_definitions_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    site_definition_id: Mapped[str] = mapped_column(
+        ForeignKey("site_definitions.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int]
+    status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    vacancy_url_patterns: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
 class SiteFieldRow(Base):
+
     __tablename__ = "site_fields"
     __table_args__ = (
         UniqueConstraint(
