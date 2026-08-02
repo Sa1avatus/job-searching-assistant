@@ -2,6 +2,18 @@
 
 ## 1.2.0 (in progress) — 2026-08-01
 
+- Added user-scoped site fields, semantic mappings, encrypted site/field overrides, and Alembic
+  migration `0023` without exposing stored override plaintext in API responses.
+- Added deterministic effective-value resolution with explicit precedence, sensitive-value
+  blocking, review propagation, and bounded value transformations.
+- Extended form discovery with ordered fallback locators and added tenant-safe APIs for field
+  discovery, mapping, overrides, and effective-value inspection.
+- Added a dashboard mapping table with common-value selection, site/field override controls, and
+  effective value/source feedback.
+- Verified the Phase 3 boundary with full Ruff, targeted mypy, JavaScript syntax validation,
+  Alembic head `0023`, and 644 passing tests; no real application was submitted.
+- Started Phase 4 with closed workflow-step and lifecycle enums plus exact privileged/browser
+  action sets; arbitrary action types remain rejected.
 - Added user-scoped arbitrary site definitions with strict HTTPS URL validation, exact host
   allowlists, bounded authorization rules, soft archival, and Alembic migration `0022`.
 - Added create, list, update, and archive site-definition APIs with tenant isolation and reserved

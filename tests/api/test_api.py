@@ -57,6 +57,15 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert "add-site-definition" in response.text
     assert "ensureBrowserSessionCard" in response.text
     assert "encodeURIComponent(site)" in response.text
+    assert 'id="site-field-mapping-panel"' in response.text
+    assert 'id="site-field-site"' in response.text
+    assert 'id="site-field-mappings"' in response.text
+    assert "loadSiteFieldMappings" in response.text
+    assert "/site-fields/${field.id}/mapping" in response.text
+    assert "/effective-value" in response.text
+    assert "/overrides" in response.text
+    assert "Использовать общее значение" in response.text
+    assert "Переопределить только это поле" in response.text
     assert "Я вошёл — сохранить" in response.text
     assert ".doc,.txt,.rtf,.odt,.html,.htm,.md" in response.text
     assert "Все сохранённые вакансии" in response.text

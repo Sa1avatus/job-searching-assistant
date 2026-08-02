@@ -131,6 +131,10 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 | `GET /v1/users/{user_id}/cv-files` | Список загруженных резюме. |
 | `POST /v1/users/{user_id}/cv-files` | Загрузка проверенного файла резюме. |
 | `GET /v1/users/{user_id}/browser-sessions` | Состояние сохранённых сессий сайтов. |
+| `GET /v1/users/{user_id}/site-definitions/{id}/fields` | Список найденных полей и сопоставлений сайта. |
+| `PUT /v1/users/{user_id}/site-fields/{id}/mapping` | Сопоставление поля с общим значением профиля. |
+| `PUT /v1/users/{user_id}/site-definitions/{id}/overrides` | Зашифрованное переопределение для сайта или поля. |
+| `GET /v1/users/{user_id}/site-fields/{id}/effective-value` | Итоговое значение поля и его источник. |
 | `POST /v1/vacancies/import-greenhouse` | Импорт публичной вакансии Greenhouse. |
 | `POST /v1/vacancies/import-headhunter` | Импорт вакансии через браузерную сессию hh.ru. |
 | `POST /v1/vacancies/import-linkedin-reference` | Сохранение безопасной ссылки на LinkedIn. |

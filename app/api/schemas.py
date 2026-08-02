@@ -447,6 +447,81 @@ class SiteDefinitionResponse(BaseModel):
     updated_at: datetime
 
 
+class SiteFieldDiscoveryItem(BaseModel):
+    field_key: str = Field(min_length=1, max_length=200)
+    semantic_key: str = Field(default="custom", min_length=1, max_length=200)
+    label: str = Field(default="", max_length=300)
+    field_type: Literal[
+        "text", "textarea", "select", "radio", "checkbox", "file", "date", "number", "unknown"
+    ]
+    is_required: bool = False
+    options: list[str] = Field(default_factory=list, max_length=200)
+    selector_candidates: list[str] = Field(min_length=1, max_length=20)
+
+
+class SiteFieldDiscoveryRequest(BaseModel):
+    fields: list[SiteFieldDiscoveryItem] = Field(max_length=200)
+
+
+class SiteFieldMappingUpdateRequest(BaseModel):
+    value_key: str = Field(min_length=1, max_length=200)
+    transformation: dict[str, object] = Field(default_factory=dict)
+    review_required: bool = False
+
+
+class SiteValueOverrideRequest(BaseModel):
+    value_key: str = Field(min_length=1, max_length=200)
+    serialized_value: str = Field(min_length=1, max_length=20_000)
+    is_sensitive: bool = False
+    site_field_id: str | None = None
+
+
+class SiteFieldMappingResponse(BaseModel):
+    id: str
+    value_key: str
+    transformation: dict[str, object]
+    review_required: bool
+
+
+class SiteFieldResponse(BaseModel):
+    id: str
+    site_definition_id: str
+    field_key: str
+    semantic_key: str
+    label: str
+    field_type: str
+    is_required: bool
+    options: list[str]
+    selector_candidates: list[dict[str, str]]
+    mapping: SiteFieldMappingResponse | None = None
+    has_site_override: bool = False
+    has_field_override: bool = False
+
+
+class SiteValueOverrideResponse(BaseModel):
+    id: str
+    site_definition_id: str
+    site_field_id: str | None
+    value_key: str
+    is_sensitive: bool
+
+
+class EffectiveValueResponse(BaseModel):
+    value_key: str
+    value: str
+    source: Literal[
+        "application_override",
+        "site_field_override",
+        "site_override",
+        "resume",
+        "global",
+        "generated",
+    ]
+    source_record_id: str | None
+    is_sensitive: bool
+    requires_review: bool
+
+
 class DiscoverHeadHunterVacanciesRequest(BaseModel):
     locations: list[str] = Field(
         default_factory=list,

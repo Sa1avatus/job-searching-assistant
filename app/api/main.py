@@ -66,6 +66,7 @@ from app.api.schemas import (
     DiscoverLinkedInVacanciesRequest,
     DiscoverVacanciesStreamRequest,
     DiscoveryOutcomeResponse,
+    EffectiveValueResponse,
     EmploymentTypeName,
     EvidenceArtifactResponse,
     ExtractedProfileResponse,
@@ -92,6 +93,12 @@ from app.api.schemas import (
     SiteDefinitionCreateRequest,
     SiteDefinitionResponse,
     SiteDefinitionUpdateRequest,
+    SiteFieldDiscoveryRequest,
+    SiteFieldMappingResponse,
+    SiteFieldMappingUpdateRequest,
+    SiteFieldResponse,
+    SiteValueOverrideRequest,
+    SiteValueOverrideResponse,
     TaskTransitionResponse,
     UserRequest,
     UserResponse,
@@ -108,6 +115,14 @@ from app.browser.session_store import InvalidBrowserState, delete_browser_state_
 from app.config import Settings, get_settings
 from app.domain.autofill_keys import InvalidAutofillKey
 from app.domain.autofill_sensitivity import evaluate_autofill_usage
+from app.domain.effective_values import (
+    EffectiveValueBlocked,
+    EffectiveValueCandidate,
+    EffectiveValueNotFound,
+    apply_effective_value_transformation,
+    resolve_effective_autofill_value,
+)
+from app.domain.forms import FormField, FormFieldType
 from app.domain.models import ProfileFact, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy
 from app.domain.resume_text import UnreadableResumeError, extract_resume_text
@@ -126,6 +141,7 @@ from app.llm.router import ModelProvider, ModelRouter, NoModelAvailableError
 from app.matching.jobs import MatchingJobNotReadyError, MatchingJobService
 from app.observability.logging import configure_logging
 from app.observability.metrics import metrics
+from app.security.autofill_decryption import decrypt_autofill_value
 from app.security.autofill_encryption import InvalidAutofillValueEncryption
 from app.services.autofill_value_delete import delete_autofill_value
 from app.services.autofill_value_list import list_autofill_values
@@ -165,6 +181,12 @@ from app.services.site_definition_update import (
     update_site_definition,
 )
 from app.services.site_definitions import InvalidSiteDefinition, create_site_definition
+from app.services.site_fields import (
+    InvalidSiteField,
+    save_discovered_site_fields,
+    upsert_site_field_mapping,
+    upsert_site_value_override,
+)
 from app.services.vacancy_catalog import VacancyCatalogService
 from app.services.vacancy_metadata import (
     detect_work_format,
@@ -177,12 +199,16 @@ from app.storage.evidence_artifacts import EvidenceArtifactStorage, InvalidEvide
 from app.storage.tables import (
     ApplicationMatchResultRow,
     ApplicationRow,
+    AutofillValueRow,
     BrowserSessionRow,
     CandidateEvidenceRow,
     CvFileRow,
     LlmPreferenceRow,
     RequirementMatchRow,
     SiteDefinitionRow,
+    SiteFieldMappingRow,
+    SiteFieldRow,
+    SiteValueOverrideRow,
     UserRow,
     VacancyRequirementRow,
     VacancyRow,
@@ -1055,6 +1081,258 @@ async def archive_user_site_definition(
         raise HTTPException(status_code=404, detail=str(error)) from error
     await BROWSER_AUTHORIZATION_MANAGER.cancel(user_id=user_id, site_key=row.site_key)
     return _site_definition_response(row)
+
+
+def _site_field_response(session: Session, row: SiteFieldRow) -> SiteFieldResponse:
+    mapping = session.scalar(
+        select(SiteFieldMappingRow).where(SiteFieldMappingRow.site_field_id == row.id)
+    )
+    mapping_response = (
+        SiteFieldMappingResponse(
+            id=mapping.id,
+            value_key=mapping.value_key,
+            transformation=dict(mapping.transformation),
+            review_required=mapping.review_required,
+        )
+        if mapping is not None
+        else None
+    )
+    overrides = session.scalars(
+        select(SiteValueOverrideRow).where(
+            SiteValueOverrideRow.site_definition_id == row.site_definition_id,
+            SiteValueOverrideRow.value_key == (mapping.value_key if mapping else ""),
+        )
+    ).all()
+    return SiteFieldResponse(
+        id=row.id,
+        site_definition_id=row.site_definition_id,
+        field_key=row.field_key,
+        semantic_key=row.semantic_key,
+        label=row.label,
+        field_type=row.field_type,
+        is_required=row.is_required,
+        options=list(row.options),
+        selector_candidates=list(row.selector_candidates),
+        mapping=mapping_response,
+        has_site_override=any(override.scope_key == "*" for override in overrides),
+        has_field_override=any(override.scope_key == row.id for override in overrides),
+    )
+
+
+@app.post(
+    "/v1/users/{user_id}/site-definitions/{site_definition_id}/fields/discovery",
+    response_model=list[SiteFieldResponse],
+)
+def save_site_field_discovery(
+    user_id: str,
+    site_definition_id: str,
+    request: SiteFieldDiscoveryRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[SiteFieldResponse]:
+    fields = tuple(
+        FormField(
+            field_id=item.field_key,
+            label=item.label,
+            field_type=FormFieldType(item.field_type),
+            is_required=item.is_required,
+            options=tuple(item.options),
+            semantic_category=item.semantic_key,
+            source_locator=item.selector_candidates[0],
+            locator_candidates=tuple(item.selector_candidates),
+        )
+        for item in request.fields
+    )
+    try:
+        rows = save_discovered_site_fields(
+            session,
+            user_id=user_id,
+            site_definition_id=site_definition_id,
+            fields=fields,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (InvalidSiteField, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return [_site_field_response(session, row) for row in rows]
+
+
+@app.get(
+    "/v1/users/{user_id}/site-definitions/{site_definition_id}/fields",
+    response_model=list[SiteFieldResponse],
+)
+def get_site_fields(
+    user_id: str,
+    site_definition_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[SiteFieldResponse]:
+    site = session.scalar(
+        select(SiteDefinitionRow).where(
+            SiteDefinitionRow.id == site_definition_id,
+            SiteDefinitionRow.user_id == user_id,
+            SiteDefinitionRow.archived_at.is_(None),
+        )
+    )
+    if site is None:
+        raise HTTPException(status_code=404, detail="Site definition not found")
+    rows = session.scalars(
+        select(SiteFieldRow)
+        .where(SiteFieldRow.site_definition_id == site.id)
+        .order_by(SiteFieldRow.label, SiteFieldRow.field_key)
+    )
+    return [_site_field_response(session, row) for row in rows]
+
+
+@app.put(
+    "/v1/users/{user_id}/site-fields/{site_field_id}/mapping",
+    response_model=SiteFieldMappingResponse,
+)
+def put_site_field_mapping(
+    user_id: str,
+    site_field_id: str,
+    request: SiteFieldMappingUpdateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> SiteFieldMappingResponse:
+    try:
+        row = upsert_site_field_mapping(
+            session,
+            user_id=user_id,
+            site_field_id=site_field_id,
+            value_key=request.value_key,
+            transformation=request.transformation,
+            review_required=request.review_required,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return SiteFieldMappingResponse(
+        id=row.id,
+        value_key=row.value_key,
+        transformation=dict(row.transformation),
+        review_required=row.review_required,
+    )
+
+
+@app.put(
+    "/v1/users/{user_id}/site-definitions/{site_definition_id}/overrides",
+    response_model=SiteValueOverrideResponse,
+)
+def put_site_value_override(
+    user_id: str,
+    site_definition_id: str,
+    request: SiteValueOverrideRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> SiteValueOverrideResponse:
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(status_code=503, detail="Encrypted storage is not configured")
+    try:
+        row = upsert_site_value_override(
+            session,
+            user_id=user_id,
+            site_definition_id=site_definition_id,
+            site_field_id=request.site_field_id,
+            value_key=request.value_key,
+            serialized_value=request.serialized_value,
+            is_sensitive=request.is_sensitive,
+            encryption_key=encryption_key,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return SiteValueOverrideResponse(
+        id=row.id,
+        site_definition_id=row.site_definition_id,
+        site_field_id=row.site_field_id,
+        value_key=row.value_key,
+        is_sensitive=row.is_sensitive,
+    )
+
+
+@app.get(
+    "/v1/users/{user_id}/site-fields/{site_field_id}/effective-value",
+    response_model=EffectiveValueResponse,
+)
+def get_site_field_effective_value(
+    user_id: str,
+    site_field_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    allow_sensitive: bool = False,
+) -> EffectiveValueResponse:
+    field = session.scalar(
+        select(SiteFieldRow)
+        .join(SiteDefinitionRow, SiteDefinitionRow.id == SiteFieldRow.site_definition_id)
+        .where(
+            SiteFieldRow.id == site_field_id,
+            SiteDefinitionRow.user_id == user_id,
+            SiteDefinitionRow.archived_at.is_(None),
+        )
+    )
+    if field is None:
+        raise HTTPException(status_code=404, detail="Site field not found")
+    mapping = session.scalar(
+        select(SiteFieldMappingRow).where(SiteFieldMappingRow.site_field_id == field.id)
+    )
+    if mapping is None:
+        raise HTTPException(status_code=404, detail="Site field mapping not found")
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(status_code=503, detail="Encrypted storage is not configured")
+
+    overrides = session.scalars(
+        select(SiteValueOverrideRow).where(
+            SiteValueOverrideRow.site_definition_id == field.site_definition_id,
+            SiteValueOverrideRow.value_key == mapping.value_key,
+        )
+    ).all()
+    override_candidates = {
+        row.scope_key: EffectiveValueCandidate(
+            decrypt_autofill_value(row.encrypted_value, encryption_key=encryption_key),
+            source_record_id=row.id,
+            is_sensitive=row.is_sensitive,
+        )
+        for row in overrides
+    }
+    global_row = session.scalar(
+        select(AutofillValueRow).where(
+            AutofillValueRow.user_id == user_id,
+            AutofillValueRow.key == mapping.value_key,
+        )
+    )
+    global_candidate = (
+        EffectiveValueCandidate(
+            decrypt_autofill_value(global_row.encrypted_value, encryption_key=encryption_key),
+            source_record_id=global_row.id,
+            is_sensitive=global_row.is_sensitive,
+        )
+        if global_row is not None
+        else None
+    )
+    try:
+        resolved = resolve_effective_autofill_value(
+            value_key=mapping.value_key,
+            site_field_override=override_candidates.get(field.id),
+            site_override=override_candidates.get("*"),
+            global_value=global_candidate,
+            allow_sensitive=allow_sensitive,
+        )
+    except EffectiveValueNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except EffectiveValueBlocked as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    transformed_value = apply_effective_value_transformation(
+        resolved.value,
+        mapping.transformation,
+    )
+    return EffectiveValueResponse(
+        value_key=mapping.value_key,
+        value=transformed_value,
+        source=resolved.source.value,  # type: ignore[arg-type]
+        source_record_id=resolved.source_record_id,
+        is_sensitive=resolved.is_sensitive,
+        requires_review=resolved.requires_review or mapping.review_required,
+    )
 
 
 @app.get(

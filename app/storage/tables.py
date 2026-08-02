@@ -143,6 +143,83 @@ class SiteDefinitionRow(Base):
     )
 
 
+class SiteFieldRow(Base):
+    __tablename__ = "site_fields"
+    __table_args__ = (
+        UniqueConstraint(
+            "site_definition_id",
+            "field_key",
+            name="uq_site_fields_definition_field_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    site_definition_id: Mapped[str] = mapped_column(
+        ForeignKey("site_definitions.id", ondelete="CASCADE"), index=True
+    )
+    field_key: Mapped[str] = mapped_column(String(200))
+    semantic_key: Mapped[str] = mapped_column(String(200), default="custom")
+    label: Mapped[str] = mapped_column(String(300), default="")
+    field_type: Mapped[str] = mapped_column(String(30))
+    is_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    options: Mapped[list[str]] = mapped_column(JSON, default=list)
+    selector_candidates: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
+class SiteFieldMappingRow(Base):
+    __tablename__ = "site_field_mappings"
+    __table_args__ = (
+        UniqueConstraint(
+            "site_field_id",
+            name="uq_site_field_mappings_site_field_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    site_field_id: Mapped[str] = mapped_column(
+        ForeignKey("site_fields.id", ondelete="CASCADE"), index=True
+    )
+    value_key: Mapped[str] = mapped_column(String(200))
+    transformation: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    review_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
+class SiteValueOverrideRow(Base):
+    __tablename__ = "site_value_overrides"
+    __table_args__ = (
+        UniqueConstraint(
+            "site_definition_id",
+            "scope_key",
+            "value_key",
+            name="uq_site_value_overrides_scope_value_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    site_definition_id: Mapped[str] = mapped_column(
+        ForeignKey("site_definitions.id", ondelete="CASCADE"), index=True
+    )
+    site_field_id: Mapped[str | None] = mapped_column(
+        ForeignKey("site_fields.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    scope_key: Mapped[str] = mapped_column(String(36))
+    value_key: Mapped[str] = mapped_column(String(200))
+    encrypted_value: Mapped[str] = mapped_column(Text)
+    is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
 class VacancyRow(Base):
     __tablename__ = "vacancies"
 

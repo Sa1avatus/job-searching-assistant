@@ -255,6 +255,17 @@
       </div>
       <div id="site-definition-state" class="task-state"></div>
       <div id="browser-sessions" class="session-grid"></div>
+      <div id="site-field-mapping-panel" style="margin-top:24px;">
+        <h3>Сопоставление полей сайта</h3>
+        <div class="hint">Выберите добавленный сайт, сопоставьте найденные поля с общими данными профиля и при необходимости задайте значение только для сайта или отдельного поля.</div>
+        <div class="row" style="margin-top:12px;">
+          <div><label for="site-field-site">Сайт</label><select id="site-field-site"><option value="">Выберите сайт</option></select></div>
+          <div style="flex:0"><label>&nbsp;</label><button id="load-site-fields" type="button">Загрузить поля</button></div>
+        </div>
+        <div id="site-field-state" class="task-state"></div>
+        <div id="site-field-mappings"></div>
+        <datalist id="site-field-known-keys"></datalist>
+      </div>
     </section>
 
     <section class="step" data-panel="resume">
@@ -879,8 +890,178 @@
         }));
         document.querySelector('#site-definition-state').textContent = `${definition.name}: сайт добавлен.`;
         await loadBrowserSessionStatuses();
+        await loadSiteDefinitionsForFields();
       } catch (error) { showError(error); }
       finally { button.disabled = false; }
+    });
+
+    const effectiveValueSourceLabels = {
+      application_override: 'переопределение отклика',
+      site_field_override: 'переопределение поля',
+      site_override: 'переопределение сайта',
+      resume: 'резюме', global: 'общее значение', generated: 'сгенерировано'
+    };
+
+    async function loadSiteDefinitionsForFields() {
+      const selectNode = document.querySelector('#site-field-site');
+      const previous = selectNode.value;
+      selectNode.replaceChildren(new Option('Выберите сайт', ''));
+      const userId = userIdInput.value.trim();
+      if (!userId) return;
+      const definitions = await asJson(await fetch(`/v1/users/${userId}/site-definitions`, {
+        headers: headers(false)
+      }));
+      definitions.forEach(definition => {
+        selectNode.append(new Option(definition.name, definition.id));
+      });
+      if (definitions.some(definition => definition.id === previous)) selectNode.value = previous;
+    }
+
+    async function loadEffectiveSiteFieldValue(field, output) {
+      const userId = userIdInput.value.trim();
+      const response = await fetch(
+        `/v1/users/${userId}/site-fields/${field.id}/effective-value`,
+        {headers: headers(false)}
+      );
+      if (response.status === 404) {
+        output.textContent = 'Эффективное значение: не настроено';
+        return;
+      }
+      if (response.status === 403) {
+        output.textContent = 'Эффективное значение: скрыто, требуется явная проверка';
+        return;
+      }
+      const effective = await asJson(response);
+      output.textContent = `Эффективное значение: ${effective.value} · источник: ${effectiveValueSourceLabels[effective.source] || effective.source}${effective.requires_review ? ' · требуется проверка' : ''}`;
+    }
+
+    function renderSiteFieldMapping(siteDefinitionId, field) {
+      const card = element('article', undefined, 'session-card');
+      card.dataset.fieldId = field.id;
+      card.append(element('h3', field.label || field.field_key));
+      card.append(element('div', `${field.field_type}${field.is_required ? ' · обязательное' : ''}`, 'hint'));
+
+      const mappingRow = element('div', undefined, 'row');
+      const keyBox = element('div');
+      keyBox.append(element('label', 'Общее значение'));
+      const keyInputNode = document.createElement('input');
+      keyInputNode.className = 'site-field-value-key';
+      keyInputNode.setAttribute('list', 'site-field-known-keys');
+      keyInputNode.placeholder = 'например, contact.email';
+      keyInputNode.value = field.mapping?.value_key || field.semantic_key || '';
+      keyBox.append(keyInputNode);
+      const transformBox = element('div');
+      transformBox.append(element('label', 'Преобразование'));
+      const transform = document.createElement('select');
+      transform.className = 'site-field-transform';
+      [['identity', 'Без изменений'], ['trim', 'Убрать пробелы'], ['lowercase', 'Строчные'], ['uppercase', 'Прописные']]
+        .forEach(([value, label]) => transform.append(new Option(label, value)));
+      transform.value = field.mapping?.transformation?.kind || 'identity';
+      transformBox.append(transform);
+      mappingRow.append(keyBox, transformBox);
+      card.append(mappingRow);
+
+      const reviewLabel = element('label', undefined, 'chip');
+      const review = document.createElement('input');
+      review.type = 'checkbox';
+      review.className = 'site-field-review';
+      review.checked = Boolean(field.mapping?.review_required);
+      reviewLabel.append(review, document.createTextNode(' Проверять перед заполнением'));
+      card.append(reviewLabel);
+
+      const overrideRow = element('div', undefined, 'row');
+      const modeBox = element('div');
+      modeBox.append(element('label', 'Источник'));
+      const mode = document.createElement('select');
+      mode.className = 'site-field-mode';
+      mode.append(
+        new Option('Использовать общее значение', 'common'),
+        new Option('Переопределить для сайта', 'site'),
+        new Option('Переопределить только это поле', 'field')
+      );
+      modeBox.append(mode);
+      const valueBox = element('div');
+      valueBox.append(element('label', 'Значение переопределения'));
+      const overrideValue = document.createElement('input');
+      overrideValue.className = 'site-field-override-value';
+      overrideValue.disabled = true;
+      valueBox.append(overrideValue);
+      overrideRow.append(modeBox, valueBox);
+      card.append(overrideRow);
+      mode.addEventListener('change', () => {
+        overrideValue.disabled = mode.value === 'common';
+      });
+
+      const sensitiveLabel = element('label', undefined, 'chip');
+      const sensitive = document.createElement('input');
+      sensitive.type = 'checkbox';
+      sensitive.className = 'site-field-sensitive';
+      sensitiveLabel.append(sensitive, document.createTextNode(' Чувствительное значение'));
+      card.append(sensitiveLabel);
+
+      const actions = element('div', undefined, 'actions');
+      const save = element('button', 'Сохранить сопоставление', 'primary');
+      save.type = 'button';
+      const effective = element('div', 'Эффективное значение: проверяем…', 'task-state');
+      actions.append(save);
+      card.append(actions, effective);
+      save.addEventListener('click', async () => {
+        try {
+          const userId = userIdInput.value.trim();
+          const valueKey = keyInputNode.value.trim();
+          if (!valueKey) throw new Error('Укажите ключ общего значения');
+          save.disabled = true;
+          await asJson(await fetch(`/v1/users/${userId}/site-fields/${field.id}/mapping`, {
+            method: 'PUT', headers: headers(true), body: JSON.stringify({
+              value_key: valueKey,
+              transformation: {kind: transform.value},
+              review_required: review.checked
+            })
+          }));
+          if (mode.value !== 'common') {
+            if (!overrideValue.value.trim()) throw new Error('Введите значение переопределения');
+            await asJson(await fetch(`/v1/users/${userId}/site-definitions/${siteDefinitionId}/overrides`, {
+              method: 'PUT', headers: headers(true), body: JSON.stringify({
+                value_key: valueKey,
+                serialized_value: overrideValue.value,
+                is_sensitive: sensitive.checked,
+                site_field_id: mode.value === 'field' ? field.id : null
+              })
+            }));
+            overrideValue.value = '';
+          }
+          await loadEffectiveSiteFieldValue(field, effective);
+          document.querySelector('#site-field-state').textContent = `${field.label || field.field_key}: сохранено.`;
+        } catch (error) { showError(error); }
+        finally { save.disabled = false; }
+      });
+      loadEffectiveSiteFieldValue(field, effective).catch(error => {
+        effective.textContent = `Эффективное значение: ошибка (${error.message})`;
+      });
+      return card;
+    }
+
+    async function loadSiteFieldMappings() {
+      const userId = userIdInput.value.trim();
+      const siteDefinitionId = document.querySelector('#site-field-site').value;
+      if (!userId) throw new Error('Сначала создайте или укажите User ID');
+      if (!siteDefinitionId) throw new Error('Выберите сайт');
+      const fields = await asJson(await fetch(
+        `/v1/users/${userId}/site-definitions/${siteDefinitionId}/fields`,
+        {headers: headers(false)}
+      ));
+      const container = document.querySelector('#site-field-mappings');
+      container.replaceChildren();
+      if (!fields.length) {
+        container.append(element('div', 'Поля ещё не обнаружены. Они появятся после анализа формы сайта.', 'empty'));
+      } else {
+        fields.forEach(field => container.append(renderSiteFieldMapping(siteDefinitionId, field)));
+      }
+      document.querySelector('#site-field-state').textContent = `Найдено полей: ${fields.length}`;
+    }
+
+    document.querySelector('#load-site-fields').addEventListener('click', () => {
+      loadSiteFieldMappings().catch(showError);
     });
 
     document.querySelector('#create-user').addEventListener('click', async () => {
@@ -893,6 +1074,7 @@
         userIdInput.value = user.id;
         localStorage.setItem('dashboardUserId', user.id);
         await loadBrowserSessionStatuses();
+        await loadSiteDefinitionsForFields();
         await loadSavedVacancies();
         await loadCvFiles();
         showStatus(`Пользователь создан: ${user.id}`);
@@ -1032,6 +1214,13 @@
         `/v1/users/${userId}/autofill-values`, {headers: headers(false)}
       ));
       autofillValuesByKey = new Map(values.map(value => [value.key, value]));
+      const knownKeys = document.querySelector('#site-field-known-keys');
+      knownKeys.replaceChildren();
+      [...new Set([
+        ...personalAutofillFields.map(field => field.key),
+        ...applicationAutofillFields.map(field => field.key),
+        ...values.map(value => value.key)
+      ])].sort().forEach(key => knownKeys.append(new Option(key, key)));
       [...personalAutofillFields, ...applicationAutofillFields].forEach(field => {
         document.querySelector(`#${field.id}`).value =
           autofillValuesByKey.get(field.key)?.serialized_value || '';
@@ -2266,7 +2455,7 @@
       loadSavedLlmPreference();
       await Promise.all([
         loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles(),
-        loadAutofillValues()
+        loadAutofillValues(), loadSiteDefinitionsForFields()
       ]);
       restoreSearchResults();
     }
@@ -2288,6 +2477,7 @@
     restoreSearchResults();
     loadSavedLlmPreference();
     loadAutofillValues().catch(showError);
+    loadSiteDefinitionsForFields().catch(showError);
     loadBrowserSessionStatuses(true).catch(showError);
     window.setInterval(() => loadBrowserSessionStatuses(true).catch(() => {}), 300000);
     loadSavedVacancies().catch(showError);

@@ -42,6 +42,7 @@ class FormField:
     confidence: float = 0.0
     source_locator: str = ""
     constraints: FieldConstraints = FieldConstraints()
+    locator_candidates: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not 0 <= self.confidence <= 1:

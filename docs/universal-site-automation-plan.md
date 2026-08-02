@@ -346,9 +346,9 @@ Tests:
 
 ## Small-task implementation sequence
 
-Progress as of 2026-08-02: Phase 0, Phase 1, and Phase 2 are complete on
-`feature/universal-site-automation-v1.2`. The full boundary suite passes with 617 tests; Alembic
-revision `0022` is the single head. Phase 3 is the next active phase.
+Progress as of 2026-08-02: Phase 0 through Phase 3 are complete on
+`feature/universal-site-automation-v1.2`. The full boundary suite passes with 644 tests; Alembic
+revision `0023` is the single head. Phase 4 is the next active phase.
 
 ### Phase 0 — baseline and documentation
 
@@ -382,14 +382,14 @@ revision `0022` is the single head. Phase 3 is the next active phase.
 
 ### Phase 3 — fields, mappings, and overrides
 
-- [ ] Add site-field persistence.
-- [ ] Add site-field mapping persistence.
-- [ ] Add site and field override persistence.
-- [ ] Implement effective-value resolution as a pure, independently tested service.
-- [ ] Extend form discovery to produce multiple locator candidates.
-- [ ] Add the mapping table UI.
-- [ ] Add “use common value / override” controls.
-- [ ] Display the effective value and its source.
+- [x] Add site-field persistence.
+- [x] Add site-field mapping persistence.
+- [x] Add site and field override persistence.
+- [x] Implement effective-value resolution as a pure, independently tested service.
+- [x] Extend form discovery to produce multiple locator candidates.
+- [x] Add the mapping table UI.
+- [x] Add “use common value / override” controls.
+- [x] Display the effective value and its source.
 
 ### Phase 4 — declarative workflows
 

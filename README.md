@@ -134,6 +134,11 @@ Real submission is disabled by default. Set `APP_ENABLE_LINKEDIN_APPLY=true` to 
 | `POST /v1/users/{user_id}/site-definitions` | Add a validated HTTPS site definition. |
 | `PUT /v1/users/{user_id}/site-definitions/{id}` | Update mutable site access settings. |
 | `POST /v1/users/{user_id}/site-definitions/{id}/archive` | Soft-archive a site definition. |
+| `GET /v1/users/{user_id}/site-definitions/{id}/fields` | List discovered fields and mappings. |
+| `POST /v1/users/{user_id}/site-definitions/{id}/fields/discovery` | Save safe field discovery results. |
+| `PUT /v1/users/{user_id}/site-fields/{id}/mapping` | Map a site field to a canonical value. |
+| `PUT /v1/users/{user_id}/site-definitions/{id}/overrides` | Store an encrypted site or field override. |
+| `GET /v1/users/{user_id}/site-fields/{id}/effective-value` | Resolve the effective mapped value and source. |
 | `POST /v1/vacancies/import-greenhouse` | Import a public Greenhouse vacancy. |
 | `POST /v1/vacancies/import-headhunter` | Import a vacancy through the hh.ru browser session. |
 | `POST /v1/vacancies/import-linkedin-reference` | Save a policy-safe LinkedIn reference. |

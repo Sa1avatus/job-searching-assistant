@@ -17,6 +17,8 @@ class FieldObservation(TypedDict):
     options: list[str]
     current_value: str | None
     name: str
+    element_id: str
+    placeholder: str
     min_length: int | None
     max_length: int | None
     minimum: str | None
@@ -138,6 +140,8 @@ async def _observe_control(control: Locator) -> FieldObservation:
                         ? (element.checked ? (label || element.value || 'true') : null)
                         : (element.value || null),
                     name: element.name || '',
+                    element_id: element.id || '',
+                    placeholder: element.getAttribute('placeholder')?.trim() || '',
                     min_length: element.minLength >= 0 ? element.minLength : null,
                     max_length: element.maxLength >= 0 ? element.maxLength : null,
                     minimum: element.getAttribute('min'),
@@ -158,12 +162,24 @@ def _to_form_field(observation: FieldObservation, index: int) -> FormField:
         observation["label"], observation["name"]
     )
     field_id = observation["field_id"] or f"field-{index}"
-    if observation["label"]:
-        source_locator = f"label:{observation['label']}"
-    elif observation["name"]:
-        source_locator = f"name:{observation['name']}"
-    else:
-        source_locator = f"nth:{index}"
+    candidates = tuple(
+        dict.fromkeys(
+            candidate
+            for candidate in (
+                f"label:{observation['label']}" if observation["label"] else "",
+                (
+                    f"placeholder:{observation['placeholder']}"
+                    if observation["placeholder"]
+                    else ""
+                ),
+                f"id:{observation['element_id']}" if observation["element_id"] else "",
+                f"name:{observation['name']}" if observation["name"] else "",
+                f"nth:{index}",
+            )
+            if candidate
+        )
+    )
+    source_locator = candidates[0]
     return FormField(
         field_id=field_id,
         label=observation["label"],
@@ -184,4 +200,5 @@ def _to_form_field(observation: FieldObservation, index: int) -> FormField:
             accepted_file_types=tuple(observation["accepted_file_types"]),
             allows_multiple=observation["allows_multiple"],
         ),
+        locator_candidates=candidates,
     )
