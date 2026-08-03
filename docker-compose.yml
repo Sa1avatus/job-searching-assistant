@@ -1,29 +1,91 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: recruitment
+      POSTGRES_USER: recruitment
+      POSTGRES_PASSWORD: recruitment
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recruitment -d recruitment"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - recruitment-postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    volumes:
+      - recruitment-redis:/data
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "127.0.0.1:9200:9200"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null || exit 1"
+        ]
+      interval: 10s
+      timeout: 8s
+      retries: 30
+      start_period: 45s
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - recruitment-opensearch:/usr/share/opensearch/data
+
   api:
     build:
       context: .
       dockerfile: Dockerfile.browser
+    restart: unless-stopped
     environment:
-      APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
-      APP_REDIS_URL: redis://redis:6379/0
-      APP_OPENSEARCH_URL: http://opensearch:9200
-      APP_MATCHING_V2_ENABLED: ${APP_MATCHING_V2_ENABLED:-false}
-      APP_MATCHING_V2_SHADOW_MODE: ${APP_MATCHING_V2_SHADOW_MODE:-true}
-      APP_MATCHING_V2_FALLBACK_ENABLED: ${APP_MATCHING_V2_FALLBACK_ENABLED:-true}
-      APP_MATCHING_MODEL_SERVICE_URL: http://matching-models:8090
-      APP_SUBMISSION_MODE: review
-      APP_ARTIFACT_DIRECTORY: /app/.artifacts
-      APP_MAX_DOCUMENT_BYTES: 5242880
-      APP_HH_USER_AGENT: ${APP_HH_USER_AGENT:-JobSearchingAssistant/1.0 (local personal assistant)}
-      APP_HH_ACCESS_TOKEN: ${APP_HH_ACCESS_TOKEN:-}
-      APP_BROWSER_STATE_ENCRYPTION_KEY: ${APP_BROWSER_STATE_ENCRYPTION_KEY:-}
-      APP_ENABLE_HEADHUNTER_APPLY: ${APP_ENABLE_HEADHUNTER_APPLY:-false}
-      APP_ENABLE_LINKEDIN_APPLY: ${APP_ENABLE_LINKEDIN_APPLY:-false}
-      APP_ANTHROPIC_API_KEY: ${APP_ANTHROPIC_API_KEY:-}
-      APP_GEMINI_API_KEY: ${APP_GEMINI_API_KEY:-}
-      APP_MATERIALS_GENERATION_TIMEOUT_SECONDS: ${APP_MATERIALS_GENERATION_TIMEOUT_SECONDS:-120}
+      APP_DATABASE_URL: "postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment"
+      APP_REDIS_URL: "redis://redis:6379/0"
+      APP_OPENSEARCH_URL: "http://opensearch:9200"
+      APP_MATCHING_V2_ENABLED: "${APP_MATCHING_V2_ENABLED:-false}"
+      APP_MATCHING_V2_SHADOW_MODE: "${APP_MATCHING_V2_SHADOW_MODE:-true}"
+      APP_MATCHING_V2_FALLBACK_ENABLED: "${APP_MATCHING_V2_FALLBACK_ENABLED:-true}"
+      APP_MATCHING_MODEL_SERVICE_URL: "http://matching-models:8090"
+      APP_SUBMISSION_MODE: "review"
+      APP_ARTIFACT_DIRECTORY: "/app/.artifacts"
+      APP_MAX_DOCUMENT_BYTES: "5242880"
+      APP_HH_USER_AGENT: "${APP_HH_USER_AGENT:-JobSearchingAssistant/1.0 (local personal assistant)}"
+      APP_HH_ACCESS_TOKEN: "${APP_HH_ACCESS_TOKEN:-}"
+      APP_BROWSER_STATE_ENCRYPTION_KEY: "${APP_BROWSER_STATE_ENCRYPTION_KEY:-}"
+      APP_ENABLE_HEADHUNTER_APPLY: "${APP_ENABLE_HEADHUNTER_APPLY:-false}"
+      APP_ENABLE_LINKEDIN_APPLY: "${APP_ENABLE_LINKEDIN_APPLY:-false}"
+      APP_ANTHROPIC_API_KEY: "${APP_ANTHROPIC_API_KEY:-}"
+      APP_GEMINI_API_KEY: "${APP_GEMINI_API_KEY:-}"
+      APP_MATERIALS_GENERATION_TIMEOUT_SECONDS: "${APP_MATERIALS_GENERATION_TIMEOUT_SECONDS:-120}"
       DISPLAY: ":99"
-    command: ["sh", "scripts/start_api_with_browser_desktop.sh"]
+    command: ["/bin/bash", "scripts/start_api_with_browser_desktop.sh"]
     ports:
       - "127.0.0.1:${APP_HTTP_PORT:-8000}:8000"
       - "127.0.0.1:7900:7900"
@@ -32,17 +94,20 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      opensearch:
+        condition: service_healthy
     healthcheck:
       test:
         [
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3).read()"
         ]
       interval: 10s
-      timeout: 3s
-      retries: 5
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     volumes:
       - ./.artifacts:/app/.artifacts
       - ./config/browser:/app/config/browser:ro
@@ -50,56 +115,41 @@ services:
       - default
       - local-code-worker
 
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: recruitment
-      POSTGRES_USER: recruitment
-      POSTGRES_PASSWORD: recruitment
-    ports:
-      - "127.0.0.1:5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U recruitment"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    volumes:
-      - recruitment-postgres:/var/lib/postgresql/data
-
   retention:
     build: .
+    restart: unless-stopped
     environment:
-      APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
-      APP_ARTIFACT_DIRECTORY: /app/.artifacts
-      APP_RETENTION_DAYS: 30
-      APP_RETENTION_INTERVAL_SECONDS: 86400
+      APP_DATABASE_URL: "postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment"
+      APP_ARTIFACT_DIRECTORY: "/app/.artifacts"
+      APP_RETENTION_DAYS: "30"
+      APP_RETENTION_INTERVAL_SECONDS: "86400"
     command: ["python", "-m", "app.workers.retention"]
     depends_on:
       postgres:
         condition: service_healthy
       api:
         condition: service_healthy
-    restart: unless-stopped
     volumes:
       - ./.artifacts:/app/.artifacts
 
   dispatcher:
     build: .
+    restart: unless-stopped
     environment:
-      APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
-      APP_REDIS_URL: redis://redis:6379/0
-      APP_OPENSEARCH_URL: http://opensearch:9200
-      APP_MATCHING_V2_ENABLED: ${APP_MATCHING_V2_ENABLED:-false}
-      APP_MATCHING_V2_SHADOW_MODE: ${APP_MATCHING_V2_SHADOW_MODE:-true}
-      APP_MATCHING_V2_FALLBACK_ENABLED: ${APP_MATCHING_V2_FALLBACK_ENABLED:-true}
-      APP_MATCHING_MODEL_SERVICE_URL: http://matching-models:8090
-      APP_BROWSER_STATE_ENCRYPTION_KEY: ${APP_BROWSER_STATE_ENCRYPTION_KEY:-}
-      APP_ANTHROPIC_API_KEY: ${APP_ANTHROPIC_API_KEY:-}
-      APP_GEMINI_API_KEY: ${APP_GEMINI_API_KEY:-}
-      APP_WORKER_LEASE_SECONDS: 120
-      APP_WORKER_POLL_SECONDS: 2
-      APP_WORKER_RETRY_SECONDS: 30
-      APP_WORKER_MAX_ATTEMPTS: 3
+      APP_DATABASE_URL: "postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment"
+      APP_REDIS_URL: "redis://redis:6379/0"
+      APP_OPENSEARCH_URL: "http://opensearch:9200"
+      APP_MATCHING_V2_ENABLED: "${APP_MATCHING_V2_ENABLED:-false}"
+      APP_MATCHING_V2_SHADOW_MODE: "${APP_MATCHING_V2_SHADOW_MODE:-true}"
+      APP_MATCHING_V2_FALLBACK_ENABLED: "${APP_MATCHING_V2_FALLBACK_ENABLED:-true}"
+      APP_MATCHING_MODEL_SERVICE_URL: "http://matching-models:8090"
+      APP_BROWSER_STATE_ENCRYPTION_KEY: "${APP_BROWSER_STATE_ENCRYPTION_KEY:-}"
+      APP_ANTHROPIC_API_KEY: "${APP_ANTHROPIC_API_KEY:-}"
+      APP_GEMINI_API_KEY: "${APP_GEMINI_API_KEY:-}"
+      APP_WORKER_LEASE_SECONDS: "120"
+      APP_WORKER_POLL_SECONDS: "2"
+      APP_WORKER_RETRY_SECONDS: "30"
+      APP_WORKER_MAX_ATTEMPTS: "3"
     command: ["python", "-m", "app.workers.dispatcher"]
     depends_on:
       postgres:
@@ -110,7 +160,6 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    restart: unless-stopped
     volumes:
       - ./.artifacts:/app/.artifacts
     networks:
@@ -122,15 +171,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.browser
+    restart: unless-stopped
     environment:
-      APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
-      APP_REDIS_URL: redis://redis:6379/0
-      APP_ARTIFACT_DIRECTORY: /app/.artifacts
-      APP_BROWSER_STATE_ENCRYPTION_KEY: ${APP_BROWSER_STATE_ENCRYPTION_KEY:-}
-      APP_ENABLE_HEADHUNTER_APPLY: ${APP_ENABLE_HEADHUNTER_APPLY:-false}
-      APP_ENABLE_LINKEDIN_APPLY: ${APP_ENABLE_LINKEDIN_APPLY:-false}
-      APP_MAX_BROWSER_STATE_BYTES: 2097152
-      APP_WORKER_POLL_SECONDS: 2
+      APP_DATABASE_URL: "postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment"
+      APP_REDIS_URL: "redis://redis:6379/0"
+      APP_ARTIFACT_DIRECTORY: "/app/.artifacts"
+      APP_BROWSER_STATE_ENCRYPTION_KEY: "${APP_BROWSER_STATE_ENCRYPTION_KEY:-}"
+      APP_ENABLE_HEADHUNTER_APPLY: "${APP_ENABLE_HEADHUNTER_APPLY:-false}"
+      APP_ENABLE_LINKEDIN_APPLY: "${APP_ENABLE_LINKEDIN_APPLY:-false}"
+      APP_MAX_BROWSER_STATE_BYTES: "2097152"
+      APP_WORKER_POLL_SECONDS: "2"
     command: ["python", "-m", "app.workers.browser_worker"]
     depends_on:
       postgres:
@@ -139,67 +189,28 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    restart: unless-stopped
     volumes:
       - ./.artifacts:/app/.artifacts
       - ./config/browser:/app/config/browser:ro
-
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "127.0.0.1:6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    volumes:
-      - recruitment-redis:/data
-
-  opensearch:
-    image: opensearchproject/opensearch:2.19.1
-    environment:
-      discovery.type: single-node
-      DISABLE_INSTALL_DEMO_CONFIG: "true"
-      DISABLE_SECURITY_PLUGIN: "true"
-      bootstrap.memory_lock: "true"
-      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
-    ports:
-      - "127.0.0.1:9200:9200"
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -fsS http://localhost:9200/_cluster/health >/dev/null"
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    volumes:
-      - recruitment-opensearch:/usr/share/opensearch/data
 
   matching-models:
     profiles: ["matching"]
     build:
       context: .
       dockerfile: Dockerfile.ml
+    restart: unless-stopped
     environment:
-      HF_TOKEN: ${HF_TOKEN}
-      EMBEDDING_MODEL_NAME: BAAI/bge-m3
-      EMBEDDING_MODEL_REVISION: main
-      RERANKER_MODEL_NAME: BAAI/bge-reranker-v2-m3
-      RERANKER_MODEL_REVISION: main
-      MODEL_DEVICE: cuda
+      HF_TOKEN: "${HF_TOKEN:-}"
+      EMBEDDING_MODEL_NAME: "BAAI/bge-m3"
+      EMBEDDING_MODEL_REVISION: "main"
+      RERANKER_MODEL_NAME: "BAAI/bge-reranker-v2-m3"
+      RERANKER_MODEL_REVISION: "main"
+      MODEL_DEVICE: "cuda"
       MODEL_BATCH_SIZE: "8"
       CUDA_VISIBLE_DEVICES: "0"
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-      HF_HOME: /models/huggingface
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+      HF_HOME: "/models/huggingface"
       HF_HUB_DISABLE_XET: "1"
       HF_HUB_DOWNLOAD_TIMEOUT: "600"
     gpus: all
@@ -211,13 +222,12 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=5)"
+          "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=5).read()"
         ]
       interval: 30s
       timeout: 10s
       retries: 30
       start_period: 300s
-    restart: unless-stopped
     volumes:
       - recruitment-model-cache:/models/huggingface
 
