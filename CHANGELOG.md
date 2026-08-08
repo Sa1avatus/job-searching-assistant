@@ -25,6 +25,8 @@
   action sets; arbitrary action types remain rejected.
 - Added the versioned `WorkflowDefinitionRow` persistence contract with site ownership, closed
   lifecycle status, URL-pattern storage, uniqueness constraints, and SQLite-verified metadata.
+- Added ordered, typed `WorkflowStepRow` persistence with closed action types, bounded timeouts,
+  selector candidates, declarative conditions/parameters, and explicit enabled state.
 - Added user-scoped arbitrary site definitions with strict HTTPS URL validation, exact host
   allowlists, bounded authorization rules, soft archival, and Alembic migration `0022`.
 - Added create, list, update, and archive site-definition APIs with tenant isolation and reserved

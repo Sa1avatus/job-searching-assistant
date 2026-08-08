@@ -126,17 +126,13 @@ class SiteDefinitionRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     site_key: Mapped[str] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(200))
     login_url: Mapped[str] = mapped_column(Text)
     allowed_hosts: Mapped[list[str]] = mapped_column(JSON, default=list)
     authorization_rules: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
-    archived_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
@@ -170,8 +166,43 @@ class WorkflowDefinitionRow(Base):
     )
 
 
-class SiteFieldRow(Base):
+class WorkflowStepRow(Base):
+    __tablename__ = "workflow_steps"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_definition_id",
+            "position",
+            name="uq_workflow_steps_definition_position",
+        ),
+        CheckConstraint(
+            "action_type IN ('navigate', 'fill', 'upload', 'select', 'check', "
+            "'click', 'wait', 'assert', 'human_review', 'submit')",
+            name="ck_workflow_steps_action_type",
+        ),
+        CheckConstraint(
+            "timeout_ms >= 1 AND timeout_ms <= 120000",
+            name="ck_workflow_steps_timeout_range",
+        ),
+    )
 
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    workflow_definition_id: Mapped[str] = mapped_column(
+        ForeignKey("workflow_definitions.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer)
+    action_type: Mapped[str] = mapped_column(String(30), index=True)
+    selector_candidates: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    condition: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    parameters: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    timeout_ms: Mapped[int] = mapped_column(Integer, default=10_000)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
+class SiteFieldRow(Base):
     __tablename__ = "site_fields"
     __table_args__ = (
         UniqueConstraint(
@@ -347,9 +378,7 @@ class CandidateEvidenceRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     cv_file_id: Mapped[str] = mapped_column(
         ForeignKey("cv_files.id", ondelete="CASCADE"), index=True
     )
