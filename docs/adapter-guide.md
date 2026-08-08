@@ -1,5 +1,8 @@
 # Adapter guide
 
+Read this document when changing source-specific URL handling, extraction, field preparation, or
+submission behavior. General browser safety is defined in `browser-automation.md`.
+
 ## Greenhouse
 
 The Greenhouse adapter supports current public job URLs in this form:
@@ -51,16 +54,16 @@ extraction:
   often; unknown names are ignored (search falls back to "anywhere").
 - `HeadHunterBrowserAdapter.extract_vacancy(url)` — loads the vacancy page and scrapes title,
   company, location, description, key skills, and whether a cover letter is required.
-- Neither method requires a captured login session — these are public pages. Only
-  `HeadHunterBrowserAdapter.apply(...)` (real response submission) needs a session captured via
-  `scripts/browser_login_capture.py headhunter`.
+- Neither adapter method inherently requires a captured login session because these are public
+  pages. The dashboard discovery endpoints deliberately restore the user's saved HeadHunter session
+  to reduce anonymous access failures and keep one consistent user workflow. Real response
+  submission always requires a saved session.
 - A CAPTCHA/verification checkpoint raises `CaptchaChallenge`; callers (job discovery, the manual
   import endpoint) treat that as "found nothing this run" rather than a hard failure.
 
-Selectors are based on hh.ru's `data-qa` attributes (used by the site's own UI tests, so they
-change less often than most markup) but have not been exercised against the live site from the
-development sandbox — verify locally with `APP_BROWSER_HEADLESS=false` before relying on this
-unattended, and update the selectors in `headhunter_browser.py` if hh.ru changes its markup.
+Selectors are based on hh.ru's `data-qa` attributes. Live behavior is time-sensitive and fixture
+coverage is not proof of current compatibility. Any authenticated or live-site check requires
+explicit approval; update the selector profile or adapter only from reviewed evidence.
 
 `adapters/job_boards/headhunter_api.py` (the old `api.hh.ru` HTTP client) still exists and is
 still usable if you have a working OAuth token and prefer the API where it works, but nothing in

@@ -1,5 +1,8 @@
 # Security model
 
+Read this document when changing authentication, encryption, secret handling, file storage,
+retention, external URLs, browser sessions, or model-provider data flow.
+
 - Deployment credentials come from environment variables; `.env` is ignored by version control.
   Per-user LLM API keys may be entered in the dashboard and are stored in PostgreSQL only after
   Fernet authenticated encryption. API responses expose only whether a key is configured.
@@ -29,3 +32,8 @@
   reject embedded credentials, canonicalize user input, and construct the API URL from validated
   board/job identifiers rather than fetching an arbitrary supplied URL.
 - CI audits resolved runtime dependencies against published vulnerability advisories.
+
+External providers receive only the context required for the selected operation. Do not include
+credentials, browser state, protected answers, unrelated resume data, or raw application evidence.
+See `browser-automation.md` for live-session and submission boundaries and `database.md` for
+personal-data persistence rules.

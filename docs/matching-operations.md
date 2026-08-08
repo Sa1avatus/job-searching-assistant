@@ -1,41 +1,37 @@
 # Matching v2 operations
 
-Apply migrations before enabling the feature. Keep shadow mode enabled until evaluation and
-backfill results are accepted.
+Read this runbook for controlled index rebuilds, backfills, and rollout. These commands mutate local
+matching state unless marked `--dry-run`; obtain approval before non-dry-run operations.
 
-1. Verify PostgreSQL, Redis, OpenSearch, dispatcher, and the configured model endpoint.
-2. Rebuild the OpenSearch evidence index from verified PostgreSQL evidence.
-3. Enable `APP_MATCHING_V2_ENABLED=true` and leave `APP_MATCHING_V2_SHADOW_MODE=true`.
-4. Enqueue a single application with
-   `POST /v1/applications/{application_id}/recalculate-match`.
-5. Inspect `GET /v1/applications/{application_id}/match-details` and `/metrics`.
-6. Backfill in bounded batches; never run a full backfill during application startup.
-7. Compare legacy and v2 scores before switching shadow mode off.
+## Rollout sequence
 
-The index is disposable. Rebuilding creates a versioned index, writes all verified evidence, and
-atomically switches read/write aliases. A failed rebuild deletes only the incomplete index.
+1. Verify PostgreSQL, Redis, OpenSearch, the dispatcher, and the configured model endpoint.
+2. Confirm the Alembic head and rebuild a versioned evidence index from PostgreSQL.
+3. Enable matching v2 with shadow mode still enabled.
+4. Recalculate one reviewed application and inspect its match details and metrics.
+5. Backfill in bounded batches with a stable resume cursor.
+6. Compare legacy and v2 scores against `matching-evaluation.md`.
+7. Switch shadow mode off only with explicit acceptance and a rollback decision.
 
-Bounded administration commands:
+The index is disposable. A rebuild writes a new physical index, validates it, and atomically moves
+aliases. Failure removes only the incomplete index.
+
+Safe discovery and dry-run commands:
 
 ```powershell
-python -m scripts.matching_admin recalculate-all --dry-run --limit 100 --batch-size 20
-python -m scripts.matching_admin recalculate-all --limit 100 --resume-after APPLICATION_ID
-python -m scripts.matching_admin rescore-application APPLICATION_ID
-python -m scripts.matching_admin reindex-user USER_ID
-python -m scripts.matching_admin reindex-cv CV_FILE_ID
-python -m scripts.matching_admin rebuild-index --dry-run
-python -m scripts.matching_admin verify-index-consistency --user-id USER_ID
+.\.venv\Scripts\python.exe scripts\matching_admin.py --help
+.\.venv\Scripts\python.exe scripts\matching_admin.py recalculate-all --dry-run --limit 100 --batch-size 20
+.\.venv\Scripts\python.exe scripts\matching_admin.py rebuild-index --dry-run
 ```
 
-`extract-requirements` and `extract-evidence` use the same idempotent application queue as
-`recalculate-all`; extraction is reused when its source/model/schema fingerprint is unchanged.
-Every batch command supports dry-run, limit, batch size, and a stable application-ID resume cursor.
-The JSON report includes the last cursor and bounded failures.
+Commands that name a user, resume, or application require IDs from the local database. Obtain them
+through the authenticated local API or dashboard, then follow the CLI help rather than copying a
+placeholder identifier from documentation.
 
 Changing an embedding model requires a new index version because dimensions and vector meaning are
-part of the index contract. Model name, revision, dimensions, normalization, content hash, and index
-name are recorded in PostgreSQL.
+part of the index contract. PostgreSQL records model name, revision, dimensions, normalization,
+content hash, and index name.
 
 Useful failure signals are `matching_failures_total`, `degraded_matches_total`,
-`opensearch_errors_total`, matching stage duration summaries, and the per-application
-`failure_reason`. Logs contain IDs and timings, not CV text.
+`opensearch_errors_total`, stage-duration summaries, and the persisted `failure_reason`. Logs contain
+identifiers and timings, not resume text.

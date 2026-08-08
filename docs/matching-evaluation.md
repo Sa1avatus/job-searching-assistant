@@ -1,5 +1,8 @@
 # Matching v2 evaluation
 
+Read this document before changing evaluation fixtures, score-promotion thresholds, or shadow-mode
+rollout decisions.
+
 Evaluation must happen in shadow mode against reviewed examples. A fixture contains vacancy text,
 candidate text, expected eligibility, an expected score interval, matched and missing requirements,
 and reviewer notes.

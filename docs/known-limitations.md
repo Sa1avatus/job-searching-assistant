@@ -1,10 +1,13 @@
 # Known limitations
 
+Read this document when diagnosing connector behavior or deciding whether a capability has been
+verified beyond controlled fixtures.
+
 ## hh.ru (HeadHunter)
-- Search and vacancy extraction go through a real Chromium browser
-  (`adapters/job_boards/headhunter_browser.py`), not `api.hh.ru` — the anonymous API is
-  CAPTCHA-limited in practice. The personal dashboard requires and reuses the candidate's saved
-  hh.ru session for search, extraction, and the separate real-submission step.
+- Search and vacancy extraction go through Chromium (`adapters/job_boards/headhunter_browser.py`),
+  not `api.hh.ru`. The adapter can read public pages without a captured session, but dashboard
+  discovery deliberately requires and reuses the candidate's saved hh.ru session. Submission also
+  requires that session.
 - Real response submission (`POST /v1/applications/{id}/apply-headhunter`) requires
   `APP_ENABLE_HEADHUNTER_APPLY=true` and a session captured by hand through the dashboard — the
   automation never sees or types a password.
@@ -14,9 +17,8 @@
 - Location filtering uses a small built-in table of common region names → hh.ru area ids
   (`KNOWN_AREA_IDS`), not a live lookup; unknown region names are ignored (falls back to
   "anywhere").
-- Selectors are based on hh.ru's `data-qa` attributes but have not been exercised against the live
-  site from the development sandbox (no network egress there). Verify locally with
-  `APP_BROWSER_HEADLESS=false` before unattended use.
+- Selectors are based on hh.ru's `data-qa` attributes. Their current live compatibility is not
+  established by the controlled suite and must be treated as time-sensitive.
 - The vacancy's "resume" field is always reported as required by hh.ru but is never filled by this
   adapter (hh.ru attaches whichever resume is already selected in the user's own account); it is
   explicitly excluded from the pre-submission required-answer check for this reason.
@@ -52,8 +54,8 @@
 - The current browser flow fills a controlled fixture and stops at review; it never submits.
 
 ## Materials generation (cover letters / screening answers)
-- Requires `APP_ANTHROPIC_API_KEY`; the user supplies and is billed for their own key, with no
-  proxying or markup by this project.
+- Requires a user-configured Anthropic, Gemini, or OpenAI-compatible provider. External providers
+  receive the selected resume facts and vacancy context and may bill the user's account.
 - The model only ever sees the candidate's own *verified* profile facts and the vacancy's own
   text; it is instructed not to invent anything beyond that, and sensitive-category fields (work
   authorization, disability, background checks, etc.) are never sent to the model and never

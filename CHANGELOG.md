@@ -2,6 +2,15 @@
 
 ## 1.2.0 (in progress) — 2026-08-01
 
+- Reorganized contributor and agent guidance around a concise `AGENTS.md` plus task-specific
+  product, database, browser automation, testing, matching, and workflow documentation.
+- Removed completed or contradictory planning documents after transferring their current facts to
+  maintained references; application behavior and database schema are unchanged by this audit.
+- Made `scripts/setup.ps1` create the required shared Docker network and report the version from
+  `VERSION` instead of a stale literal.
+- Verified Markdown links and paths, PowerShell syntax, Python compilation, TOML/JSON parsing,
+  Docker Compose configuration, and `git diff --check`. The full pytest suite was not run because a
+  project virtual environment was unavailable.
 - Added user-scoped site fields, semantic mappings, encrypted site/field overrides, and Alembic
   migration `0023` without exposing stored override plaintext in API responses.
 - Added deterministic effective-value resolution with explicit precedence, sensitive-value

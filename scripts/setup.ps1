@@ -50,6 +50,14 @@ if ($LASTEXITCODE -ne 0) {
     throw "Docker Compose v2 is unavailable. Update Docker Desktop."
 }
 
+docker network inspect local-code-worker-network *> $null
+if ($LASTEXITCODE -ne 0) {
+    docker network create local-code-worker-network | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not create the local-code-worker-network Docker network."
+    }
+}
+
 $envPath = Join-Path $projectRoot ".env"
 if (-not (Test-Path -LiteralPath $envPath)) {
     Copy-Item -LiteralPath (Join-Path $projectRoot ".env.example") -Destination $envPath
@@ -92,5 +100,6 @@ if ($health.status -ne "ok") {
 }
 
 Write-Host ""
-Write-Host "Job Searching Assistant 1.0.0 is ready."
+$projectVersion = (Get-Content -LiteralPath (Join-Path $projectRoot "VERSION") -Raw).Trim()
+Write-Host "Job Searching Assistant $projectVersion is ready."
 Write-Host "Open: http://127.0.0.1:8000/dashboard"
