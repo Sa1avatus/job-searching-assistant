@@ -219,6 +219,20 @@
       </div>
       <label><input id="store-sensitive-personal-data" type="checkbox"> Я явно разрешаю хранить email и телефон в зашифрованном виде; перед их использованием требуется проверка.</label>
       <div id="personal-data-state" class="task-state"></div>
+      <div id="profile-facts-panel" style="margin-top:24px;">
+        <h3>Факты обо мне</h3>
+        <div class="hint">Только подтверждённые факты используются для оценки вакансий и сопроводительных писем.</div>
+        <form id="profile-fact-form">
+          <div class="row" style="margin-top:12px;">
+            <div><label for="profile-fact-category">Категория</label><input id="profile-fact-category" required maxlength="100" placeholder="skill"></div>
+            <div><label for="profile-fact-name">Название</label><input id="profile-fact-name" required maxlength="200" placeholder="Python"></div>
+            <div><label for="profile-fact-value">Значение</label><input id="profile-fact-value" required placeholder="5 лет"></div>
+            <div style="flex:0"><label><input id="profile-fact-verified" type="checkbox" checked> Подтверждён</label></div>
+            <div style="flex:0"><button type="submit" class="primary">Добавить факт</button></div>
+          </div>
+        </form>
+        <div id="profile-facts-list"></div>
+      </div>
       <h3>Настройки отклика</h3>
       <div class="hint">Значения по умолчанию для вопросов работодателя. Их можно будет переопределить для конкретной вакансии.</div>
       <div class="row">
@@ -416,6 +430,13 @@
       'Включено': 'Enabled',
       'Настройки Gmail': 'Gmail settings',
       'Сохранить почту': 'Save email settings',
+      'Факты обо мне': 'Facts about me',
+      'Только подтверждённые факты используются для оценки вакансий и сопроводительных писем.': 'Only verified facts are used for vacancy assessment and cover letters.',
+      'Категория': 'Category',
+      'Название': 'Name',
+      'Значение': 'Value',
+      'Подтверждён': 'Verified',
+      'Добавить факт': 'Add fact',
       'Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.': 'Vacancies from search and imported sources. Filters apply to the entire database, not only the current page.',
       'Текст': 'Text',
       'Источник': 'Source',
@@ -699,6 +720,126 @@
       }
       return response.json();
     }
+
+    function renderProfileFacts(facts) {
+      const container = document.querySelector('#profile-facts-list');
+      container.replaceChildren();
+      if (!facts.length) {
+        container.append(element('div', currentLanguage === 'en' ? 'No facts saved.' : 'Факты пока не сохранены.', 'empty'));
+        return;
+      }
+      facts.forEach(fact => {
+        const editor = element('article', undefined, 'session-card');
+        editor.dataset.factId = fact.id;
+        const row = element('div', undefined, 'row');
+        const category = document.createElement('input');
+        category.dataset.field = 'category';
+        category.maxLength = 100;
+        category.value = fact.category;
+        const name = document.createElement('input');
+        name.dataset.field = 'name';
+        name.maxLength = 200;
+        name.value = fact.name;
+        const value = document.createElement('input');
+        value.dataset.field = 'value';
+        value.value = fact.value;
+        const verifiedLabel = element('label');
+        const verified = document.createElement('input');
+        verified.type = 'checkbox';
+        verified.dataset.field = 'is_verified';
+        verified.checked = fact.is_verified;
+        verifiedLabel.append(verified, document.createTextNode(currentLanguage === 'en' ? ' Verified' : ' Подтверждён'));
+        const save = element('button', currentLanguage === 'en' ? 'Save' : 'Сохранить', 'primary');
+        save.type = 'button';
+        save.dataset.action = 'save';
+        const remove = element('button', currentLanguage === 'en' ? 'Delete' : 'Удалить', 'danger');
+        remove.type = 'button';
+        remove.dataset.action = 'delete';
+        row.append(category, name, value, verifiedLabel, save, remove);
+        editor.append(row);
+        container.append(editor);
+      });
+    }
+
+    async function loadProfileFacts() {
+      const userId = userIdInput.value.trim();
+      if (!userId) {
+        renderProfileFacts([]);
+        return [];
+      }
+      const facts = await asJson(await fetchWithTimeout(
+        `/v1/users/${userId}/facts`,
+        {headers: headers(false)}
+      ));
+      renderProfileFacts(facts);
+      return facts;
+    }
+
+    document.querySelector('#profile-fact-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const userId = userIdInput.value.trim();
+      if (!userId) {
+        showError(new Error(currentLanguage === 'en' ? 'Set User ID first' : 'Сначала укажите User ID'));
+        return;
+      }
+      try {
+        await asJson(await fetchWithTimeout(`/v1/users/${userId}/facts`, {
+          method: 'POST',
+          headers: headers(true),
+          body: JSON.stringify({
+            category: document.querySelector('#profile-fact-category').value,
+            name: document.querySelector('#profile-fact-name').value,
+            value: document.querySelector('#profile-fact-value').value,
+            is_verified: document.querySelector('#profile-fact-verified').checked
+          })
+        }));
+        event.currentTarget.reset();
+        document.querySelector('#profile-fact-verified').checked = true;
+        await loadProfileFacts();
+        showStatus(currentLanguage === 'en' ? 'Fact added.' : 'Факт добавлен.');
+      } catch (error) {
+        showError(error);
+      }
+    });
+
+    document.querySelector('#profile-facts-list').addEventListener('click', async event => {
+      const action = event.target.dataset.action;
+      if (!action) return;
+      const editor = event.target.closest('[data-fact-id]');
+      const userId = userIdInput.value.trim();
+      if (!editor || !userId) return;
+      event.target.disabled = true;
+      try {
+        if (action === 'save') {
+          await asJson(await fetchWithTimeout(
+            `/v1/users/${userId}/facts/${editor.dataset.factId}`,
+            {
+              method: 'PUT',
+              headers: headers(true),
+              body: JSON.stringify({
+                category: editor.querySelector('[data-field="category"]').value,
+                name: editor.querySelector('[data-field="name"]').value,
+                value: editor.querySelector('[data-field="value"]').value,
+                is_verified: editor.querySelector('[data-field="is_verified"]').checked
+              })
+            }
+          ));
+          showStatus(currentLanguage === 'en' ? 'Fact saved.' : 'Факт сохранён.');
+        } else if (action === 'delete') {
+          const response = await fetchWithTimeout(
+            `/v1/users/${userId}/facts/${editor.dataset.factId}`,
+            {method: 'DELETE', headers: headers(false)}
+          );
+          if (!response.ok) await asJson(response);
+          showStatus(currentLanguage === 'en' ? 'Fact deleted.' : 'Факт удалён.');
+        }
+        await loadProfileFacts();
+      } catch (error) {
+        showError(error);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
 
     function activatePanel(panelName) {
       document.querySelectorAll('[data-panel]').forEach(node => {
@@ -2641,7 +2782,7 @@
       await Promise.all([
         loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles(),
         loadAutofillValues(), loadSiteDefinitionsForFields(), loadApplicationStatistics(),
-        loadEmailIntegration()
+        loadEmailIntegration(), loadProfileFacts()
       ]);
       restoreSearchResults();
     }
@@ -2666,6 +2807,7 @@
     loadSiteDefinitionsForFields().catch(showError);
     loadBrowserSessionStatuses(true).catch(showError);
     loadEmailIntegration().catch(showError);
+    loadProfileFacts().catch(showError);
     loadApplicationStatistics().catch(showError);
     window.setInterval(() => loadBrowserSessionStatuses(true).catch(() => {}), 300000);
     loadSavedVacancies().catch(showError);
