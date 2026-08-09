@@ -37,6 +37,25 @@ class _SequentialRouter:
         return next(self._drafts)
 
 
+class _RejectingRouter:
+    def __init__(self, session_factory, application_id: str) -> None:
+        self._session_factory = session_factory
+        self._application_id = application_id
+        self.calls = 0
+
+    async def route(self, request: ModelRequest, schema: type[MaterialsDraft]) -> MaterialsDraft:
+        self.calls += 1
+        with self._session_factory() as session:
+            application = session.get(ApplicationRow, self._application_id)
+            assert application is not None
+            application.status = "rejected"
+            session.commit()
+        return MaterialsDraft(
+            cover_letter_text="This generated letter must not be saved.",
+            screening_answers={"why_interested": "This answer must not be saved."},
+        )
+
+
 def test_english_title_overrides_russian_page_interface_noise() -> None:
     vacancy = VacancyRow(
         source_url="https://example.test/jobs/english",
@@ -208,6 +227,31 @@ def test_draft_materials_fills_open_field_and_cover_letter() -> None:
             assert answers["why_interested"].answer == "I love backend systems."
             assert answers["why_interested"].answer_source == "llm_generated"
             assert answers["work_auth"].answer is None  # never touched
+
+    asyncio.run(run())
+
+
+def test_draft_materials_discards_result_when_application_is_rejected_in_flight() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        application_id = _seed_application(session_factory)
+        router = _RejectingRouter(session_factory, application_id)
+
+        with session_factory() as session:
+            result = await MaterialsGenerationService(session, router).draft_materials(
+                application_id
+            )
+
+        assert router.calls == 1
+        assert result.cover_letter_text == ""
+        assert result.filled_field_ids == ()
+        with session_factory() as session:
+            application = session.get(ApplicationRow, application_id)
+            assert application is not None
+            assert application.status == "rejected"
+            assert application.cover_letter_text == ""
+            answers = {answer.field_id: answer for answer in application.answers}
+            assert answers["why_interested"].answer is None
 
     asyncio.run(run())
 

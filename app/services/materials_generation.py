@@ -199,6 +199,13 @@ class MaterialsGenerationService:
             timeout_seconds=timeout_seconds,
         )
         draft = await self._router.route(request, MaterialsDraft)
+        self._session.refresh(application, attribute_names=["status", "cover_letter_text"])
+        if application.status != "awaiting_review":
+            return GeneratedMaterials(
+                cover_letter_text=application.cover_letter_text,
+                filled_field_ids=(),
+                skipped_sensitive_field_ids=(),
+            )
         if not _matches_language(draft.cover_letter_text, response_language):
             required_language = "Russian" if response_language == "ru" else "English"
             correction_request = ModelRequest(
@@ -212,6 +219,13 @@ class MaterialsGenerationService:
                 timeout_seconds=timeout_seconds,
             )
             draft = await self._router.route(correction_request, MaterialsDraft)
+            self._session.refresh(application, attribute_names=["status", "cover_letter_text"])
+            if application.status != "awaiting_review":
+                return GeneratedMaterials(
+                    cover_letter_text=application.cover_letter_text,
+                    filled_field_ids=(),
+                    skipped_sensitive_field_ids=(),
+                )
             if not _matches_language(draft.cover_letter_text, response_language):
                 raise MaterialsLanguageMismatchError(
                     f"The model did not produce a {required_language} cover letter for a "
