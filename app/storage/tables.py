@@ -55,6 +55,31 @@ class LlmPreferenceRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class EmailIntegrationRow(Base):
+    __tablename__ = "email_integrations"
+    __table_args__ = (
+        CheckConstraint(
+            "port >= 1 AND port <= 65535",
+            name="ck_email_integrations_port_range",
+        ),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    host: Mapped[str] = mapped_column(String(255))
+    port: Mapped[int] = mapped_column(Integer, default=993)
+    username: Mapped[str] = mapped_column(String(320))
+    encrypted_password: Mapped[str] = mapped_column(Text)
+    use_ssl: Mapped[bool] = mapped_column(Boolean, default=True)
+    mailbox: Mapped[str] = mapped_column(String(255), default="INBOX")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
 class CompanyBlacklistRow(Base):
     __tablename__ = "company_blacklist"
     __table_args__ = (UniqueConstraint("user_id", "normalized_company"),)
