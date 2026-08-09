@@ -17,3 +17,6 @@ def test_dashboard_loads_and_refreshes_application_statistics() -> None:
     assert 'id="sync-application-statuses"' in dashboard
     assert "`/v1/users/${userId}/application-sync`" in dashboard
     assert "{method: 'POST', headers: headers(false)}" in dashboard
+    assert 'id="sync-application-emails"' in dashboard
+    assert "`/v1/users/${userId}/application-email-sync`" in dashboard
+    assert "summary.status_updated" in dashboard

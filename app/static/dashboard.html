@@ -156,6 +156,7 @@
       <div class="hint">Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.</div>
       <div id="application-statistics" class="statistics-grid" aria-live="polite"></div>
       <button id="sync-application-statuses" type="button">Синхронизировать отклики</button>
+      <button id="sync-application-emails" type="button">Синхронизировать почту</button>
       <div class="vacancy-filters">
         <div><label for="vacancy-query">Текст</label><input id="vacancy-query" placeholder="должность, компания или описание"></div>
         <div><label for="vacancy-source">Источник</label><select id="vacancy-source"><option value="all">Все</option><option value="headhunter">hh.ru</option><option value="linkedin">LinkedIn</option><option value="greenhouse">Greenhouse</option><option value="registry">Реестр</option><option value="other">Другие</option></select></div>
@@ -382,6 +383,7 @@
       'Профиль и доступ': 'Profile and access',
       'Все сохранённые вакансии': 'All saved vacancies',
       'Синхронизировать отклики': 'Sync applications',
+      'Синхронизировать почту': 'Sync email',
       'Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.': 'Vacancies from search and imported sources. Filters apply to the entire database, not only the current page.',
       'Текст': 'Text',
       'Источник': 'Source',
@@ -1597,6 +1599,32 @@
         showStatus(currentLanguage === 'en'
           ? `Synchronization complete: ${summary.updated} updated, ${summary.unchanged} unchanged, ${summary.failed} failed.`
           : `Синхронизация завершена: обновлено ${summary.updated}, без изменений ${summary.unchanged}, ошибок ${summary.failed}.`);
+      } catch (error) {
+        showError(error);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    document.querySelector('#sync-application-emails').addEventListener('click', async event => {
+      const userId = userIdInput.value.trim();
+      if (!userId) {
+        showError(new Error(currentLanguage === 'en' ? 'Set User ID first' : 'Сначала укажите User ID'));
+        return;
+      }
+      const button = event.currentTarget;
+      button.disabled = true;
+      showStatus(currentLanguage === 'en' ? 'Synchronizing email…' : 'Синхронизируем почту…');
+      try {
+        const summary = await asJson(await fetchWithTimeout(
+          `/v1/users/${userId}/application-email-sync`,
+          {method: 'POST', headers: headers(false)},
+          120000
+        ));
+        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1)]);
+        showStatus(currentLanguage === 'en'
+          ? `Email synchronization complete: ${summary.created} new, ${summary.status_updated} statuses updated, ${summary.failed} failed.`
+          : `Синхронизация почты завершена: новых событий ${summary.created}, обновлено статусов ${summary.status_updated}, ошибок ${summary.failed}.`);
       } catch (error) {
         showError(error);
       } finally {
