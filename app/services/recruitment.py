@@ -71,6 +71,57 @@ class RecruitmentService:
             raise DuplicateEntityError("Profile fact already exists") from error
         return fact
 
+    def list_profile_facts(self, user_id: str) -> list[ProfileFactRow]:
+        self._require_user(user_id)
+        return list(
+            self._session.scalars(
+                select(ProfileFactRow)
+                .where(ProfileFactRow.user_id == user_id)
+                .order_by(ProfileFactRow.category, ProfileFactRow.name, ProfileFactRow.id)
+            )
+        )
+
+    def update_profile_fact(
+        self,
+        user_id: str,
+        fact_id: str,
+        *,
+        category: str,
+        name: str,
+        value: str,
+        is_verified: bool,
+    ) -> ProfileFactRow:
+        fact = self._session.scalar(
+            select(ProfileFactRow).where(
+                ProfileFactRow.id == fact_id,
+                ProfileFactRow.user_id == user_id,
+            )
+        )
+        if fact is None:
+            raise EntityNotFoundError("Profile fact not found")
+        fact.category = category
+        fact.name = name
+        fact.value = value
+        fact.is_verified = is_verified
+        try:
+            self._session.commit()
+        except IntegrityError as error:
+            self._session.rollback()
+            raise DuplicateEntityError("Profile fact already exists") from error
+        return fact
+
+    def delete_profile_fact(self, user_id: str, fact_id: str) -> None:
+        fact = self._session.scalar(
+            select(ProfileFactRow).where(
+                ProfileFactRow.id == fact_id,
+                ProfileFactRow.user_id == user_id,
+            )
+        )
+        if fact is None:
+            raise EntityNotFoundError("Profile fact not found")
+        self._session.delete(fact)
+        self._session.commit()
+
     def add_cv_file(self, user_id: str, document: SavedDocument) -> CvFileRow:
         self._require_user(user_id)
         existing = self._session.scalar(

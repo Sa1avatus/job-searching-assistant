@@ -1724,6 +1724,60 @@ def add_profile_fact(
     )
 
 
+@app.get(
+    "/v1/users/{user_id}/facts",
+    response_model=list[ProfileFactResponse],
+)
+def list_profile_facts(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[ProfileFactResponse]:
+    try:
+        facts = RecruitmentService(session).list_profile_facts(user_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return [ProfileFactResponse.model_validate(fact, from_attributes=True) for fact in facts]
+
+
+@app.put(
+    "/v1/users/{user_id}/facts/{fact_id}",
+    response_model=ProfileFactResponse,
+)
+def update_profile_fact(
+    user_id: str,
+    fact_id: str,
+    request: ProfileFactRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ProfileFactResponse:
+    try:
+        fact = RecruitmentService(session).update_profile_fact(
+            user_id,
+            fact_id,
+            **request.model_dump(),
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DuplicateEntityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return ProfileFactResponse.model_validate(fact, from_attributes=True)
+
+
+@app.delete(
+    "/v1/users/{user_id}/facts/{fact_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_profile_fact(
+    user_id: str,
+    fact_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> Response:
+    try:
+        RecruitmentService(session).delete_profile_fact(user_id, fact_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @app.post(
     "/v1/applications/{application_id}/recalculate-match",
     response_model=WorkflowTaskResponse,
