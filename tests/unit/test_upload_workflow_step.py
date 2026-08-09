@@ -1,8 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from app.domain.workflow_upload import UploadWorkflowStep
 from app.domain.workflow_steps import WorkflowStepType
+from app.domain.workflow_upload import UploadWorkflowStep
 
 
 def test_valid_upload_workflow_step() -> None:
