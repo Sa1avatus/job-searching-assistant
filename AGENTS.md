@@ -66,6 +66,27 @@ Find the nearest implementation and focused test, preserve layer boundaries, mak
 coherent change, update behavior tests and documentation when needed, run relevant checks, and
 review the diff. Do not create a plan document for routine work.
 
+## Local Code Worker discipline
+
+- Keep the task envelope at `D:\OpenAIProjects\tasks\current.json` and set
+  `"prompt_format": "xml"`; the Worker converts that JSON task into the model-facing XML Execution
+  Contract.
+- Do not switch to `"prompt_format": "json"` to compensate for invalid code, imports, formatting,
+  JSON fields, or unified diffs. JSON mode requires a documented compatibility need and explicit
+  user approval for the mode change.
+- Obtain separate explicit approval in the current chat before every provider generation, including
+  corrections and recovery attempts. Autonomous continuation is not approval for another model
+  call.
+- Stop after three model-output failures for the same objective. Invalid JSON, missing fields,
+  malformed patches, and `repair_failed` runs count. Do not reset the count by changing task IDs,
+  proposal formats, prompt formats, or file boundaries. Implement only the narrow fallback directly
+  after the third failure.
+- Do not make intermediate commits to satisfy Worker cleanliness or read-only-context validation.
+  Staging, committing, pushing, branching, or checkout always requires an explicit current user
+  request; preserve the user's existing five modified files and all other unrelated work.
+- Proposal generation and proposal application are separate approvals. Never apply a proposal just
+  because generation was approved.
+
 ## Boundaries
 
 ### Always

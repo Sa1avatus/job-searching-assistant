@@ -23,7 +23,7 @@ _API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 # spending real money; not billing-accurate. ~4 chars/token estimate, output capped below.
 _INPUT_USD_PER_TOKEN = 0.10 / 1_000_000
 _OUTPUT_USD_PER_TOKEN = 0.40 / 1_000_000
-_MAX_OUTPUT_TOKENS = 4096
+_MAX_OUTPUT_TOKENS = 8196
 _GEMINI_SCHEMA_KEYS = frozenset(
     {"type", "properties", "required", "items", "enum", "anyOf", "description"}
 )

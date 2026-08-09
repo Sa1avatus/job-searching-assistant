@@ -23,7 +23,7 @@ def test_multiple_resume_profiles_are_stored_and_selected_independently(tmp_path
 
     app.dependency_overrides[session_scope] = test_session_scope
     app.dependency_overrides[document_storage] = lambda: DocumentStorage(
-        tmp_path / "documents", max_document_bytes=4096
+        tmp_path / "documents", max_document_bytes=8192
     )
     try:
         with TestClient(app) as client:
