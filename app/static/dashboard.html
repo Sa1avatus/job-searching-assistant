@@ -261,6 +261,28 @@
       </div>
       <div id="site-definition-state" class="task-state"></div>
       <div id="browser-sessions" class="session-grid"></div>
+      <div id="email-integration-panel" style="margin-top:24px;">
+        <h3>Подключение почты по IMAP</h3>
+        <div class="hint">Используйте отдельный пароль приложения. Пароль сохраняется только в зашифрованном виде, содержимое писем не сохраняется.</div>
+        <form id="email-integration-form">
+          <div class="row" style="margin-top:12px;">
+            <div><label for="email-host">IMAP-хост</label><input id="email-host" required maxlength="255" placeholder="imap.gmail.com"></div>
+            <div><label for="email-port">Порт</label><input id="email-port" type="number" required min="1" max="65535" value="993"></div>
+            <div><label for="email-username">Имя пользователя</label><input id="email-username" required maxlength="320" autocomplete="username"></div>
+          </div>
+          <div class="row">
+            <div><label for="email-password">Пароль приложения</label><input id="email-password" type="password" autocomplete="new-password" placeholder="оставьте пустым, чтобы не менять"></div>
+            <div><label for="email-mailbox">Папка</label><input id="email-mailbox" required maxlength="255" value="INBOX"></div>
+            <div style="flex:0"><label><input id="email-use-ssl" type="checkbox" checked> SSL</label></div>
+            <div style="flex:0"><label><input id="email-enabled" type="checkbox" checked> Включено</label></div>
+          </div>
+          <div class="actions">
+            <button id="email-gmail-preset" type="button">Настройки Gmail</button>
+            <button type="submit" class="primary">Сохранить почту</button>
+          </div>
+        </form>
+        <div id="email-integration-state" class="task-state"></div>
+      </div>
       <div id="site-field-mapping-panel" style="margin-top:24px;">
         <h3>Сопоставление полей сайта</h3>
         <div class="hint">Выберите добавленный сайт, сопоставьте найденные поля с общими данными профиля и при необходимости задайте значение только для сайта или отдельного поля.</div>
@@ -384,6 +406,16 @@
       'Все сохранённые вакансии': 'All saved vacancies',
       'Синхронизировать отклики': 'Sync applications',
       'Синхронизировать почту': 'Sync email',
+      'Подключение почты по IMAP': 'Connect email over IMAP',
+      'Используйте отдельный пароль приложения. Пароль сохраняется только в зашифрованном виде, содержимое писем не сохраняется.': 'Use a dedicated app password. The password is stored only in encrypted form, and email contents are not stored.',
+      'IMAP-хост': 'IMAP host',
+      'Порт': 'Port',
+      'Имя пользователя': 'Username',
+      'Пароль приложения': 'App password',
+      'Папка': 'Mailbox',
+      'Включено': 'Enabled',
+      'Настройки Gmail': 'Gmail settings',
+      'Сохранить почту': 'Save email settings',
       'Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.': 'Vacancies from search and imported sources. Filters apply to the entire database, not only the current page.',
       'Текст': 'Text',
       'Источник': 'Source',
@@ -816,6 +848,75 @@
       sessions.forEach(renderBrowserSessionStatus);
       return sessions;
     }
+
+    async function loadEmailIntegration() {
+      const userId = userIdInput.value.trim();
+      const state = document.querySelector('#email-integration-state');
+      document.querySelector('#email-password').value = '';
+      if (!userId) {
+        state.textContent = '';
+        return null;
+      }
+      const integration = await asJson(await fetchWithTimeout(
+        `/v1/users/${userId}/email-integration`,
+        {headers: headers(false)}
+      ));
+      if (!integration) {
+        state.textContent = currentLanguage === 'en' ? 'Email is not configured.' : 'Почта не настроена.';
+        return null;
+      }
+      document.querySelector('#email-host').value = integration.host;
+      document.querySelector('#email-port').value = String(integration.port);
+      document.querySelector('#email-username').value = integration.username;
+      document.querySelector('#email-mailbox').value = integration.mailbox;
+      document.querySelector('#email-use-ssl').checked = integration.use_ssl;
+      document.querySelector('#email-enabled').checked = integration.enabled;
+      state.textContent = currentLanguage === 'en'
+        ? 'Email settings are saved. Leave the password blank to keep it unchanged.'
+        : 'Настройки почты сохранены. Оставьте пароль пустым, чтобы не менять его.';
+      return integration;
+    }
+
+    document.querySelector('#email-gmail-preset').addEventListener('click', () => {
+      document.querySelector('#email-host').value = 'imap.gmail.com';
+      document.querySelector('#email-port').value = '993';
+      document.querySelector('#email-mailbox').value = 'INBOX';
+      document.querySelector('#email-use-ssl').checked = true;
+    });
+
+    document.querySelector('#email-integration-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const userId = userIdInput.value.trim();
+      if (!userId) {
+        showError(new Error(currentLanguage === 'en' ? 'Set User ID first' : 'Сначала укажите User ID'));
+        return;
+      }
+      const password = document.querySelector('#email-password');
+      const submit = event.currentTarget.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      try {
+        await asJson(await fetchWithTimeout(`/v1/users/${userId}/email-integration`, {
+          method: 'PUT',
+          headers: headers(true),
+          body: JSON.stringify({
+            host: document.querySelector('#email-host').value,
+            port: Number(document.querySelector('#email-port').value),
+            username: document.querySelector('#email-username').value,
+            password: password.value || null,
+            use_ssl: document.querySelector('#email-use-ssl').checked,
+            mailbox: document.querySelector('#email-mailbox').value,
+            enabled: document.querySelector('#email-enabled').checked
+          })
+        }));
+        password.value = '';
+        await loadEmailIntegration();
+        showStatus(currentLanguage === 'en' ? 'Email settings saved.' : 'Настройки почты сохранены.');
+      } catch (error) {
+        showError(error);
+      } finally {
+        submit.disabled = false;
+      }
+    });
 
     document.querySelector('#browser-sessions').addEventListener('click', async (event) => {
       const button = event.target.closest('button[data-action]');
@@ -2539,7 +2640,8 @@
       loadSavedLlmPreference();
       await Promise.all([
         loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles(),
-        loadAutofillValues(), loadSiteDefinitionsForFields(), loadApplicationStatistics()
+        loadAutofillValues(), loadSiteDefinitionsForFields(), loadApplicationStatistics(),
+        loadEmailIntegration()
       ]);
       restoreSearchResults();
     }
@@ -2563,6 +2665,7 @@
     loadAutofillValues().catch(showError);
     loadSiteDefinitionsForFields().catch(showError);
     loadBrowserSessionStatuses(true).catch(showError);
+    loadEmailIntegration().catch(showError);
     loadApplicationStatistics().catch(showError);
     window.setInterval(() => loadBrowserSessionStatuses(true).catch(() => {}), 300000);
     loadSavedVacancies().catch(showError);
