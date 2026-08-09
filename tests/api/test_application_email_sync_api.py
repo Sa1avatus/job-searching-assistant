@@ -1,12 +1,16 @@
 from collections.abc import Iterator
 
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app.api.main as api_main
 from app.api.main import app, get_application_email_provider
+from app.config import Settings
 from app.services.application_email_sync import ApplicationEmailMessage
+from app.services.email_integrations import EmailIntegrationService
 from app.storage.database import Base, session_scope
 from app.storage.tables import UserRow
 
@@ -62,9 +66,72 @@ def test_application_email_sync_returns_batch_summary() -> None:
     }
 
 
-def test_application_email_sync_requires_configured_provider() -> None:
-    with TestClient(app) as client:
-        response = client.post("/v1/users/user-1/application-email-sync")
+def test_application_email_sync_uses_saved_configuration(monkeypatch) -> None:
+    session_factory = _session_factory()
+    encryption_key = Fernet.generate_key().decode("ascii")
+
+    def test_session_scope() -> Iterator[Session]:
+        with session_factory() as session:
+            yield session
+
+    with session_factory() as session:
+        session.add(UserRow(id="user-1", display_name="Candidate"))
+        session.commit()
+        EmailIntegrationService(session, encryption_key=encryption_key).save(
+            user_id="user-1",
+            host="imap.example.test",
+            port=993,
+            username="candidate@example.test",
+            password="app-password",
+            use_ssl=True,
+            mailbox="INBOX",
+            enabled=True,
+        )
+
+    monkeypatch.setattr(
+        api_main,
+        "get_settings",
+        lambda: Settings(_env_file=None, browser_state_encryption_key=encryption_key),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "ImapApplicationEmailProvider",
+        lambda integration: FakeEmailProvider(),
+    )
+    app.dependency_overrides[session_scope] = test_session_scope
+    try:
+        with TestClient(app) as client:
+            response = client.post("/v1/users/user-1/application-email-sync")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["processed"] == 1
+
+
+def test_application_email_sync_requires_configured_provider(monkeypatch) -> None:
+    session_factory = _session_factory()
+    encryption_key = Fernet.generate_key().decode("ascii")
+
+    def test_session_scope() -> Iterator[Session]:
+        with session_factory() as session:
+            yield session
+
+    with session_factory() as session:
+        session.add(UserRow(id="user-1", display_name="Candidate"))
+        session.commit()
+
+    monkeypatch.setattr(
+        api_main,
+        "get_settings",
+        lambda: Settings(_env_file=None, browser_state_encryption_key=encryption_key),
+    )
+    app.dependency_overrides[session_scope] = test_session_scope
+    try:
+        with TestClient(app) as client:
+            response = client.post("/v1/users/user-1/application-email-sync")
+    finally:
+        app.dependency_overrides.clear()
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Email integration is not configured"}

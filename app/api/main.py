@@ -169,6 +169,7 @@ from app.services.browser_authorization import (
 from app.services.browser_handoff import create_browser_handoff
 from app.services.company_blacklist import CompanyBlacklistService
 from app.services.email_integrations import EmailIntegrationService, InvalidEmailIntegration
+from app.services.imap_email_provider import ImapApplicationEmailProvider
 from app.services.job_discovery import (
     DiscoveryOutcome,
     GreenhouseDiscoveryError,
@@ -240,8 +241,25 @@ DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
 BROWSER_AUTHORIZATION_MANAGER = BrowserAuthorizationManager()
 
 
-def get_application_email_provider() -> ApplicationEmailProvider:
-    raise HTTPException(status_code=503, detail="Email integration is not configured")
+def get_application_email_provider(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationEmailProvider:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(status_code=503, detail="Encrypted storage is not configured")
+    try:
+        integration = EmailIntegrationService(
+            session,
+            encryption_key=encryption_key,
+        ).load(user_id)
+    except InvalidEmailIntegration as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    if integration is None or not integration.enabled:
+        raise HTTPException(status_code=503, detail="Email integration is not configured")
+    return ImapApplicationEmailProvider(integration)
 
 
 def serialize_discovery_outcomes(
