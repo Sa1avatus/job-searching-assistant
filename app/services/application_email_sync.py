@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol
+
+from sqlalchemy.orm import Session
+
+from app.services.application_email_events import ApplicationEmailEventService
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationEmailMessage:
+    subject: str
+    body: str
+    application_id: str | None = None
+    company: str | None = None
+    vacancy_title: str | None = None
+
+
+class ApplicationEmailProvider(Protocol):
+    async def fetch_messages(self) -> list[ApplicationEmailMessage]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationEmailSyncSummary:
+    processed: int
+    created: int
+    duplicates: int
+    status_updated: int
+    unmatched: int
+    unknown: int
+    failed: int
+
+
+class ApplicationEmailSyncService:
+    def __init__(self, session: Session) -> None:
+        self._events = ApplicationEmailEventService(session)
+
+    async def synchronize(
+        self,
+        user_id: str,
+        provider: ApplicationEmailProvider,
+    ) -> ApplicationEmailSyncSummary:
+        try:
+            messages = await provider.fetch_messages()
+        except Exception:  # noqa: BLE001 - provider failure is reported in the summary
+            return ApplicationEmailSyncSummary(0, 0, 0, 0, 0, 0, 1)
+
+        processed = created = duplicates = status_updated = unmatched = unknown = failed = 0
+        for message in messages:
+            processed += 1
+            try:
+                result = self._events.ingest(
+                    user_id,
+                    message.subject,
+                    message.body,
+                    application_id=message.application_id,
+                    company=message.company,
+                    vacancy_title=message.vacancy_title,
+                )
+            except Exception:  # noqa: BLE001 - one malformed message must not abort the batch
+                failed += 1
+                continue
+            if result.created:
+                created += 1
+            else:
+                duplicates += 1
+            if result.status_updated:
+                status_updated += 1
+            if result.event.application_id is None:
+                unmatched += 1
+            if result.event.outcome == "unknown":
+                unknown += 1
+        return ApplicationEmailSyncSummary(
+            processed=processed,
+            created=created,
+            duplicates=duplicates,
+            status_updated=status_updated,
+            unmatched=unmatched,
+            unknown=unknown,
+            failed=failed,
+        )

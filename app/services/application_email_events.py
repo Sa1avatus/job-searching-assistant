@@ -21,6 +21,7 @@ _APPLICATION_STATUS_BY_OUTCOME = {
 class ApplicationEmailEventResult:
     event: ApplicationEmailEventRow
     created: bool
+    status_updated: bool
 
 
 class ApplicationEmailEventService:
@@ -50,9 +51,14 @@ class ApplicationEmailEventService:
         if existing is not None:
             if existing.application_id is None and application_id is not None:
                 existing.application_id = application_id
-            if self._apply_outcome(existing):
+            status_updated = self._apply_outcome(existing)
+            if status_updated:
                 self._session.commit()
-            return ApplicationEmailEventResult(event=existing, created=False)
+            return ApplicationEmailEventResult(
+                event=existing,
+                created=False,
+                status_updated=status_updated,
+            )
 
         event = ApplicationEmailEventRow(
             user_id=user_id,
@@ -61,7 +67,7 @@ class ApplicationEmailEventService:
             outcome=classify_application_email(subject, body).value,
         )
         self._session.add(event)
-        self._apply_outcome(event)
+        status_updated = self._apply_outcome(event)
         try:
             self._session.commit()
         except IntegrityError:
@@ -69,8 +75,16 @@ class ApplicationEmailEventService:
             existing = self._find_by_fingerprint(user_id, fingerprint)
             if existing is None:
                 raise
-            return ApplicationEmailEventResult(event=existing, created=False)
-        return ApplicationEmailEventResult(event=event, created=True)
+            return ApplicationEmailEventResult(
+                event=existing,
+                created=False,
+                status_updated=False,
+            )
+        return ApplicationEmailEventResult(
+            event=event,
+            created=True,
+            status_updated=status_updated,
+        )
 
     def _apply_outcome(self, event: ApplicationEmailEventRow) -> bool:
         if event.status_applied or event.application_id is None:
