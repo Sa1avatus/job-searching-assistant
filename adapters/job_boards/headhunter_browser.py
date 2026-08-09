@@ -126,6 +126,28 @@ class HeadHunterBrowserAdapter:
         hostname = (urlparse(url).hostname or "").casefold()
         return hostname == _HOST_SUFFIX or hostname.endswith(f".{_HOST_SUFFIX}")
 
+    async def has_submitted_application(self, url: str) -> bool:
+        if not self.supports_url(url):
+            raise ValueError("URL is not a supported hh.ru host")
+        page = await self._browser_engine.new_page()
+        navigation = await self._browser_engine.navigate(page, url)
+        if not navigation.is_successful:
+            raise RuntimeError(f"hh.ru navigation failed: {navigation.error_category}")
+        await self._raise_if_captcha(page)
+        if not self.supports_url(page.url):
+            raise RuntimeError("hh.ru navigation left the trusted host")
+        await self._raise_if_logged_out(page)
+        marker = page.locator(",".join(self._apply_profile.already_applied_markers))
+        marker_text = page.get_by_text(
+            re.compile(
+                r"^\s*(?:"
+                + "|".join(map(re.escape, self._apply_profile.already_applied_texts))
+                + r")(?:\s|$)",
+                re.IGNORECASE,
+            )
+        )
+        return await marker.count() > 0 or await marker_text.count() > 0
+
     async def apply(
         self,
         url: str,

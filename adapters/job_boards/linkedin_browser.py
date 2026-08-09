@@ -194,6 +194,18 @@ class LinkedInBrowserAdapter:
         hostname = (urlparse(url).hostname or "").casefold()
         return hostname == _HOST_SUFFIX or hostname.endswith(f".{_HOST_SUFFIX}")
 
+    async def has_submitted_application(self, url: str) -> bool:
+        if not self.supports_url(url):
+            raise ValueError("URL is not a supported linkedin.com host")
+        page = await self._browser_engine.new_page()
+        navigation = await self._browser_engine.navigate(page, url)
+        if not navigation.is_successful:
+            raise RuntimeError(f"LinkedIn navigation failed: {navigation.error_category}")
+        await self._raise_if_challenge_url(page)
+        if not self.supports_url(page.url):
+            raise RuntimeError("LinkedIn navigation left the trusted host")
+        return await has_submitted_application_marker(page)
+
     async def apply(
         self,
         url: str,

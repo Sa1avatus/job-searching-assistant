@@ -5,7 +5,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app.api.main as api_main
 from app.api.main import app
+from app.config import Settings
 from app.storage.database import Base, session_scope
 from app.storage.tables import ApplicationRow, UserRow, VacancyRow
 
@@ -105,3 +107,58 @@ def test_application_statistics_returns_not_found_for_unknown_user() -> None:
 
     assert response.status_code == 404
     assert response.json() == {"detail": "User not found"}
+
+
+def test_application_sync_skips_source_without_saved_session(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    session_factory = _session_factory()
+
+    def test_session_scope() -> Iterator[Session]:
+        with session_factory() as session:
+            yield session
+
+    with session_factory() as session:
+        user = UserRow(display_name="Candidate")
+        vacancy = VacancyRow(
+            source_url="https://hh.ru/vacancy/123",
+            title="Engineer",
+            company="Example",
+            adapter_name="headhunter",
+        )
+        session.add_all((user, vacancy))
+        session.flush()
+        session.add(
+            ApplicationRow(
+                user_id=user.id,
+                vacancy_id=vacancy.id,
+                status="approved",
+                match_score=75,
+            )
+        )
+        session.commit()
+        user_id = user.id
+
+    settings = Settings(
+        _env_file=None,
+        artifact_directory=tmp_path,
+        browser_state_encryption_key=("MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="),
+    )
+    monkeypatch.setattr(api_main, "get_settings", lambda: settings)
+    monkeypatch.setattr(api_main, "_restore_browser_session", lambda *args, **kwargs: None)
+    app.dependency_overrides[session_scope] = test_session_scope
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/v1/users/{user_id}/application-sync")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "checked": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "skipped": 1,
+        "failed": 0,
+    }

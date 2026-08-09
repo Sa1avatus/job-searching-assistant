@@ -11,3 +11,6 @@ def test_dashboard_loads_and_refreshes_application_statistics() -> None:
     assert "`/v1/users/${userId}/application-statistics`" in dashboard
     assert "await loadApplicationStatistics();" in dashboard
     assert "loadSiteDefinitionsForFields(), loadApplicationStatistics()" in dashboard
+    assert 'id="sync-application-statuses"' in dashboard
+    assert "`/v1/users/${userId}/application-sync`" in dashboard
+    assert "{method: 'POST', headers: headers(false)}" in dashboard

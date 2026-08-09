@@ -4,6 +4,7 @@ import secrets
 import sys
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
@@ -107,7 +108,7 @@ from app.api.schemas import (
     WorkflowTaskResponse,
     WorkFormat,
 )
-from app.api.statistics_schemas import ApplicationStatisticsResponse
+from app.api.statistics_schemas import ApplicationStatisticsResponse, ApplicationSyncResponse
 from app.browser.engine import PlaywrightEngine
 from app.browser.selector_library import SelectorLibrary
 from app.browser.session_probe import probe_browser_session
@@ -144,6 +145,7 @@ from app.observability.logging import configure_logging
 from app.observability.metrics import metrics
 from app.security.autofill_decryption import decrypt_autofill_value
 from app.security.autofill_encryption import InvalidAutofillValueEncryption
+from app.services.application_sync import ApplicationStatusSyncService, ApplicationSubmissionProbe
 from app.services.autofill_value_delete import delete_autofill_value
 from app.services.autofill_value_list import list_autofill_values
 from app.services.autofill_value_update import update_autofill_value
@@ -749,6 +751,71 @@ def get_application_statistics(
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return ApplicationStatisticsResponse(total=total, **counts)
+
+
+@app.post(
+    "/v1/users/{user_id}/application-sync",
+    response_model=ApplicationSyncResponse,
+)
+async def synchronize_application_statuses(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationSyncResponse:
+    settings = get_settings()
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if settings.browser_state_encryption_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail="APP_BROWSER_STATE_ENCRYPTION_KEY is required",
+        )
+    store = create_session_store(settings)
+    probes: dict[str, ApplicationSubmissionProbe] = {}
+    async with AsyncExitStack() as stack:
+        headhunter_state = _restore_browser_session(
+            SessionFactory,
+            store,
+            user_id=user_id,
+            site_key="headhunter",
+        )
+        if headhunter_state is not None:
+            engine = await stack.enter_async_context(
+                PlaywrightEngine(
+                    headless=settings.browser_headless,
+                    timeout_ms=settings.browser_timeout_ms,
+                    artifact_directory=(
+                        settings.artifact_directory / "browser-worker" / f"hh-sync-{user_id}"
+                    ),
+                    storage_state=headhunter_state,
+                    selector_library=SelectorLibrary(settings.artifact_directory),
+                )
+            )
+            probes["headhunter"] = HeadHunterBrowserAdapter(engine)
+        if settings.enable_linkedin_apply:
+            linkedin_state = _restore_browser_session(
+                SessionFactory,
+                store,
+                user_id=user_id,
+                site_key="linkedin",
+            )
+            if linkedin_state is not None:
+                engine = await stack.enter_async_context(
+                    PlaywrightEngine(
+                        headless=settings.browser_headless,
+                        timeout_ms=settings.browser_timeout_ms,
+                        artifact_directory=(
+                            settings.artifact_directory / "browser-worker" / f"li-sync-{user_id}"
+                        ),
+                        storage_state=linkedin_state,
+                        selector_library=SelectorLibrary(settings.artifact_directory),
+                    )
+                )
+                probes["linkedin-reference"] = LinkedInBrowserAdapter(engine)
+        try:
+            summary = await ApplicationStatusSyncService(session).synchronize(user_id, probes)
+        except EntityNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+    return ApplicationSyncResponse.model_validate(asdict(summary))
 
 
 @app.post("/v1/llm/models", response_model=LlmModelsResponse)

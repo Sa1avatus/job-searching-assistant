@@ -11,3 +11,11 @@ class ApplicationStatisticsResponse(BaseModel):
     skipped: int = Field(ge=0)
     submitted: int = Field(ge=0)
     interview: int = Field(ge=0)
+
+
+class ApplicationSyncResponse(BaseModel):
+    checked: int = Field(ge=0)
+    updated: int = Field(ge=0)
+    unchanged: int = Field(ge=0)
+    skipped: int = Field(ge=0)
+    failed: int = Field(ge=0)
