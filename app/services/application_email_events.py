@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.services.application_email_classifier import classify_application_email
 from app.services.recruitment import EntityNotFoundError
-from app.storage.tables import ApplicationEmailEventRow, ApplicationRow, UserRow
+from app.storage.tables import ApplicationEmailEventRow, ApplicationRow, UserRow, VacancyRow
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,8 +29,16 @@ class ApplicationEmailEventService:
         body: str,
         *,
         application_id: str | None = None,
+        company: str | None = None,
+        vacancy_title: str | None = None,
     ) -> ApplicationEmailEventResult:
         self._require_user(user_id)
+        if application_id is None:
+            application_id = self.match_application(
+                user_id,
+                company=company,
+                vacancy_title=vacancy_title,
+            )
         self._require_owned_application(user_id, application_id)
         fingerprint = _message_fingerprint(subject, body)
         existing = self._find_by_fingerprint(user_id, fingerprint)
@@ -53,6 +61,37 @@ class ApplicationEmailEventService:
                 raise
             return ApplicationEmailEventResult(event=existing, created=False)
         return ApplicationEmailEventResult(event=event, created=True)
+
+    def match_application(
+        self,
+        user_id: str,
+        *,
+        company: str | None,
+        vacancy_title: str | None,
+    ) -> str | None:
+        normalized_company = _normalize_reference(company)
+        normalized_title = _normalize_reference(vacancy_title)
+        if normalized_company is None and normalized_title is None:
+            return None
+        rows = self._session.execute(
+            select(ApplicationRow, VacancyRow)
+            .join(VacancyRow, VacancyRow.id == ApplicationRow.vacancy_id)
+            .where(ApplicationRow.user_id == user_id)
+        ).all()
+        matches = [
+            application.id
+            for application, vacancy in rows
+            if (
+                normalized_company is None
+                or _normalize_reference(vacancy.company) == normalized_company
+            )
+            and (
+                normalized_title is None or _normalize_reference(vacancy.title) == normalized_title
+            )
+        ]
+        if len(matches) != 1:
+            return None
+        return matches[0]
 
     def _require_user(self, user_id: str) -> None:
         if self._session.get(UserRow, user_id) is None:
@@ -81,3 +120,10 @@ class ApplicationEmailEventService:
 def _message_fingerprint(subject: str, body: str) -> str:
     normalized = "\n".join((subject.strip(), body.strip())).encode()
     return hashlib.sha256(normalized).hexdigest()
+
+
+def _normalize_reference(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(value.split()).casefold()
+    return normalized or None
