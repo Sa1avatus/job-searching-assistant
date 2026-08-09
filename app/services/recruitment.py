@@ -14,6 +14,7 @@ from app.domain.vacancy_attributes import EMPLOYMENT_TYPE_ORDER, EmploymentType
 from app.storage.documents import SavedDocument
 from app.storage.tables import (
     ApplicationAnswerRow,
+    ApplicationEmailEventRow,
     ApplicationRow,
     BrowserSessionRow,
     CvFileRow,
@@ -773,6 +774,20 @@ class RecruitmentService:
             if status in counts:
                 counts[status] = count
         return total, counts
+
+    def get_application_email_statistics(self, user_id: str) -> dict[str, int]:
+        self._require_user(user_id)
+        rows = self._session.execute(
+            select(ApplicationEmailEventRow.outcome, func.count(ApplicationEmailEventRow.id))
+            .where(ApplicationEmailEventRow.user_id == user_id)
+            .group_by(ApplicationEmailEventRow.outcome)
+        ).all()
+        counts = {outcome: count for outcome, count in rows}
+        return {
+            "email_events": sum(counts.values()),
+            "email_rejections": counts.get("rejected", 0),
+            "email_next_stages": counts.get("next_stage", 0),
+        }
 
     def delete_user(self, user_id: str) -> tuple[list[Path], list[str], list[str]]:
         user = self._require_user(user_id)

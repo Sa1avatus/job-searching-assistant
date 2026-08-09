@@ -9,7 +9,7 @@ import app.api.main as api_main
 from app.api.main import app
 from app.config import Settings
 from app.storage.database import Base, session_scope
-from app.storage.tables import ApplicationRow, UserRow, VacancyRow
+from app.storage.tables import ApplicationEmailEventRow, ApplicationRow, UserRow, VacancyRow
 
 
 def _session_factory() -> sessionmaker:
@@ -67,6 +67,30 @@ def test_application_statistics_counts_statuses_for_requested_user() -> None:
                 match_score=40,
             )
         )
+        session.add_all(
+            (
+                ApplicationEmailEventRow(
+                    user_id=user.id,
+                    message_fingerprint="a" * 64,
+                    outcome="rejected",
+                ),
+                ApplicationEmailEventRow(
+                    user_id=user.id,
+                    message_fingerprint="b" * 64,
+                    outcome="next_stage",
+                ),
+                ApplicationEmailEventRow(
+                    user_id=user.id,
+                    message_fingerprint="c" * 64,
+                    outcome="unknown",
+                ),
+                ApplicationEmailEventRow(
+                    user_id=other_user.id,
+                    message_fingerprint="d" * 64,
+                    outcome="rejected",
+                ),
+            )
+        )
         session.commit()
         user_id = user.id
 
@@ -88,6 +112,9 @@ def test_application_statistics_counts_statuses_for_requested_user() -> None:
         "skipped": 0,
         "submitted": 1,
         "interview": 1,
+        "email_events": 3,
+        "email_rejections": 1,
+        "email_next_stages": 1,
     }
 
 

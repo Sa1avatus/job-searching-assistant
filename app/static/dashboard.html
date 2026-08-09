@@ -1568,10 +1568,10 @@
         {headers: headers(false)}
       ));
       const labels = currentLanguage === 'en'
-        ? {total: 'Total', approved: 'Accepted', rejected: 'Rejected', submitted: 'Submitted', interview: 'Interviews'}
-        : {total: 'Всего', approved: 'Принято', rejected: 'Отклонено', submitted: 'Отправлено', interview: 'Собеседования'};
+        ? {total: 'Total', approved: 'Accepted', rejected: 'Rejected', submitted: 'Submitted', interview: 'Interviews', email_events: 'Emails processed', email_rejections: 'Email rejections', email_next_stages: 'Email next stages'}
+        : {total: 'Всего', approved: 'Принято', rejected: 'Отклонено', submitted: 'Отправлено', interview: 'Собеседования', email_events: 'Обработано писем', email_rejections: 'Отказы из почты', email_next_stages: 'Этапы из почты'};
       container.replaceChildren();
-      ['total', 'approved', 'rejected', 'submitted', 'interview'].forEach(key => {
+      ['total', 'approved', 'rejected', 'submitted', 'interview', 'email_events', 'email_rejections', 'email_next_stages'].forEach(key => {
         const card = element('div', labels[key], 'statistic-card');
         card.append(element('strong', String(statistics[key] || 0)));
         container.append(card);

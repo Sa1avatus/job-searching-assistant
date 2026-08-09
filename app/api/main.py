@@ -747,10 +747,12 @@ def get_application_statistics(
     session: Annotated[Session, Depends(session_scope)],
 ) -> ApplicationStatisticsResponse:
     try:
-        total, counts = RecruitmentService(session).get_application_statistics(user_id)
+        service = RecruitmentService(session)
+        total, counts = service.get_application_statistics(user_id)
+        email_counts = service.get_application_email_statistics(user_id)
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return ApplicationStatisticsResponse(total=total, **counts)
+    return ApplicationStatisticsResponse(total=total, **counts, **email_counts)
 
 
 @app.post(
