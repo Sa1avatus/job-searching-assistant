@@ -69,7 +69,7 @@ def test_ingest_requires_existing_user() -> None:
         engine.dispose()
 
 
-def test_ingest_matches_unique_application_by_exact_normalized_reference() -> None:
+def test_ingest_matches_unique_application_from_explicit_email_text() -> None:
     engine = create_engine("sqlite:///:memory:")
     try:
         Base.metadata.create_all(engine)
@@ -95,10 +95,8 @@ def test_ingest_matches_unique_application_by_exact_normalized_reference() -> No
 
             result = ApplicationEmailEventService(session).ingest(
                 "user-1",
-                "Next stage",
-                "Please schedule an interview.",
-                company="  EXAMPLE   CORP ",
-                vacancy_title="senior python engineer",
+                "Next stage for Senior Python Engineer",
+                "Example Corp would like you to schedule an interview.",
             )
 
             assert result.event.application_id == "application-1"
@@ -136,8 +134,7 @@ def test_ingest_does_not_link_an_ambiguous_company_reference() -> None:
             result = ApplicationEmailEventService(session).ingest(
                 "user-1",
                 "Application update",
-                "Unfortunately, we will not be moving forward.",
-                company="Example Corp",
+                "Example Corp: unfortunately, we will not be moving forward.",
             )
 
             assert result.event.application_id is None

@@ -45,6 +45,11 @@ class ApplicationEmailEventService:
                 company=company,
                 vacancy_title=vacancy_title,
             )
+        if application_id is None and company is None and vacancy_title is None:
+            application_id = self.match_application_text(
+                user_id,
+                text=f"{subject}\n{body}",
+            )
         self._require_owned_application(user_id, application_id)
         fingerprint = _message_fingerprint(subject, body)
         existing = self._find_by_fingerprint(user_id, fingerprint)
@@ -126,6 +131,29 @@ class ApplicationEmailEventService:
                 normalized_title is None or _normalize_reference(vacancy.title) == normalized_title
             )
         ]
+        if len(matches) != 1:
+            return None
+        return matches[0]
+
+    def match_application_text(self, user_id: str, *, text: str) -> str | None:
+        normalized_text = _normalize_reference(text)
+        if normalized_text is None:
+            return None
+        rows = self._session.execute(
+            select(ApplicationRow, VacancyRow)
+            .join(VacancyRow, VacancyRow.id == ApplicationRow.vacancy_id)
+            .where(ApplicationRow.user_id == user_id)
+        ).all()
+        matches: list[str] = []
+        for application, vacancy in rows:
+            company = _normalize_reference(vacancy.company)
+            title = _normalize_reference(vacancy.title)
+            title_matches = title is not None and len(title) >= 8 and title in normalized_text
+            company_matches = (
+                company is not None and len(company) >= 5 and company in normalized_text
+            )
+            if title_matches or company_matches:
+                matches.append(application.id)
         if len(matches) != 1:
             return None
         return matches[0]
