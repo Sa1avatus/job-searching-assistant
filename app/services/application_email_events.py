@@ -11,6 +11,11 @@ from app.services.application_email_classifier import classify_application_email
 from app.services.recruitment import EntityNotFoundError
 from app.storage.tables import ApplicationEmailEventRow, ApplicationRow, UserRow, VacancyRow
 
+_APPLICATION_STATUS_BY_OUTCOME = {
+    "rejected": "rejected",
+    "next_stage": "interview",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ApplicationEmailEventResult:
@@ -43,6 +48,10 @@ class ApplicationEmailEventService:
         fingerprint = _message_fingerprint(subject, body)
         existing = self._find_by_fingerprint(user_id, fingerprint)
         if existing is not None:
+            if existing.application_id is None and application_id is not None:
+                existing.application_id = application_id
+            if self._apply_outcome(existing):
+                self._session.commit()
             return ApplicationEmailEventResult(event=existing, created=False)
 
         event = ApplicationEmailEventRow(
@@ -52,6 +61,7 @@ class ApplicationEmailEventService:
             outcome=classify_application_email(subject, body).value,
         )
         self._session.add(event)
+        self._apply_outcome(event)
         try:
             self._session.commit()
         except IntegrityError:
@@ -61,6 +71,19 @@ class ApplicationEmailEventService:
                 raise
             return ApplicationEmailEventResult(event=existing, created=False)
         return ApplicationEmailEventResult(event=event, created=True)
+
+    def _apply_outcome(self, event: ApplicationEmailEventRow) -> bool:
+        if event.status_applied or event.application_id is None:
+            return False
+        application_status = _APPLICATION_STATUS_BY_OUTCOME.get(event.outcome)
+        if application_status is None:
+            return False
+        application = self._session.get(ApplicationRow, event.application_id)
+        if application is None or application.user_id != event.user_id:
+            return False
+        application.status = application_status
+        event.status_applied = True
+        return True
 
     def match_application(
         self,

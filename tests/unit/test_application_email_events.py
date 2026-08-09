@@ -102,6 +102,8 @@ def test_ingest_matches_unique_application_by_exact_normalized_reference() -> No
             )
 
             assert result.event.application_id == "application-1"
+            assert result.event.status_applied is True
+            assert session.get(ApplicationRow, "application-1").status == "interview"
     finally:
         engine.dispose()
 
@@ -139,5 +141,85 @@ def test_ingest_does_not_link_an_ambiguous_company_reference() -> None:
             )
 
             assert result.event.application_id is None
+            assert result.event.status_applied is False
+            assert session.get(ApplicationRow, "application-1").status == "draft"
+            assert session.get(ApplicationRow, "application-2").status == "draft"
+    finally:
+        engine.dispose()
+
+
+def test_ingest_applies_rejection_to_explicit_application() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add(UserRow(id="user-1", display_name="Candidate"))
+            session.add(
+                VacancyRow(
+                    id="vacancy-1",
+                    source_url="https://example.test/jobs/rejected",
+                    title="Python Engineer",
+                    company="Example Corp",
+                )
+            )
+            session.add(
+                ApplicationRow(
+                    id="application-1",
+                    user_id="user-1",
+                    vacancy_id="vacancy-1",
+                    status="submitted",
+                    match_score=80,
+                )
+            )
+            session.commit()
+
+            result = ApplicationEmailEventService(session).ingest(
+                "user-1",
+                "Application update",
+                "Unfortunately, we will not be moving forward.",
+                application_id="application-1",
+            )
+
+            assert result.event.status_applied is True
+            assert session.get(ApplicationRow, "application-1").status == "rejected"
+    finally:
+        engine.dispose()
+
+
+def test_ingest_does_not_apply_unknown_outcome() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add(UserRow(id="user-1", display_name="Candidate"))
+            session.add(
+                VacancyRow(
+                    id="vacancy-1",
+                    source_url="https://example.test/jobs/unknown",
+                    title="Python Engineer",
+                    company="Example Corp",
+                )
+            )
+            session.add(
+                ApplicationRow(
+                    id="application-1",
+                    user_id="user-1",
+                    vacancy_id="vacancy-1",
+                    status="submitted",
+                    match_score=80,
+                )
+            )
+            session.commit()
+
+            result = ApplicationEmailEventService(session).ingest(
+                "user-1",
+                "Newsletter",
+                "Read this week's hiring news.",
+                application_id="application-1",
+            )
+
+            assert result.event.outcome == "unknown"
+            assert result.event.status_applied is False
+            assert session.get(ApplicationRow, "application-1").status == "submitted"
     finally:
         engine.dispose()
