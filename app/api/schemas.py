@@ -402,6 +402,26 @@ class LlmPreferenceResponse(BaseModel):
     api_key_configured: bool = True
 
 
+class EmailIntegrationUpdateRequest(BaseModel):
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(ge=1, le=65535)
+    username: str = Field(min_length=1, max_length=320)
+    password: SecretStr | None = None
+    use_ssl: bool = True
+    mailbox: str = Field(default="INBOX", min_length=1, max_length=255)
+    enabled: bool = True
+
+
+class EmailIntegrationResponse(BaseModel):
+    host: str
+    port: int
+    username: str
+    use_ssl: bool
+    mailbox: str
+    enabled: bool
+    password_configured: bool = True
+
+
 class BrowserSessionStatusResponse(BaseModel):
     site_key: str
     site_name: str

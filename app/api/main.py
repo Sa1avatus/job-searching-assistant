@@ -68,6 +68,8 @@ from app.api.schemas import (
     DiscoverVacanciesStreamRequest,
     DiscoveryOutcomeResponse,
     EffectiveValueResponse,
+    EmailIntegrationResponse,
+    EmailIntegrationUpdateRequest,
     EmploymentTypeName,
     EvidenceArtifactResponse,
     ExtractedProfileResponse,
@@ -166,6 +168,7 @@ from app.services.browser_authorization import (
 )
 from app.services.browser_handoff import create_browser_handoff
 from app.services.company_blacklist import CompanyBlacklistService
+from app.services.email_integrations import EmailIntegrationService, InvalidEmailIntegration
 from app.services.job_discovery import (
     DiscoveryOutcome,
     GreenhouseDiscoveryError,
@@ -214,6 +217,7 @@ from app.storage.tables import (
     BrowserSessionRow,
     CandidateEvidenceRow,
     CvFileRow,
+    EmailIntegrationRow,
     LlmPreferenceRow,
     RequirementMatchRow,
     SiteDefinitionRow,
@@ -881,6 +885,29 @@ def get_llm_preference(
 
 
 @app.get(
+    "/v1/users/{user_id}/email-integration",
+    response_model=EmailIntegrationResponse | None,
+)
+def get_email_integration(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> EmailIntegrationResponse | None:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    row = session.get(EmailIntegrationRow, user_id)
+    if row is None:
+        return None
+    return EmailIntegrationResponse(
+        host=row.host,
+        port=row.port,
+        username=row.username,
+        use_ssl=row.use_ssl,
+        mailbox=row.mailbox,
+        enabled=row.enabled,
+    )
+
+
+@app.get(
     "/v1/users/{user_id}/autofill-values",
     response_model=list[AutofillValueResponse],
 )
@@ -1039,6 +1066,45 @@ def update_llm_preference(
         raise HTTPException(status_code=422, detail=str(error)) from error
     return LlmPreferenceResponse(  # type: ignore[arg-type]
         provider=row.provider, model=row.model, base_url=row.base_url
+    )
+
+
+@app.put(
+    "/v1/users/{user_id}/email-integration",
+    response_model=EmailIntegrationResponse,
+)
+def update_email_integration(
+    user_id: str,
+    request: EmailIntegrationUpdateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> EmailIntegrationResponse:
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(status_code=503, detail="Encrypted storage is not configured")
+    try:
+        row = EmailIntegrationService(session, encryption_key=encryption_key).save(
+            user_id=user_id,
+            host=request.host,
+            port=request.port,
+            username=request.username,
+            password=(
+                request.password.get_secret_value() if request.password is not None else None
+            ),
+            use_ssl=request.use_ssl,
+            mailbox=request.mailbox,
+            enabled=request.enabled,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InvalidEmailIntegration as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return EmailIntegrationResponse(
+        host=row.host,
+        port=row.port,
+        username=row.username,
+        use_ssl=row.use_ssl,
+        mailbox=row.mailbox,
+        enabled=row.enabled,
     )
 
 
