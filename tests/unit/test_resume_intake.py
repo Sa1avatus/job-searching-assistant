@@ -7,11 +7,10 @@ import pytest
 from pydantic import ValidationError
 
 from app.llm.router import ModelRequest
+from app.prompts.resume_profile import build_resume_profile_prompt, select_resume_text
 from app.services.resume_intake import (
     ExtractedProfileDraft,
     ResumeIntakeService,
-    _build_prompt,
-    _select_resume_text,
 )
 
 
@@ -41,7 +40,7 @@ def _profile_payload(skills: list[str]) -> dict[str, Any]:
 def test_resume_selection_preserves_bounded_beginning_and_end() -> None:
     resume_text = "BEGINNING" + ("x" * 60_000) + "SKILLS_AT_END"
 
-    selected_text = _select_resume_text(resume_text)
+    selected_text = select_resume_text(resume_text)
 
     assert len(selected_text) <= 48_000
     assert selected_text.startswith("BEGINNING")
@@ -50,7 +49,7 @@ def test_resume_selection_preserves_bounded_beginning_and_end() -> None:
 
 
 def test_prompt_requests_exhaustive_explicit_skill_categories() -> None:
-    prompt = _build_prompt("Python and PostgreSQL")
+    prompt = build_resume_profile_prompt("Python and PostgreSQL")
 
     for category in (
         "programming language",
@@ -70,15 +69,13 @@ def test_prompt_requests_exhaustive_explicit_skill_categories() -> None:
 
 
 def test_prompt_contains_skills_listed_at_end_of_long_resume() -> None:
-    prompt = _build_prompt(("a" * 60_000) + "RareSkillAtEnd")
+    prompt = build_resume_profile_prompt(("a" * 60_000) + "RareSkillAtEnd")
 
     assert "RareSkillAtEnd" in prompt
 
 
 def test_skill_deduplication_is_case_insensitive_and_stable() -> None:
-    router = FakeRouter(
-        _profile_payload([" Python ", "python", "", "Java", "JAVA", "PostgreSQL"])
-    )
+    router = FakeRouter(_profile_payload([" Python ", "python", "", "Java", "JAVA", "PostgreSQL"]))
 
     draft = asyncio.run(ResumeIntakeService(router).draft_profile("resume"))
 
