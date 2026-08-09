@@ -448,6 +448,31 @@ class ApplicationRow(Base):
     answers: Mapped[list[ApplicationAnswerRow]] = relationship(cascade="all, delete-orphan")
 
 
+class ApplicationEmailEventRow(Base):
+    __tablename__ = "application_email_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "message_fingerprint",
+            name="uq_application_email_events_user_fingerprint",
+        ),
+        CheckConstraint(
+            "outcome IN ('rejected', 'next_stage', 'unknown')",
+            name="ck_application_email_events_outcome",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    application_id: Mapped[str | None] = mapped_column(
+        ForeignKey("applications.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    message_fingerprint: Mapped[str] = mapped_column(String(64))
+    outcome: Mapped[str] = mapped_column(String(30))
+    status_applied: Mapped[bool] = mapped_column(Boolean, default=False)
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class RequirementMatchRow(Base):
     __tablename__ = "requirement_matches"
     __table_args__ = (
