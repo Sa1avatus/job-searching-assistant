@@ -22,3 +22,13 @@ class ApplicationSyncResponse(BaseModel):
     unchanged: int = Field(ge=0)
     skipped: int = Field(ge=0)
     failed: int = Field(ge=0)
+
+
+class ApplicationEmailSyncResponse(BaseModel):
+    processed: int = Field(ge=0)
+    created: int = Field(ge=0)
+    duplicates: int = Field(ge=0)
+    status_updated: int = Field(ge=0)
+    unmatched: int = Field(ge=0)
+    unknown: int = Field(ge=0)
+    failed: int = Field(ge=0)

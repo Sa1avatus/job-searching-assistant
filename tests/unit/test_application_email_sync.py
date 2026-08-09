@@ -88,6 +88,8 @@ def test_email_sync_reports_provider_failure() -> None:
     try:
         Base.metadata.create_all(engine)
         with Session(engine) as session:
+            session.add(UserRow(id="user-1", display_name="Candidate"))
+            session.commit()
             summary = asyncio.run(
                 ApplicationEmailSyncService(session).synchronize(
                     "user-1",

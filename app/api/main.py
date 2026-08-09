@@ -108,7 +108,11 @@ from app.api.schemas import (
     WorkflowTaskResponse,
     WorkFormat,
 )
-from app.api.statistics_schemas import ApplicationStatisticsResponse, ApplicationSyncResponse
+from app.api.statistics_schemas import (
+    ApplicationEmailSyncResponse,
+    ApplicationStatisticsResponse,
+    ApplicationSyncResponse,
+)
 from app.browser.engine import PlaywrightEngine
 from app.browser.selector_library import SelectorLibrary
 from app.browser.session_probe import probe_browser_session
@@ -145,6 +149,10 @@ from app.observability.logging import configure_logging
 from app.observability.metrics import metrics
 from app.security.autofill_decryption import decrypt_autofill_value
 from app.security.autofill_encryption import InvalidAutofillValueEncryption
+from app.services.application_email_sync import (
+    ApplicationEmailProvider,
+    ApplicationEmailSyncService,
+)
 from app.services.application_sync import ApplicationStatusSyncService, ApplicationSubmissionProbe
 from app.services.autofill_value_delete import delete_autofill_value
 from app.services.autofill_value_list import list_autofill_values
@@ -226,6 +234,10 @@ app = FastAPI(title="Job Searching Assistant", version="1.1.100")
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
 BROWSER_AUTHORIZATION_MANAGER = BrowserAuthorizationManager()
+
+
+def get_application_email_provider() -> ApplicationEmailProvider:
+    raise HTTPException(status_code=503, detail="Email integration is not configured")
 
 
 def serialize_discovery_outcomes(
@@ -818,6 +830,22 @@ async def synchronize_application_statuses(
         except EntityNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
     return ApplicationSyncResponse.model_validate(asdict(summary))
+
+
+@app.post(
+    "/v1/users/{user_id}/application-email-sync",
+    response_model=ApplicationEmailSyncResponse,
+)
+async def synchronize_application_emails(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    provider: Annotated[ApplicationEmailProvider, Depends(get_application_email_provider)],
+) -> ApplicationEmailSyncResponse:
+    try:
+        summary = await ApplicationEmailSyncService(session).synchronize(user_id, provider)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return ApplicationEmailSyncResponse.model_validate(asdict(summary))
 
 
 @app.post("/v1/llm/models", response_model=LlmModelsResponse)

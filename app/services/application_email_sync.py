@@ -6,6 +6,8 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from app.services.application_email_events import ApplicationEmailEventService
+from app.services.recruitment import EntityNotFoundError
+from app.storage.tables import UserRow
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +36,7 @@ class ApplicationEmailSyncSummary:
 
 class ApplicationEmailSyncService:
     def __init__(self, session: Session) -> None:
+        self._session = session
         self._events = ApplicationEmailEventService(session)
 
     async def synchronize(
@@ -41,6 +44,8 @@ class ApplicationEmailSyncService:
         user_id: str,
         provider: ApplicationEmailProvider,
     ) -> ApplicationEmailSyncSummary:
+        if self._session.get(UserRow, user_id) is None:
+            raise EntityNotFoundError("User not found")
         try:
             messages = await provider.fetch_messages()
         except Exception:  # noqa: BLE001 - provider failure is reported in the summary
