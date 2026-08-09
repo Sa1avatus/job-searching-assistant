@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -758,6 +758,21 @@ class RecruitmentService:
         application.status = status
         self._session.commit()
         return application
+
+    def get_application_statistics(self, user_id: str) -> tuple[int, dict[ApplicationStatus, int]]:
+        self._require_user(user_id)
+        rows = self._session.execute(
+            select(ApplicationRow.status, func.count(ApplicationRow.id))
+            .where(ApplicationRow.user_id == user_id)
+            .group_by(ApplicationRow.status)
+        ).all()
+        counts: dict[ApplicationStatus, int] = {status: 0 for status in APPLICATION_STATUSES}
+        total = 0
+        for status, count in rows:
+            total += count
+            if status in counts:
+                counts[status] = count
+        return total, counts
 
     def delete_user(self, user_id: str) -> tuple[list[Path], list[str], list[str]]:
         user = self._require_user(user_id)

@@ -71,6 +71,9 @@
     .key-skills__label { color: #aab5d6; font-size: 13px; margin-bottom: 7px; }
     .status-editor { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .status-editor select { width: auto; min-width: 170px; }
+    .statistics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 16px 0; }
+    .statistic-card { padding: 14px; border: 1px solid #33416d; border-radius: 12px; background: #101831; }
+    .statistic-card strong { display: block; margin-top: 4px; font-size: 1.5rem; color: #f8fafc; }
     .badge.salary { background: #173f35; border: 1px solid #2b725e; color: #9ff3cf; }
     .language-selector { position: relative; flex: 0 0 auto; }
     .language-toggle { min-width: 132px; display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 8px 11px; line-height: 1; }
@@ -151,6 +154,7 @@
     <section class="step active" data-panel="vacancies">
       <h2>Все сохранённые вакансии</h2>
       <div class="hint">Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.</div>
+      <div id="application-statistics" class="statistics-grid" aria-live="polite"></div>
       <div class="vacancy-filters">
         <div><label for="vacancy-query">Текст</label><input id="vacancy-query" placeholder="должность, компания или описание"></div>
         <div><label for="vacancy-source">Источник</label><select id="vacancy-source"><option value="all">Все</option><option value="headhunter">hh.ru</option><option value="linkedin">LinkedIn</option><option value="greenhouse">Greenhouse</option><option value="registry">Реестр</option><option value="other">Другие</option></select></div>
@@ -1546,7 +1550,30 @@
         body: JSON.stringify({status: newStatus})
       }));
       updateCachedSearchResultStatus(applicationId, application.status);
+      await loadApplicationStatistics();
       return application.status;
+    }
+
+    async function loadApplicationStatistics() {
+      const container = document.querySelector('#application-statistics');
+      const userId = userIdInput.value.trim();
+      if (!userId) {
+        container.replaceChildren();
+        return;
+      }
+      const statistics = await asJson(await fetchWithTimeout(
+        `/v1/users/${userId}/application-statistics`,
+        {headers: headers(false)}
+      ));
+      const labels = currentLanguage === 'en'
+        ? {total: 'Total', approved: 'Accepted', rejected: 'Rejected', submitted: 'Submitted', interview: 'Interviews'}
+        : {total: 'Всего', approved: 'Принято', rejected: 'Отклонено', submitted: 'Отправлено', interview: 'Собеседования'};
+      container.replaceChildren();
+      ['total', 'approved', 'rejected', 'submitted', 'interview'].forEach(key => {
+        const card = element('div', labels[key], 'statistic-card');
+        card.append(element('strong', String(statistics[key] || 0)));
+        container.append(card);
+      });
     }
 
     function createStatusEditor(item, statusProperty, onChanged) {
@@ -2186,6 +2213,7 @@
       }));
       updateCachedSearchResults(item => item.application_id !== applicationId);
       card.remove();
+      await loadApplicationStatistics();
       showStatus('Вакансия отклонена и больше не будет показана в общем списке.');
     }
 
@@ -2455,7 +2483,7 @@
       loadSavedLlmPreference();
       await Promise.all([
         loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles(),
-        loadAutofillValues(), loadSiteDefinitionsForFields()
+        loadAutofillValues(), loadSiteDefinitionsForFields(), loadApplicationStatistics()
       ]);
       restoreSearchResults();
     }
@@ -2479,6 +2507,7 @@
     loadAutofillValues().catch(showError);
     loadSiteDefinitionsForFields().catch(showError);
     loadBrowserSessionStatuses(true).catch(showError);
+    loadApplicationStatistics().catch(showError);
     window.setInterval(() => loadBrowserSessionStatuses(true).catch(() => {}), 300000);
     loadSavedVacancies().catch(showError);
     loadCompanyBlacklist().catch(showError);

@@ -107,6 +107,7 @@ from app.api.schemas import (
     WorkflowTaskResponse,
     WorkFormat,
 )
+from app.api.statistics_schemas import ApplicationStatisticsResponse
 from app.browser.engine import PlaywrightEngine
 from app.browser.selector_library import SelectorLibrary
 from app.browser.session_probe import probe_browser_session
@@ -733,6 +734,21 @@ def create_user(
 ) -> UserResponse:
     user = RecruitmentService(session).create_user(request.display_name)
     return UserResponse(id=user.id, display_name=user.display_name)
+
+
+@app.get(
+    "/v1/users/{user_id}/application-statistics",
+    response_model=ApplicationStatisticsResponse,
+)
+def get_application_statistics(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationStatisticsResponse:
+    try:
+        total, counts = RecruitmentService(session).get_application_statistics(user_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return ApplicationStatisticsResponse(total=total, **counts)
 
 
 @app.post("/v1/llm/models", response_model=LlmModelsResponse)
