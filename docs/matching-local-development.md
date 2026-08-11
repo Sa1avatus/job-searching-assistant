@@ -28,6 +28,11 @@ Compose containers on Docker Desktop, configure `APP_RERANKER_SERVICE_URL` as
 either the URL or key is absent, JSA does not contact a guessed endpoint and conservatively falls
 back to normalized hybrid retrieval scores.
 
+JSA exposes `GET /api/v1/admin/reranker/status` for a sanitized operator view. The probe uses the
+reranker's public `/health/live` and `/health/ready` endpoints, then calls `/v1/models/current`
+with the service bearer token. It returns controlled disabled/degraded states with HTTP 200 and
+does not make the main JSA `/ready` endpoint depend on the optional reranker.
+
 Relevant checks:
 
 ```powershell

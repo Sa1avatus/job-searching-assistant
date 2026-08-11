@@ -88,6 +88,7 @@ from app.api.schemas import (
     ProfileFactRequest,
     ProfileFactResponse,
     RequirementMatchDetailResponse,
+    RerankerStatusResponse,
     ReviewDecisionRequest,
     ReviewItemResponse,
     SavedVacancyPageResponse,
@@ -189,6 +190,7 @@ from app.services.recruitment import (
     EntityNotFoundError,
     RecruitmentService,
 )
+from app.services.reranker_status import RerankerStatusProbe
 from app.services.resume_intake import ResumeIntakeService
 from app.services.site_definition_archive import archive_site_definition
 from app.services.site_definition_update import (
@@ -360,6 +362,20 @@ async def llm_http_client() -> AsyncIterator[httpx.AsyncClient]:
     timeout = httpx.Timeout(settings.materials_generation_timeout_seconds + 10)
     async with httpx.AsyncClient(
         timeout=timeout, follow_redirects=False, trust_env=False
+    ) as client:
+        yield client
+
+
+async def reranker_http_client() -> AsyncIterator[httpx.AsyncClient | None]:
+    settings = get_settings()
+    if settings.reranker_service_url is None or settings.reranker_api_key is None:
+        yield None
+        return
+    async with httpx.AsyncClient(
+        base_url=settings.reranker_service_url,
+        timeout=settings.matching_model_timeout_seconds,
+        follow_redirects=False,
+        trust_env=False,
     ) as client:
         yield client
 
@@ -725,6 +741,25 @@ def ready(session: Annotated[Session, Depends(session_scope)]) -> HealthResponse
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable"
         ) from error
     return health()
+
+
+@app.get("/api/v1/admin/reranker/status", response_model=RerankerStatusResponse)
+async def get_reranker_status(
+    http_client: Annotated[httpx.AsyncClient | None, Depends(reranker_http_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> RerankerStatusResponse:
+    api_key = (
+        settings.reranker_api_key.get_secret_value()
+        if settings.reranker_api_key is not None
+        else None
+    )
+    partially_configured = (settings.reranker_service_url is None) != (api_key is None)
+    result = await RerankerStatusProbe().probe(
+        http_client,
+        api_key=api_key,
+        partially_configured=partially_configured,
+    )
+    return RerankerStatusResponse.model_validate(asdict(result))
 
 
 @app.get("/v1/connectors", response_model=list[ConnectorCapabilityResponse])

@@ -50,6 +50,18 @@ class HealthResponse(BaseModel):
     submission_mode: str
 
 
+class RerankerStatusResponse(BaseModel):
+    configured: bool
+    status: str
+    live: bool
+    ready: bool
+    degraded: bool
+    model: str | None = None
+    model_revision: str | None = None
+    device: str | None = None
+    error_code: str | None = None
+
+
 class ConnectorCapabilityResponse(BaseModel):
     name: str
     vacancy_extraction: str
