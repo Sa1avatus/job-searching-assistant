@@ -14,11 +14,74 @@
     .eyebrow { color: #8da2fb; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; font-size: 12px; }
     main.dashboard-shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; padding-bottom: 40px; }
     .sidebar { position: sticky; top: 18px; display: grid; gap: 7px; padding: 12px; background: #0e162b; border: 1px solid #263154; border-radius: 18px; }
-    .menu-button { width: 100%; text-align: left; background: transparent; border-color: transparent; color: #aab5d6; }
+    .menu-button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; background: transparent; border-color: transparent; color: #aab5d6; }
+    .menu-button::after { content: '›'; flex: 0 0 auto; color: #7181ad; font-size: 20px; line-height: 1; transform: rotate(0deg); transition: transform .18s ease, color .18s ease; }
+    .menu-button:hover::after { color: #c5cdef; }
     .menu-button.active { background: #1d294d; border-color: #5065a8; color: #fff; }
+    .menu-button.active::after { color: #fff; transform: rotate(90deg); }
     .dashboard-content { min-width: 0; }
     section.step { display: none; background: linear-gradient(145deg, #111a34, #0e162b); border: 1px solid #263154; border-radius: 18px; padding: 22px; margin-bottom: 18px; box-shadow: 0 18px 45px #02061755; }
-    section.step.active { display: block; }
+    section.step.active { display: block; animation: dashboard-panel-open .16s ease-out; }
+    @keyframes dashboard-panel-open {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Collapsible blocks inside the active right-hand section. */
+    .dashboard-subsection-toggle {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      width: 100%;
+      margin: 10px 0 0 !important;
+      padding: 13px 44px 13px 14px;
+      border: 1px solid #303b60;
+      border-radius: 12px;
+      background: #101831;
+      color: #eef2ff;
+      cursor: pointer;
+      user-select: none;
+      transition: border-color .18s ease, background .18s ease;
+    }
+    .dashboard-subsection-toggle:hover {
+      border-color: #5065a8;
+      background: #14203f;
+    }
+    .dashboard-subsection-toggle::after {
+      content: '›';
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      color: #8da2fb;
+      font-size: 22px;
+      line-height: 1;
+      transform: translateY(-50%) rotate(0deg);
+      transition: transform .18s ease;
+    }
+    .dashboard-subsection-toggle[aria-expanded="true"]::after {
+      transform: translateY(-50%) rotate(90deg);
+    }
+    section.step > h2.dashboard-subsection-toggle {
+      font-size: 18px;
+    }
+    section.step > h3.dashboard-subsection-toggle,
+    section.step > div > h3.dashboard-subsection-toggle {
+      font-size: 17px;
+    }
+    .dashboard-subsection-body {
+      padding: 14px 2px 4px;
+    }
+    .dashboard-subsection-body[hidden] {
+      display: none !important;
+    }
+    .dashboard-nested-subsection {
+      margin-top: 10px !important;
+    }
+    .dashboard-nested-subsection > .dashboard-subsection-toggle {
+      margin-top: 0 !important;
+    }
     section.step h2 { margin: 0 0 4px; font-size: 18px; }
     section.step .hint { color: #aab5d6; font-size: 13px; margin-bottom: 14px; }
     input, textarea, button, select { border: 1px solid #303b60; border-radius: 10px; padding: 10px 13px; font: inherit; }
@@ -105,6 +168,80 @@
     .blacklist-entry { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid #303b60; border-radius: 12px; background: #101831; }
     .summary-affordance { display: block; color: #8da2fb; font-size: 13px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; cursor: help; }
     .summary-affordance:focus { outline: 1px solid #8da2fb; outline-offset: 2px; }
+
+    /* Profile facts — compact card list */
+    #profile-facts-panel { margin-top: 28px !important; }
+    .facts-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    .facts-header__copy { min-width: 0; }
+    .facts-header__copy h3 { margin: 0 0 5px; font-size: 22px; }
+    .facts-header__copy .hint { margin: 0; max-width: 720px; }
+    .facts-add-toggle { flex: 0 0 auto; min-height: 42px; display: inline-flex; align-items: center; gap: 8px; padding-inline: 16px; }
+    .facts-add-toggle__plus { font-size: 20px; line-height: 1; font-weight: 500; }
+
+    .facts-add-form { margin-bottom: 16px; padding: 16px; border: 1px solid #3b4c7d; border-radius: 14px; background: #0d162d; box-shadow: inset 0 1px 0 #ffffff08; }
+    .facts-add-grid { display: grid; grid-template-columns: minmax(130px, .8fr) minmax(190px, 1.35fr) minmax(150px, 1fr) auto; gap: 10px; align-items: end; }
+    .facts-form-actions { display: flex; gap: 8px; align-items: center; }
+    .facts-check { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; margin: 0; white-space: nowrap; font-weight: 700; }
+    .facts-check input { width: 16px; height: 16px; margin: 0; }
+
+    .facts-filters { display: grid; grid-template-columns: minmax(160px, .85fr) minmax(180px, 1.2fr) minmax(160px, 1fr) auto; gap: 10px; align-items: end; margin-bottom: 16px; }
+    .facts-filter-field { min-width: 0; }
+    .facts-filter-field label { margin-bottom: 7px; }
+    .facts-verified-filter { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 4px 1px; color: #c5cdef; font-size: 13px; font-weight: 700; white-space: nowrap; }
+    .facts-switch { position: relative; display: inline-block; width: 44px; height: 24px; flex: 0 0 auto; margin: 0; }
+    .facts-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+    .facts-switch__track { position: absolute; inset: 0; border-radius: 999px; border: 1px solid #3a4772; background: #1a2441; transition: .18s ease; }
+    .facts-switch__track::after { content: ''; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; border-radius: 50%; background: #dbe7ff; box-shadow: 0 1px 4px #02061799; transition: .18s ease; }
+    .facts-switch input:checked + .facts-switch__track { background: #2563eb; border-color: #3b82f6; }
+    .facts-switch input:checked + .facts-switch__track::after { transform: translateX(20px); background: #fff; }
+    .facts-switch input:focus-visible + .facts-switch__track { outline: 2px solid #8da2fb; outline-offset: 2px; }
+
+    #profile-facts-list { display: grid; gap: 10px; }
+    .fact-card { position: relative; display: grid; grid-template-columns: 48px minmax(70px, auto) minmax(190px, 1fr) minmax(100px, .42fr) minmax(145px, auto) 40px; gap: 14px; align-items: center; min-height: 76px; padding: 12px 12px 12px 14px; border: 1px solid #30426d; border-radius: 14px; background: linear-gradient(145deg, #111a34, #0e172d); box-shadow: 0 10px 24px #0206171f; }
+    .fact-card:hover { border-color: #435789; background: linear-gradient(145deg, #131e3b, #101a32); }
+    .fact-icon { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid #6d4bd8; border-radius: 12px; background: linear-gradient(145deg, #6d35c7, #4338a4); color: #fff; font-size: 13px; font-weight: 900; letter-spacing: -.04em; box-shadow: inset 0 1px 0 #ffffff2b; }
+    .fact-icon[data-kind="integration"] { border-color: #158f66; background: linear-gradient(145deg, #0b8f61, #12684f); }
+    .fact-icon[data-kind="language"] { border-color: #3b82f6; background: linear-gradient(145deg, #2563eb, #1e4b9f); }
+    .fact-icon[data-kind="experience"] { border-color: #d08b38; background: linear-gradient(145deg, #b76620, #7c4319); }
+    .fact-category-badge { width: max-content; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 5px 9px; border-radius: 8px; background: #1b2650; border: 1px solid #2b3970; color: #c7d2fe; font-size: 12px; font-weight: 800; }
+    .fact-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f8fafc; font-weight: 700; }
+    .fact-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e2e8f0; }
+    .fact-status { width: max-content; display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border-radius: 999px; background: #0b2f2a; color: #6ee7b7; font-size: 12px; font-weight: 800; }
+    .fact-status.unverified { background: #342a17; color: #facc15; }
+    .fact-status__dot { width: 15px; height: 15px; display: grid; place-items: center; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; line-height: 1; }
+    .fact-menu-wrap { position: relative; justify-self: end; }
+    .fact-menu-toggle { width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border-color: transparent; background: transparent; color: #aab5d6; font-size: 24px; line-height: 1; }
+    .fact-menu-toggle:hover, .fact-menu-toggle[aria-expanded="true"] { background: #1d294d; border-color: #5065a8; color: #fff; }
+    .fact-menu { position: absolute; z-index: 40; right: 0; top: calc(100% + 6px); min-width: 165px; padding: 6px; border: 1px solid #3a4772; border-radius: 11px; background: #101831; box-shadow: 0 16px 34px #020617cc; }
+    .fact-menu button { width: 100%; border-color: transparent; background: transparent; text-align: left; padding: 9px 10px; }
+    .fact-menu button:hover { background: #1d294d; border-color: #5065a8; }
+    .fact-menu button[data-action="delete"] { color: #fda4af; }
+
+    .fact-editor { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(130px, .8fr) minmax(190px, 1.35fr) minmax(150px, 1fr) auto; gap: 10px; align-items: end; width: 100%; }
+    .fact-editor__actions { display: flex; gap: 8px; align-items: end; }
+    .fact-editor .facts-check { align-self: end; }
+    .fact-card.is-editing { grid-template-columns: 1fr; padding: 16px; }
+
+    .facts-empty { padding: 32px; }
+    .facts-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #263154; }
+    .facts-count { color: #7f8db4; font-size: 12px; }
+    .facts-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+    .facts-page-size { display: inline-flex; align-items: center; gap: 7px; margin: 0 6px 0 0; color: #aab5d6; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .facts-page-size select { width: auto; min-width: 68px; padding: 7px 30px 7px 9px; }
+    .facts-page-button { width: 36px; height: 36px; padding: 0; display: inline-grid; place-items: center; font-size: 17px; }
+    .facts-page-indicator { min-width: 68px; text-align: center; color: #c5cdef; font-size: 13px; font-weight: 700; }
+
+    @media (max-width: 1050px) {
+      .facts-filters { grid-template-columns: 1fr 1fr; }
+      .facts-verified-filter { align-self: end; }
+      .facts-add-grid { grid-template-columns: 1fr 1fr; }
+      .fact-card { grid-template-columns: 44px minmax(65px, auto) minmax(150px, 1fr) minmax(90px, .45fr) 36px; }
+      .fact-status { grid-column: 3 / 5; grid-row: 2; }
+      .fact-menu-wrap { grid-column: 5; grid-row: 1 / 3; }
+      .fact-icon { grid-row: 1 / 3; }
+      .fact-category-badge { grid-row: 1 / 3; }
+      .fact-editor { grid-template-columns: 1fr 1fr; }
+    }
     @media (max-width: 850px) {
       main.dashboard-shell { grid-template-columns: 1fr; }
       .sidebar { position: static; display: flex; overflow-x: auto; }
@@ -113,6 +250,24 @@
       .card-actions { display: flex; overflow-x: auto; padding-bottom: 3px; }
       .card-actions > button, .card-actions > .link-btn { flex: 0 0 190px; }
       .card-actions > .more-actions { flex: 0 0 44px; }
+    }
+    @media (max-width: 650px) {
+      .facts-header { align-items: stretch; flex-direction: column; }
+      .facts-add-toggle { width: 100%; justify-content: center; }
+      .facts-filters, .facts-add-grid, .fact-editor { grid-template-columns: 1fr; }
+      .facts-verified-filter { justify-content: space-between; padding: 2px 0; }
+      .facts-form-actions, .fact-editor__actions { flex-wrap: wrap; }
+      .fact-card { grid-template-columns: 44px minmax(0, 1fr) 36px; gap: 10px; min-height: 0; }
+      .fact-icon { grid-column: 1; grid-row: 1 / 4; align-self: start; }
+      .fact-category-badge { grid-column: 2; grid-row: 1; }
+      .fact-name { grid-column: 2; grid-row: 2; white-space: normal; }
+      .fact-value { grid-column: 2; grid-row: 3; }
+      .fact-status { grid-column: 1 / 3; grid-row: 4; margin-top: 2px; }
+      .fact-menu-wrap { grid-column: 3; grid-row: 1 / 4; align-self: start; }
+      .fact-card.is-editing { display: block; }
+      .facts-footer { align-items: stretch; flex-direction: column; }
+      .facts-pagination { justify-content: space-between; }
+      .facts-page-size { margin-right: auto; }
     }
     @media (max-width: 520px) { .vacancy-filters { grid-template-columns: 1fr; } }
   </style>
@@ -140,18 +295,18 @@
   </header>
   <main class="dashboard-shell">
     <nav class="sidebar" aria-label="Разделы личного кабинета">
-      <button class="menu-button active" type="button" data-menu="vacancies">Все вакансии</button>
-      <button class="menu-button" type="button" data-menu="search">Поиск</button>
-      <button class="menu-button" type="button" data-menu="blacklist">Чёрный список</button>
-      <button class="menu-button" type="button" data-menu="resume">Резюме</button>
-      <button class="menu-button" type="button" data-menu="sessions">Сессии сайтов</button>
-      <button class="menu-button" type="button" data-menu="model">Модель</button>
-      <button class="menu-button" type="button" data-menu="access">Профиль и доступ</button>
+      <button class="menu-button" type="button" data-menu="vacancies" aria-expanded="false">Все вакансии</button>
+      <button class="menu-button" type="button" data-menu="search" aria-expanded="false">Поиск</button>
+      <button class="menu-button" type="button" data-menu="blacklist" aria-expanded="false">Чёрный список</button>
+      <button class="menu-button" type="button" data-menu="resume" aria-expanded="false">Резюме</button>
+      <button class="menu-button" type="button" data-menu="sessions" aria-expanded="false">Сессии сайтов</button>
+      <button class="menu-button" type="button" data-menu="model" aria-expanded="false">Модель</button>
+      <button class="menu-button" type="button" data-menu="access" aria-expanded="false">Профиль и доступ</button>
     </nav>
     <div class="dashboard-content">
     <div id="status" role="status" aria-live="polite"></div>
 
-    <section class="step active" data-panel="vacancies">
+    <section class="step" data-panel="vacancies">
       <h2>Все сохранённые вакансии</h2>
       <div class="hint">Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.</div>
       <div id="application-statistics" class="statistics-grid" aria-live="polite"></div>
@@ -219,19 +374,71 @@
       </div>
       <label><input id="store-sensitive-personal-data" type="checkbox"> Я явно разрешаю хранить email и телефон в зашифрованном виде; перед их использованием требуется проверка.</label>
       <div id="personal-data-state" class="task-state"></div>
-      <div id="profile-facts-panel" style="margin-top:24px;">
-        <h3>Факты обо мне</h3>
-        <div class="hint">Только подтверждённые факты используются для оценки вакансий и сопроводительных писем.</div>
-        <form id="profile-fact-form">
-          <div class="row" style="margin-top:12px;">
+      <div id="profile-facts-panel">
+        <div class="facts-header">
+          <div class="facts-header__copy">
+            <h3>Факты обо мне</h3>
+            <div class="hint">Только подтверждённые факты используются для оценки вакансий и сопроводительных писем.</div>
+          </div>
+          <button id="profile-fact-add-toggle" type="button" class="primary facts-add-toggle" aria-expanded="false" aria-controls="profile-fact-form">
+            <span class="facts-add-toggle__plus" aria-hidden="true">+</span>
+            <span>Добавить факт</span>
+          </button>
+        </div>
+
+        <form id="profile-fact-form" class="facts-add-form" hidden>
+          <div class="facts-add-grid">
             <div><label for="profile-fact-category">Категория</label><input id="profile-fact-category" required maxlength="100" placeholder="skill"></div>
             <div><label for="profile-fact-name">Название</label><input id="profile-fact-name" required maxlength="200" placeholder="Python"></div>
             <div><label for="profile-fact-value">Значение</label><input id="profile-fact-value" required placeholder="5 лет"></div>
-            <div style="flex:0"><label><input id="profile-fact-verified" type="checkbox" checked> Подтверждён</label></div>
-            <div style="flex:0"><button type="submit" class="primary">Добавить факт</button></div>
+            <div class="facts-form-actions">
+              <label class="facts-check"><input id="profile-fact-verified" type="checkbox" checked> <span>Подтверждён</span></label>
+              <button type="submit" class="primary">Сохранить</button>
+              <button id="profile-fact-add-cancel" type="button">Отмена</button>
+            </div>
           </div>
         </form>
+
+        <div class="facts-filters" aria-label="Фильтры фактов">
+          <div class="facts-filter-field">
+            <label for="profile-fact-category-filter">Категория</label>
+            <select id="profile-fact-category-filter"><option value="">Все категории</option></select>
+          </div>
+          <div class="facts-filter-field">
+            <label for="profile-fact-name-filter">Название</label>
+            <input id="profile-fact-name-filter" type="search" placeholder="Поиск по названию">
+          </div>
+          <div class="facts-filter-field">
+            <label for="profile-fact-value-filter">Значение</label>
+            <input id="profile-fact-value-filter" type="search" placeholder="Поиск по значению">
+          </div>
+          <div class="facts-verified-filter">
+            <span>Только подтверждённые</span>
+            <label class="facts-switch" aria-label="Только подтверждённые">
+              <input id="profile-fact-verified-filter" type="checkbox" checked>
+              <span class="facts-switch__track" aria-hidden="true"></span>
+            </label>
+          </div>
+        </div>
+
         <div id="profile-facts-list"></div>
+        <div class="facts-footer">
+          <div id="profile-facts-count" class="facts-count" aria-live="polite"></div>
+          <div class="facts-pagination" aria-label="Пагинация фактов">
+            <label class="facts-page-size" for="profile-facts-page-size">
+              <span>На странице</span>
+              <select id="profile-facts-page-size">
+                <option value="5">5</option>
+                <option value="10" selected>10</option>
+                <option value="20">20</option>
+                <option value="50">50</option>
+              </select>
+            </label>
+            <button id="profile-facts-previous" class="facts-page-button" type="button" aria-label="Предыдущая страница">←</button>
+            <span id="profile-facts-page" class="facts-page-indicator">1 / 1</span>
+            <button id="profile-facts-next" class="facts-page-button" type="button" aria-label="Следующая страница">→</button>
+          </div>
+        </div>
       </div>
       <h3>Настройки отклика</h3>
       <div class="hint">Значения по умолчанию для вопросов работодателя. Их можно будет переопределить для конкретной вакансии.</div>
@@ -437,6 +644,18 @@
       'Значение': 'Value',
       'Подтверждён': 'Verified',
       'Добавить факт': 'Add fact',
+      'На странице': 'Per page',
+      'Пагинация фактов': 'Facts pagination',
+      'Предыдущая страница': 'Previous page',
+      'Следующая страница': 'Next page',
+      'Сохранить': 'Save',
+      'Редактировать': 'Edit',
+      'Удалить': 'Delete',
+      'Только подтверждённые': 'Verified only',
+      'Все категории': 'All categories',
+      'Поиск по названию': 'Search by name',
+      'Поиск по значению': 'Search by value',
+      'Фильтры фактов': 'Fact filters',
       'Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.': 'Vacancies from search and imported sources. Filters apply to the entire database, not only the current page.',
       'Текст': 'Text',
       'Источник': 'Source',
@@ -669,6 +888,8 @@
       localStorage.setItem('dashboardLanguage', currentLanguage);
       translateTree();
       renderLanguageSelector();
+      populateProfileFactCategoryFilter(profileFactsCache);
+      renderProfileFacts();
       loadSavedVacancies(vacancyPage).catch(showError);
       restoreSearchResults();
     }
@@ -721,59 +942,288 @@
       return response.json();
     }
 
-    function renderProfileFacts(facts) {
+    let profileFactsCache = [];
+    let editingProfileFactId = null;
+    let openProfileFactMenuId = null;
+    let profileFactsPage = 1;
+    let profileFactsPageSize = Number.parseInt(localStorage.getItem('dashboardProfileFactsPageSize') || '10', 10);
+    if (![5, 10, 20, 50].includes(profileFactsPageSize)) profileFactsPageSize = 10;
+    document.querySelector('#profile-facts-page-size').value = String(profileFactsPageSize);
+
+    function profileFactKind(fact) {
+      const category = String(fact.category || '').toLowerCase();
+      const name = String(fact.name || '').toLowerCase();
+      if (category.includes('lang') || category.includes('язык')) return 'language';
+      if (category.includes('experience') || category.includes('опыт')) return 'experience';
+      if (name.includes('api') || name.includes('integration') || name.includes('интеграц')) return 'integration';
+      return 'skill';
+    }
+
+    function profileFactIconText(fact) {
+      const kind = profileFactKind(fact);
+      if (kind === 'integration') return '↔';
+      if (kind === 'language') return '文';
+      if (kind === 'experience') return 'EXP';
+      return '</>';
+    }
+
+    function populateProfileFactCategoryFilter(facts) {
+      const select = document.querySelector('#profile-fact-category-filter');
+      const currentValue = select.value;
+      const categories = [...new Set(facts.map(fact => String(fact.category || '').trim()).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, currentLanguage === 'en' ? 'en' : 'ru'));
+      select.replaceChildren();
+      const all = document.createElement('option');
+      all.value = '';
+      all.textContent = currentLanguage === 'en' ? 'All categories' : 'Все категории';
+      select.append(all);
+      categories.forEach(category => {
+        const option = document.createElement('option');
+        option.value = category;
+        option.textContent = category;
+        select.append(option);
+      });
+      select.value = categories.includes(currentValue) ? currentValue : '';
+    }
+
+    function filteredProfileFacts() {
+      const category = document.querySelector('#profile-fact-category-filter').value.trim().toLowerCase();
+      const nameQuery = document.querySelector('#profile-fact-name-filter').value.trim().toLowerCase();
+      const valueQuery = document.querySelector('#profile-fact-value-filter').value.trim().toLowerCase();
+      const verifiedOnly = document.querySelector('#profile-fact-verified-filter').checked;
+      return profileFactsCache.filter(fact => {
+        if (category && String(fact.category || '').toLowerCase() !== category) return false;
+        if (nameQuery && !String(fact.name || '').toLowerCase().includes(nameQuery)) return false;
+        if (valueQuery && !String(fact.value || '').toLowerCase().includes(valueQuery)) return false;
+        if (verifiedOnly && !fact.is_verified) return false;
+        return true;
+      });
+    }
+
+    function createProfileFactEditor(fact) {
+      const editor = element('div', undefined, 'fact-editor');
+
+      const categoryWrap = document.createElement('div');
+      const categoryLabel = element('label', currentLanguage === 'en' ? 'Category' : 'Категория');
+      const category = document.createElement('input');
+      category.dataset.field = 'category';
+      category.maxLength = 100;
+      category.required = true;
+      category.value = fact.category || '';
+      categoryWrap.append(categoryLabel, category);
+
+      const nameWrap = document.createElement('div');
+      const nameLabel = element('label', currentLanguage === 'en' ? 'Name' : 'Название');
+      const name = document.createElement('input');
+      name.dataset.field = 'name';
+      name.maxLength = 200;
+      name.required = true;
+      name.value = fact.name || '';
+      nameWrap.append(nameLabel, name);
+
+      const valueWrap = document.createElement('div');
+      const valueLabel = element('label', currentLanguage === 'en' ? 'Value' : 'Значение');
+      const value = document.createElement('input');
+      value.dataset.field = 'value';
+      value.required = true;
+      value.value = fact.value || '';
+      valueWrap.append(valueLabel, value);
+
+      const actions = element('div', undefined, 'fact-editor__actions');
+      const verifiedLabel = element('label', undefined, 'facts-check');
+      const verified = document.createElement('input');
+      verified.type = 'checkbox';
+      verified.dataset.field = 'is_verified';
+      verified.checked = Boolean(fact.is_verified);
+      verifiedLabel.append(verified, document.createTextNode(currentLanguage === 'en' ? ' Verified' : ' Подтверждён'));
+      const save = element('button', currentLanguage === 'en' ? 'Save' : 'Сохранить', 'primary');
+      save.type = 'button';
+      save.dataset.action = 'save';
+      const cancel = element('button', currentLanguage === 'en' ? 'Cancel' : 'Отмена');
+      cancel.type = 'button';
+      cancel.dataset.action = 'cancel-edit';
+      actions.append(verifiedLabel, save, cancel);
+
+      editor.append(categoryWrap, nameWrap, valueWrap, actions);
+      return editor;
+    }
+
+    function renderProfileFacts() {
       const container = document.querySelector('#profile-facts-list');
+      const count = document.querySelector('#profile-facts-count');
+      const pageIndicator = document.querySelector('#profile-facts-page');
+      const previousButton = document.querySelector('#profile-facts-previous');
+      const nextButton = document.querySelector('#profile-facts-next');
       container.replaceChildren();
-      if (!facts.length) {
-        container.append(element('div', currentLanguage === 'en' ? 'No facts saved.' : 'Факты пока не сохранены.', 'empty'));
+
+      const filteredFacts = filteredProfileFacts();
+      const totalFiltered = filteredFacts.length;
+      const totalPages = Math.max(1, Math.ceil(totalFiltered / profileFactsPageSize));
+      profileFactsPage = Math.max(1, Math.min(profileFactsPage, totalPages));
+
+      const startIndex = (profileFactsPage - 1) * profileFactsPageSize;
+      const endIndex = Math.min(startIndex + profileFactsPageSize, totalFiltered);
+      const facts = filteredFacts.slice(startIndex, endIndex);
+
+      pageIndicator.textContent = `${profileFactsPage} / ${totalPages}`;
+      previousButton.disabled = profileFactsPage <= 1 || totalFiltered === 0;
+      nextButton.disabled = profileFactsPage >= totalPages || totalFiltered === 0;
+
+      if (!profileFactsCache.length) {
+        container.append(element('div', currentLanguage === 'en' ? 'No facts saved.' : 'Факты пока не сохранены.', 'empty facts-empty'));
+        count.textContent = '';
         return;
       }
+
+      if (!totalFiltered) {
+        container.append(element('div', currentLanguage === 'en' ? 'No facts match the selected filters.' : 'По выбранным фильтрам фактов нет.', 'empty facts-empty'));
+        count.textContent = currentLanguage === 'en'
+          ? `Shown 0 of ${profileFactsCache.length}`
+          : `Показано 0 из ${profileFactsCache.length}`;
+        return;
+      }
+
       facts.forEach(fact => {
-        const editor = element('article', undefined, 'session-card');
-        editor.dataset.factId = fact.id;
-        const row = element('div', undefined, 'row');
-        const category = document.createElement('input');
-        category.dataset.field = 'category';
-        category.maxLength = 100;
-        category.value = fact.category;
-        const name = document.createElement('input');
-        name.dataset.field = 'name';
-        name.maxLength = 200;
-        name.value = fact.name;
-        const value = document.createElement('input');
-        value.dataset.field = 'value';
-        value.value = fact.value;
-        const verifiedLabel = element('label');
-        const verified = document.createElement('input');
-        verified.type = 'checkbox';
-        verified.dataset.field = 'is_verified';
-        verified.checked = fact.is_verified;
-        verifiedLabel.append(verified, document.createTextNode(currentLanguage === 'en' ? ' Verified' : ' Подтверждён'));
-        const save = element('button', currentLanguage === 'en' ? 'Save' : 'Сохранить', 'primary');
-        save.type = 'button';
-        save.dataset.action = 'save';
-        const remove = element('button', currentLanguage === 'en' ? 'Delete' : 'Удалить', 'danger');
-        remove.type = 'button';
-        remove.dataset.action = 'delete';
-        row.append(category, name, value, verifiedLabel, save, remove);
-        editor.append(row);
-        container.append(editor);
+        const card = element('div', undefined, 'fact-card');
+        card.dataset.factId = fact.id;
+
+        if (String(fact.id) === String(editingProfileFactId)) {
+          card.classList.add('is-editing');
+          card.append(createProfileFactEditor(fact));
+          container.append(card);
+          return;
+        }
+
+        const icon = element('div', profileFactIconText(fact), 'fact-icon');
+        icon.dataset.kind = profileFactKind(fact);
+        icon.setAttribute('aria-hidden', 'true');
+
+        const category = element('span', fact.category || '—', 'fact-category-badge');
+        category.title = fact.category || '';
+        const name = element('div', fact.name || '—', 'fact-name');
+        name.title = fact.name || '';
+        const value = element('div', fact.value || '—', 'fact-value');
+        value.title = fact.value || '';
+
+        const status = element('span', undefined, `fact-status${fact.is_verified ? '' : ' unverified'}`);
+        const statusDot = element('span', fact.is_verified ? '✓' : '!', 'fact-status__dot');
+        const statusText = element(
+          'span',
+          fact.is_verified
+            ? (currentLanguage === 'en' ? 'Verified' : 'Подтверждён')
+            : (currentLanguage === 'en' ? 'Unverified' : 'Не подтверждён')
+        );
+        status.append(statusDot, statusText);
+
+        const menuWrap = element('div', undefined, 'fact-menu-wrap');
+        const menuToggle = element('button', '⋮', 'fact-menu-toggle');
+        menuToggle.type = 'button';
+        menuToggle.dataset.action = 'toggle-menu';
+        menuToggle.setAttribute('aria-label', currentLanguage === 'en' ? 'Fact actions' : 'Действия с фактом');
+        const menuIsOpen = String(openProfileFactMenuId) === String(fact.id);
+        menuToggle.setAttribute('aria-expanded', String(menuIsOpen));
+        menuWrap.append(menuToggle);
+
+        if (menuIsOpen) {
+          const menu = element('div', undefined, 'fact-menu');
+          const edit = element('button', currentLanguage === 'en' ? 'Edit' : 'Редактировать');
+          edit.type = 'button';
+          edit.dataset.action = 'edit';
+          const remove = element('button', currentLanguage === 'en' ? 'Delete' : 'Удалить');
+          remove.type = 'button';
+          remove.dataset.action = 'delete';
+          menu.append(edit, remove);
+          menuWrap.append(menu);
+        }
+
+        card.append(icon, category, name, value, status, menuWrap);
+        container.append(card);
       });
+
+      const shownFrom = startIndex + 1;
+      const shownTo = endIndex;
+      if (totalFiltered === profileFactsCache.length) {
+        count.textContent = currentLanguage === 'en'
+          ? `Shown ${shownFrom}–${shownTo} of ${totalFiltered}`
+          : `Показано ${shownFrom}–${shownTo} из ${totalFiltered}`;
+      } else {
+        count.textContent = currentLanguage === 'en'
+          ? `Shown ${shownFrom}–${shownTo} of ${totalFiltered} filtered (${profileFactsCache.length} total)`
+          : `Показано ${shownFrom}–${shownTo} из ${totalFiltered} по фильтру (всего ${profileFactsCache.length})`;
+      }
     }
 
     async function loadProfileFacts() {
       const userId = userIdInput.value.trim();
       if (!userId) {
-        renderProfileFacts([]);
+        profileFactsCache = [];
+        populateProfileFactCategoryFilter([]);
+        renderProfileFacts();
         return [];
       }
       const facts = await asJson(await fetchWithTimeout(
         `/v1/users/${userId}/facts`,
         {headers: headers(false)}
       ));
-      renderProfileFacts(facts);
-      return facts;
+      profileFactsCache = Array.isArray(facts) ? facts : [];
+      populateProfileFactCategoryFilter(profileFactsCache);
+      renderProfileFacts();
+      return profileFactsCache;
     }
+
+    function setProfileFactAddFormOpen(isOpen) {
+      const form = document.querySelector('#profile-fact-form');
+      const toggle = document.querySelector('#profile-fact-add-toggle');
+      form.hidden = !isOpen;
+      toggle.setAttribute('aria-expanded', String(isOpen));
+      if (isOpen) window.setTimeout(() => document.querySelector('#profile-fact-category').focus(), 0);
+    }
+
+    document.querySelector('#profile-fact-add-toggle').addEventListener('click', () => {
+      setProfileFactAddFormOpen(document.querySelector('#profile-fact-form').hidden);
+    });
+
+    document.querySelector('#profile-fact-add-cancel').addEventListener('click', () => {
+      document.querySelector('#profile-fact-form').reset();
+      document.querySelector('#profile-fact-verified').checked = true;
+      setProfileFactAddFormOpen(false);
+    });
+
+    document.querySelectorAll('#profile-fact-category-filter, #profile-fact-name-filter, #profile-fact-value-filter, #profile-fact-verified-filter')
+      .forEach(control => control.addEventListener('input', () => {
+        editingProfileFactId = null;
+        openProfileFactMenuId = null;
+        profileFactsPage = 1;
+        renderProfileFacts();
+      }));
+
+    document.querySelector('#profile-facts-page-size').addEventListener('change', event => {
+      profileFactsPageSize = Number.parseInt(event.currentTarget.value, 10) || 10;
+      localStorage.setItem('dashboardProfileFactsPageSize', String(profileFactsPageSize));
+      editingProfileFactId = null;
+      openProfileFactMenuId = null;
+      profileFactsPage = 1;
+      renderProfileFacts();
+    });
+
+    document.querySelector('#profile-facts-previous').addEventListener('click', () => {
+      if (profileFactsPage <= 1) return;
+      editingProfileFactId = null;
+      openProfileFactMenuId = null;
+      profileFactsPage -= 1;
+      renderProfileFacts();
+      document.querySelector('#profile-facts-panel').scrollIntoView({behavior: 'smooth', block: 'start'});
+    });
+
+    document.querySelector('#profile-facts-next').addEventListener('click', () => {
+      const totalPages = Math.max(1, Math.ceil(filteredProfileFacts().length / profileFactsPageSize));
+      if (profileFactsPage >= totalPages) return;
+      editingProfileFactId = null;
+      openProfileFactMenuId = null;
+      profileFactsPage += 1;
+      renderProfileFacts();
+      document.querySelector('#profile-facts-panel').scrollIntoView({behavior: 'smooth', block: 'start'});
+    });
 
     document.querySelector('#profile-fact-form').addEventListener('submit', async event => {
       event.preventDefault();
@@ -782,66 +1232,271 @@
         showError(new Error(currentLanguage === 'en' ? 'Set User ID first' : 'Сначала укажите User ID'));
         return;
       }
+      const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+      submitButton.disabled = true;
       try {
         await asJson(await fetchWithTimeout(`/v1/users/${userId}/facts`, {
           method: 'POST',
           headers: headers(true),
           body: JSON.stringify({
-            category: document.querySelector('#profile-fact-category').value,
-            name: document.querySelector('#profile-fact-name').value,
-            value: document.querySelector('#profile-fact-value').value,
+            category: document.querySelector('#profile-fact-category').value.trim(),
+            name: document.querySelector('#profile-fact-name').value.trim(),
+            value: document.querySelector('#profile-fact-value').value.trim(),
             is_verified: document.querySelector('#profile-fact-verified').checked
           })
         }));
         event.currentTarget.reset();
         document.querySelector('#profile-fact-verified').checked = true;
+        setProfileFactAddFormOpen(false);
         await loadProfileFacts();
         showStatus(currentLanguage === 'en' ? 'Fact added.' : 'Факт добавлен.');
       } catch (error) {
         showError(error);
+      } finally {
+        submitButton.disabled = false;
       }
     });
 
     document.querySelector('#profile-facts-list').addEventListener('click', async event => {
-      const action = event.target.dataset.action;
+      const actionButton = event.target.closest('[data-action]');
+      const action = actionButton?.dataset.action;
       if (!action) return;
-      const editor = event.target.closest('[data-fact-id]');
+      const editor = actionButton.closest('[data-fact-id]');
+      if (!editor) return;
+      const factId = editor.dataset.factId;
+
+      if (action === 'toggle-menu') {
+        openProfileFactMenuId = String(openProfileFactMenuId) === String(factId) ? null : factId;
+        renderProfileFacts();
+        return;
+      }
+      if (action === 'edit') {
+        editingProfileFactId = factId;
+        openProfileFactMenuId = null;
+        renderProfileFacts();
+        window.setTimeout(() => document.querySelector(`[data-fact-id="${CSS.escape(String(factId))}"] [data-field="name"]`)?.focus(), 0);
+        return;
+      }
+      if (action === 'cancel-edit') {
+        editingProfileFactId = null;
+        renderProfileFacts();
+        return;
+      }
+
       const userId = userIdInput.value.trim();
-      if (!editor || !userId) return;
-      event.target.disabled = true;
+      if (!userId) return;
+      actionButton.disabled = true;
       try {
         if (action === 'save') {
-          await asJson(await fetchWithTimeout(
-            `/v1/users/${userId}/facts/${editor.dataset.factId}`,
+          const category = editor.querySelector('[data-field="category"]')?.value.trim();
+          const name = editor.querySelector('[data-field="name"]')?.value.trim();
+          const value = editor.querySelector('[data-field="value"]')?.value.trim();
+          const isVerified = editor.querySelector('[data-field="is_verified"]').checked;
+
+          if (!category || !name || !value) {
+            throw new Error(currentLanguage === 'en' ? 'Category, name and value are required.' : 'Категория, название и значение обязательны.');
+          }
+
+          const response = await fetchWithTimeout(
+            `/v1/users/${userId}/facts/${factId}`,
             {
               method: 'PUT',
               headers: headers(true),
               body: JSON.stringify({
-                category: editor.querySelector('[data-field="category"]').value,
-                name: editor.querySelector('[data-field="name"]').value,
-                value: editor.querySelector('[data-field="value"]').value,
-                is_verified: editor.querySelector('[data-field="is_verified"]').checked
+                category,
+                name,
+                value,
+                is_verified: isVerified
               })
             }
+          );
+
+          if (!response.ok) await asJson(response);
+
+          /*
+           * Update the local list immediately after a successful save.
+           * This makes the edited row collapse back into the normal list
+           * without requiring a manual page refresh.
+           */
+          profileFactsCache = profileFactsCache.map(fact => (
+            String(fact.id) === String(factId)
+              ? {...fact, category, name, value, is_verified: isVerified}
+              : fact
           ));
+
+          editingProfileFactId = null;
+          openProfileFactMenuId = null;
+          populateProfileFactCategoryFilter(profileFactsCache);
+          renderProfileFacts();
           showStatus(currentLanguage === 'en' ? 'Fact saved.' : 'Факт сохранён.');
+
+          /*
+           * Then synchronize with the server once more in the background.
+           * The immediate render above remains responsive even if this GET
+           * takes a little longer.
+           */
+          window.setTimeout(() => {
+            loadProfileFacts().catch(showError);
+          }, 250);
+
+          return;
         } else if (action === 'delete') {
+          const fact = profileFactsCache.find(item => String(item.id) === String(factId));
+          const label = fact?.name || (currentLanguage === 'en' ? 'this fact' : 'этот факт');
+          const confirmed = window.confirm(
+            currentLanguage === 'en'
+              ? `Delete “${label}”? This action cannot be undone.`
+              : `Удалить «${label}»? Это действие нельзя отменить.`
+          );
+          if (!confirmed) return;
           const response = await fetchWithTimeout(
-            `/v1/users/${userId}/facts/${editor.dataset.factId}`,
+            `/v1/users/${userId}/facts/${factId}`,
             {method: 'DELETE', headers: headers(false)}
           );
           if (!response.ok) await asJson(response);
+          openProfileFactMenuId = null;
           showStatus(currentLanguage === 'en' ? 'Fact deleted.' : 'Факт удалён.');
         }
         await loadProfileFacts();
       } catch (error) {
         showError(error);
       } finally {
-        event.target.disabled = false;
+        actionButton.disabled = false;
       }
     });
 
-    function activatePanel(panelName) {
+    document.addEventListener('click', event => {
+      if (!event.target.closest('.fact-menu-wrap') && openProfileFactMenuId !== null) {
+        openProfileFactMenuId = null;
+        renderProfileFacts();
+      }
+    });
+
+    function initializeDashboardSubsections() {
+      const sections = Array.from(document.querySelectorAll('section.step'));
+
+      sections.forEach(section => {
+        /*
+         * Some subsections are already wrapped in their own container
+         * (for example #profile-facts-panel and #email-integration-panel).
+         * Make those self-contained collapsible groups first.
+         */
+        Array.from(section.children).forEach(child => {
+          if (!(child instanceof HTMLElement)) return;
+          if (child.matches('h2, h3')) return;
+
+          const directHeading = Array.from(child.children)
+            .find(node => node.matches?.('h3'));
+
+          if (!directHeading) return;
+
+          child.classList.add('dashboard-nested-subsection');
+          directHeading.classList.add('dashboard-subsection-toggle');
+          directHeading.setAttribute('role', 'button');
+          directHeading.setAttribute('tabindex', '0');
+          directHeading.setAttribute('aria-expanded', 'false');
+
+          const body = document.createElement('div');
+          body.className = 'dashboard-subsection-body';
+          body.hidden = true;
+
+          let sibling = directHeading.nextSibling;
+          while (sibling) {
+            const next = sibling.nextSibling;
+            body.append(sibling);
+            sibling = next;
+          }
+          child.append(body);
+        });
+
+        /*
+         * Top-level H2/H3 blocks. A nested subsection container is treated as
+         * a boundary so, for example, "Личные данные" doesn't swallow
+         * "Факты обо мне".
+         */
+        const isBoundary = node => (
+          node?.nodeType === Node.ELEMENT_NODE
+          && (
+            node.matches('h2, h3')
+            || node.classList?.contains('dashboard-nested-subsection')
+          )
+        );
+
+        Array.from(section.children).forEach(child => {
+          if (!child.matches?.('h2, h3')) return;
+          if (child.classList.contains('dashboard-subsection-toggle')) return;
+
+          child.classList.add('dashboard-subsection-toggle');
+          child.setAttribute('role', 'button');
+          child.setAttribute('tabindex', '0');
+          child.setAttribute('aria-expanded', 'false');
+
+          const body = document.createElement('div');
+          body.className = 'dashboard-subsection-body';
+          body.hidden = true;
+
+          let sibling = child.nextSibling;
+          while (sibling && !isBoundary(sibling)) {
+            const next = sibling.nextSibling;
+            body.append(sibling);
+            sibling = next;
+          }
+          child.after(body);
+        });
+      });
+
+      const toggleSubsection = heading => {
+        const body = heading.nextElementSibling;
+        if (!body?.classList.contains('dashboard-subsection-body')) return;
+
+        const shouldOpen = body.hidden;
+        body.hidden = !shouldOpen;
+        heading.setAttribute('aria-expanded', String(shouldOpen));
+      };
+
+      document.addEventListener('click', event => {
+        const heading = event.target.closest('.dashboard-subsection-toggle');
+        if (!heading) return;
+        toggleSubsection(heading);
+      });
+
+      document.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const heading = event.target.closest('.dashboard-subsection-toggle');
+        if (!heading) return;
+        event.preventDefault();
+        toggleSubsection(heading);
+      });
+    }
+
+    function collapseAllDashboardSubsections(root = document) {
+      root.querySelectorAll('.dashboard-subsection-toggle').forEach(heading => {
+        heading.setAttribute('aria-expanded', 'false');
+        const body = heading.nextElementSibling;
+        if (body?.classList.contains('dashboard-subsection-body')) body.hidden = true;
+      });
+    }
+
+    function collapseAllPanels() {
+      document.querySelectorAll('[data-panel]').forEach(node => {
+        node.classList.remove('active');
+      });
+      document.querySelectorAll('[data-menu]').forEach(button => {
+        button.classList.remove('active');
+        button.setAttribute('aria-current', 'false');
+        button.setAttribute('aria-expanded', 'false');
+      });
+    }
+
+    function activatePanel(panelName, {toggle = false} = {}) {
+      const menuButton = document.querySelector(`[data-menu="${CSS.escape(String(panelName))}"]`);
+      const isCurrentlyExpanded = Boolean(menuButton?.classList.contains('active'));
+      const shouldExpand = toggle ? !isCurrentlyExpanded : true;
+
+      collapseAllPanels();
+
+      if (!shouldExpand) return false;
+
       document.querySelectorAll('[data-panel]').forEach(node => {
         node.classList.toggle('active', node.dataset.panel === panelName);
       });
@@ -849,13 +1504,16 @@
         const isActive = button.dataset.menu === panelName;
         button.classList.toggle('active', isActive);
         button.setAttribute('aria-current', isActive ? 'page' : 'false');
+        button.setAttribute('aria-expanded', String(isActive));
       });
-      localStorage.setItem('dashboardActivePanel', panelName);
+      return true;
     }
 
     document.querySelectorAll('[data-menu]').forEach(button => {
       button.addEventListener('click', () => {
-        activatePanel(button.dataset.menu);
+        const expanded = activatePanel(button.dataset.menu, {toggle: true});
+        if (!expanded) return;
+
         if (button.dataset.menu === 'vacancies') loadSavedVacancies().catch(showError);
         if (button.dataset.menu === 'blacklist') loadCompanyBlacklist().catch(showError);
       });
@@ -2794,13 +3452,14 @@
     });
     translateTree();
     renderLanguageSelector();
+    initializeDashboardSubsections();
+    collapseAllDashboardSubsections();
+
     const requestedPanel = new URLSearchParams(window.location.search).get('panel');
-    const initialPanel = [
-      'vacancies', 'search', 'blacklist', 'resume', 'sessions', 'model', 'access'
-    ].includes(requestedPanel)
-      ? requestedPanel
-      : (localStorage.getItem('dashboardActivePanel') || 'vacancies');
-    activatePanel(initialPanel);
+    const validPanels = ['vacancies', 'search', 'blacklist', 'resume', 'sessions', 'model', 'access'];
+    localStorage.removeItem('dashboardActivePanel');
+    collapseAllPanels();
+    if (validPanels.includes(requestedPanel)) activatePanel(requestedPanel);
     restoreSearchResults();
     loadSavedLlmPreference();
     loadAutofillValues().catch(showError);
