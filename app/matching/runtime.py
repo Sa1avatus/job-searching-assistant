@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 from pathlib import Path
 
 import httpx
@@ -11,7 +12,7 @@ from app.llm.preferences import LlmPreferenceService
 from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
 from app.llm.router import ModelProvider, ModelRouter
-from app.matching.http_models import HttpEmbeddingClient, HttpReranker
+from app.matching.http_models import HttpEmbeddingClient, HttpReranker, UnavailableReranker
 from app.matching.indexing import EvidenceReindexService
 from app.matching.model_extractors import (
     RouterCandidateEvidenceExtractor,
@@ -21,6 +22,7 @@ from app.matching.opensearch_index import OpenSearchEvidenceIndex
 from app.matching.pipeline import MatchingPipeline
 from app.matching.retrieval import HybridRetriever, SqlEvidenceRepository
 from app.matching.scoring import DeterministicMatchScorer
+from app.matching.semantic import Reranker
 from app.prompts.registry import PromptRegistry
 from app.storage.tables import ApplicationRow, CvFileRow, VacancyRow
 
@@ -52,21 +54,47 @@ class MatchingRuntime:
             )
 
             timeout = httpx.Timeout(self._settings.matching_model_timeout_seconds)
-            async with (
-                httpx.AsyncClient(timeout=60, follow_redirects=False, trust_env=False) as llm_http,
-                httpx.AsyncClient(
-                    base_url=self._settings.matching_model_service_url,
-                    timeout=timeout,
-                    follow_redirects=False,
-                    trust_env=False,
-                ) as model_http,
-                httpx.AsyncClient(
-                    base_url=self._settings.opensearch_url,
-                    timeout=30,
-                    follow_redirects=False,
-                    trust_env=False,
-                ) as opensearch_http,
-            ):
+            async with AsyncExitStack() as stack:
+                llm_http = await stack.enter_async_context(
+                    httpx.AsyncClient(timeout=60, follow_redirects=False, trust_env=False)
+                )
+                model_http = await stack.enter_async_context(
+                    httpx.AsyncClient(
+                        base_url=self._settings.resolved_embedding_service_url,
+                        timeout=timeout,
+                        follow_redirects=False,
+                        trust_env=False,
+                    )
+                )
+                opensearch_http = await stack.enter_async_context(
+                    httpx.AsyncClient(
+                        base_url=self._settings.opensearch_url,
+                        timeout=30,
+                        follow_redirects=False,
+                        trust_env=False,
+                    )
+                )
+                reranker: Reranker
+                if (
+                    self._settings.reranker_service_url is not None
+                    and self._settings.reranker_api_key is not None
+                ):
+                    reranker_http = await stack.enter_async_context(
+                        httpx.AsyncClient(
+                            base_url=self._settings.reranker_service_url,
+                            timeout=timeout,
+                            follow_redirects=False,
+                            trust_env=False,
+                        )
+                    )
+                    reranker = HttpReranker(
+                        reranker_http,
+                        api_key=self._settings.reranker_api_key,
+                    )
+                else:
+                    reranker = UnavailableReranker(
+                        "Reranker service URL and API key must both be configured"
+                    )
                 router = ModelRouter(
                     _build_user_model_providers(
                         llm_http,
@@ -82,7 +110,6 @@ class MatchingRuntime:
                     model_http,
                     dimensions=self._settings.embedding_dimensions,
                 )
-                reranker = HttpReranker(model_http)
                 search_index = OpenSearchEvidenceIndex(
                     opensearch_http,
                     index_prefix=self._settings.opensearch_evidence_index_prefix,

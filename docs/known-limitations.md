@@ -72,6 +72,9 @@ verified beyond controlled fixtures.
   still not Russian.
 
 ## General
+- Matching v2 requires separately configured embedding and reranker services. The independent
+  reranker has not been claimed as live-compatible until its bearer-authenticated Docker smoke test
+  is explicitly run; when it is absent or unavailable, matching uses conservative hybrid scores.
 - Human-action/CAPTCHA checkpoints and encrypted Playwright storage state are durable. The worker
   does not yet reconnect an open tab, preserve in-memory JavaScript state, or automatically resume
   an external action; recovery starts a new context from cookies/localStorage.

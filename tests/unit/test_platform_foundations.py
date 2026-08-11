@@ -100,3 +100,30 @@ def test_production_configuration_accepts_scoped_clients() -> None:
 def test_api_client_configuration_rejects_invalid_scope_shape() -> None:
     with pytest.raises(ValueError):
         Settings(api_clients_json='{"broken":"review:read"}', _env_file=None)
+
+
+def test_embedding_service_uses_explicit_url_before_legacy_alias() -> None:
+    explicit = Settings(
+        matching_model_service_url="http://legacy.test",
+        embedding_service_url="http://embedding.test",
+        _env_file=None,
+    )
+    legacy = Settings(
+        matching_model_service_url="http://legacy.test",
+        embedding_service_url="",
+        _env_file=None,
+    )
+
+    assert explicit.resolved_embedding_service_url == "http://embedding.test"
+    assert legacy.resolved_embedding_service_url == "http://legacy.test"
+
+
+def test_empty_reranker_configuration_is_disabled() -> None:
+    settings = Settings(
+        reranker_service_url="",
+        reranker_api_key="",
+        _env_file=None,
+    )
+
+    assert settings.reranker_service_url is None
+    assert settings.reranker_api_key is None

@@ -65,6 +65,14 @@ class _SessionRetriever:
         )
 
 
+class _UnavailableReranker:
+    model_name = "external-reranker"
+    model_revision = "unavailable"
+
+    async def rerank(self, requirement_text, candidates):
+        raise RuntimeError("service unavailable")
+
+
 def _session_factory() -> sessionmaker:
     engine = create_engine(
         "sqlite://",
@@ -273,5 +281,38 @@ def test_pipeline_persists_blocker_when_no_evidence_is_retrieved() -> None:
             assert aggregate.eligibility_status == "ineligible"
             assert aggregate.blocker_count == 1
             assert session.scalar(select(ApplicationMatchResultRow)) is not None
+
+    asyncio.run(run())
+
+
+def test_pipeline_uses_hybrid_score_when_reranker_is_unavailable() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            application = _application(session)
+            pipeline = MatchingPipeline(
+                session,
+                _vacancy_extractor(application.vacancy_id),
+                _candidate_extraction(application.selected_cv_file_id or ""),
+                _SessionRetriever(session),
+                _UnavailableReranker(),
+                DeterministicMatchScorer(),
+            )
+
+            aggregate = await pipeline.match(
+                application.id,
+                vacancy_source_text="Production Python experience is required.",
+                cv_source_text="Built production Python services",
+            )
+
+            requirement_match = session.scalar(select(RequirementMatchRow))
+            assert aggregate.status == "scored"
+            assert requirement_match is not None
+            assert requirement_match.hybrid_score == 1
+            assert requirement_match.reranker_score is None
+            assert (
+                requirement_match.retrieval_model_versions_json["reranker"]["status"]
+                == "reranker_unavailable"
+            )
 
     asyncio.run(run())

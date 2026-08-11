@@ -23,7 +23,7 @@ from app.matching.scoring import (
     MatchLevel,
     RequirementAssessment,
 )
-from app.matching.semantic import Reranker, RetrievalCandidate
+from app.matching.semantic import RerankedCandidate, Reranker, RetrievalCandidate
 from app.observability.metrics import metrics
 from app.storage.tables import (
     ApplicationMatchResultRow,
@@ -352,7 +352,32 @@ class MatchingPipeline:
         )
         metrics.set_gauge("reranker_candidates_per_requirement", float(len(candidates)))
         reranker_started = time.perf_counter()
-        reranked = await self._reranker.rerank(requirement.normalized_text, candidates)
+        reranker_available = True
+        try:
+            reranked = await self._reranker.rerank(requirement.normalized_text, candidates)
+        except Exception as error:
+            if not self._fallback_enabled:
+                raise
+            reranker_available = False
+            metrics.increment("reranker_unavailable_total")
+            logger.warning(
+                "reranker_unavailable",
+                application_id=application.id,
+                requirement_id=requirement.id,
+                failure_type=type(error).__name__,
+            )
+            reranked = tuple(
+                RerankedCandidate(
+                    candidate=candidate,
+                    raw_score=candidate.hybrid_score,
+                    normalized_score=candidate.hybrid_score,
+                )
+                for candidate in sorted(
+                    candidates,
+                    key=lambda item: (item.hybrid_score, item.evidence_id),
+                    reverse=True,
+                )
+            )
         metrics.observe(
             "reranker_duration_seconds",
             time.perf_counter() - reranker_started,
@@ -369,9 +394,7 @@ class MatchingPipeline:
             is_blocker=requirement.is_blocker,
         )
         final_match_score = (
-            round(100 * best_candidate.normalized_score, 4)
-            if best_candidate is not None
-            else 0.0
+            round(100 * best_candidate.normalized_score, 4) if best_candidate is not None else 0.0
         )
         self._session.add(
             RequirementMatchRow(
@@ -379,9 +402,7 @@ class MatchingPipeline:
                 requirement_id=requirement.id,
                 evidence_id=evidence.id if evidence is not None else None,
                 lexical_score=(
-                    best_candidate.candidate.lexical_score
-                    if best_candidate is not None
-                    else None
+                    best_candidate.candidate.lexical_score if best_candidate is not None else None
                 ),
                 dense_score=(
                     best_candidate.candidate.dense_score if best_candidate is not None else None
@@ -389,9 +410,15 @@ class MatchingPipeline:
                 hybrid_score=(
                     best_candidate.candidate.hybrid_score if best_candidate is not None else None
                 ),
-                reranker_raw_score=best_candidate.raw_score if best_candidate is not None else None,
+                reranker_raw_score=(
+                    best_candidate.raw_score
+                    if best_candidate is not None and reranker_available
+                    else None
+                ),
                 reranker_score=(
-                    best_candidate.normalized_score if best_candidate is not None else None
+                    best_candidate.normalized_score
+                    if best_candidate is not None and reranker_available
+                    else None
                 ),
                 final_match_score=final_match_score,
                 match_level=match_level.value,
@@ -400,6 +427,7 @@ class MatchingPipeline:
                     "reranker": {
                         "name": self._reranker.model_name,
                         "revision": self._reranker.model_revision,
+                        "status": ("available" if reranker_available else "reranker_unavailable"),
                     }
                 },
             )

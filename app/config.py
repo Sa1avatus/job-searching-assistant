@@ -32,7 +32,10 @@ class Settings(BaseSettings):
     matching_v2_shadow_mode: bool = True
     matching_v2_fallback_enabled: bool = True
     matching_model_service_url: str = "http://localhost:8090"
+    embedding_service_url: str | None = None
     matching_model_timeout_seconds: float = Field(default=120, ge=1, le=600)
+    reranker_service_url: str | None = None
+    reranker_api_key: SecretStr | None = None
     worker_lease_seconds: int = Field(default=120, ge=10, le=3600)
     worker_poll_seconds: float = Field(default=2.0, ge=0.1, le=60)
     worker_retry_seconds: int = Field(default=30, ge=1, le=3600)
@@ -74,11 +77,22 @@ class Settings(BaseSettings):
         "api_clients_json",
         "hh_access_token",
         "browser_state_encryption_key",
+        "reranker_api_key",
         mode="before",
     )
     @classmethod
     def empty_secret_is_none(cls, value: object) -> object:
         return None if value == "" else value
+
+    @field_validator("embedding_service_url", "reranker_service_url", mode="before")
+    @classmethod
+    def empty_service_url_is_none(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @property
+    def resolved_embedding_service_url(self) -> str:
+        """Resolve the legacy matching URL only for the embedding service migration."""
+        return self.embedding_service_url or self.matching_model_service_url
 
     @field_validator(
         "opensearch_evidence_index_prefix",
@@ -87,8 +101,12 @@ class Settings(BaseSettings):
     )
     @classmethod
     def validate_opensearch_name(cls, value: str) -> str:
-        if not value or value != value.casefold() or any(
-            character in value for character in (" ", "\\", "/", "*", "?", '"', "<", ">", "|")
+        if (
+            not value
+            or value != value.casefold()
+            or any(
+                character in value for character in (" ", "\\", "/", "*", "?", '"', "<", ">", "|")
+            )
         ):
             raise ValueError("OpenSearch index and alias names must be lowercase and path-safe")
         return value

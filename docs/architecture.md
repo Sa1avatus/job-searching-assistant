@@ -76,9 +76,10 @@ evaluated rollout.
 ## Runtime topology
 
 Docker Compose defines PostgreSQL, Redis, OpenSearch, API, dispatcher, retention, an opt-in browser
-worker, and an opt-in GPU matching-model service. API and infrastructure ports are published on
-loopback. The API image includes the visible local browser used to capture site sessions; the
-browser worker owns background automation.
+worker, and an opt-in GPU embedding service. API and infrastructure ports are published on
+loopback. The independent reranker is configured as an external HTTP dependency and is not owned
+or started by JSA Compose. The API image includes the visible local browser used to capture site
+sessions; the browser worker owns background automation.
 
 The shared external Docker network `local-code-worker-network` lets the application reach the local
 Worker's OpenAI-compatible endpoint. `scripts/setup.ps1` ensures the network exists without

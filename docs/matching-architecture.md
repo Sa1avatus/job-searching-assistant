@@ -23,7 +23,9 @@ source-grounded inputs but never choose the final score.
 - `app/matching/scoring.py` applies deterministic weights, blockers, eligibility, and score caps.
 - `app/matching/pipeline.py` coordinates stages and persists the result.
 - `app/matching/jobs.py` and `backfill.py` provide durable, idempotent execution.
-- `ml_service/` is the optional embedding/reranking HTTP service; ordinary tests use fakes.
+- `ml_service/` remains the optional embedding HTTP service. Reranking can be delegated to the
+  independent sibling `reranker-service` through its bearer-authenticated public API; ordinary
+  tests use contract-accurate fakes.
 
 ## Run lifecycle and idempotency
 
@@ -52,6 +54,8 @@ creating duplicates.
 - Embedding failure falls back to lexical retrieval.
 - OpenSearch failure falls back to a bounded PostgreSQL lexical scan without mutating business data.
 - Reranker failure uses normalized hybrid scores with a conservative cap.
+- Missing independent reranker configuration performs no network call and follows the same
+  conservative hybrid-score fallback.
 - A failed shadow calculation does not block the existing discovery/application path.
 
 `applications.match_score` retains its legacy meaning in shadow mode. When v2 is deliberately
