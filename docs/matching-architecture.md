@@ -6,7 +6,7 @@ relationship between legacy and v2 results.
 The pipeline is:
 
 ```text
-structured extraction -> evidence indexing -> hybrid retrieval -> reranking -> deterministic scoring
+structured extraction -> hard relevance gate -> evidence indexing -> hybrid retrieval -> reranking -> deterministic scoring
 ```
 
 PostgreSQL owns requirements, candidate evidence, embedding metadata, per-requirement matches, and
@@ -17,6 +17,10 @@ source-grounded inputs but never choose the final score.
 
 - `app/matching/extraction.py` and `model_extractors.py` produce versioned vacancy requirements and
   candidate evidence.
+- `app/matching/relevance.py` rejects only explicit typed contradictions before indexing and model
+  ranking. Missing or unknown typed evidence is reviewable and never becomes an automatic reject.
+  Every aggregate explanation records the gate decision; rejected results also record stable reason
+  codes and the affected requirement identifiers.
 - `app/matching/indexing.py` and `opensearch_index.py` own evidence projection and aliases.
 - `app/matching/retrieval.py` fuses bounded lexical and dense candidates with mandatory user and
   resume filters.
@@ -41,6 +45,8 @@ creating duplicates.
 
 - Required requirements outweigh preferred and optional requirements.
 - A hard blocker sets ineligibility and caps the score regardless of semantic similarity.
+- An explicit incompatible role family or known authorization contradiction stops before indexing,
+  retrieval, and reranking and persists stable reason codes in the aggregate explanation.
 - Conceptual evidence cannot become hands-on or production evidence.
 - Related evidence receives a lower capped contribution.
 - Missing work authorization cannot be compensated by another skill category.

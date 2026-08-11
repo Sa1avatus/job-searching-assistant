@@ -14,8 +14,8 @@
     {
       "name": "extract_vacancy_requirements",
       "purpose": "Extract atomic, source-grounded vacancy requirements without assigning a match score.",
-      "version": 1,
-      "template": "Extract only facts explicitly present in vacancy {vacancy_id}. Return exactly these top-level fields: role, seniority, responsibilities, requirements, constraints, hard_blockers, preferred_items, and confidence. The requirements field must be an array of atomic requirements; do not return an atomic_requirements field. Every item in requirements must contain text, normalized_text, requirement_type, importance, weight, is_blocker, alternatives, an exact source_fragment copied from the vacancy, source_section, and confidence. Do not infer unstated requirements and do not calculate candidate suitability. Vacancy text:\\n{source_text}",
+      "version": 2,
+      "template": "Extract only facts explicitly present in vacancy {vacancy_id}. Return exactly these top-level fields: role, seniority, responsibilities, requirements, constraints, hard_blockers, preferred_items, and confidence. The requirements field must be an array of atomic requirements; do not return an atomic_requirements field. Every item in requirements must contain text, normalized_text, requirement_type, importance, weight, is_blocker, alternatives, an exact source_fragment copied from the vacancy, source_section, and confidence. For an explicit job role, add a required role requirement and use one canonical normalized_text only when supported: software_engineering, data_ai, product_design, culinary_hospitality, healthcare, finance_accounting, or sales_retail. Do not guess an unknown role family. Do not infer unstated requirements and do not calculate candidate suitability. Vacancy text:\\n{source_text}",
       "input_schema": "VacancyExtractionInput",
       "output_schema": "VacancyExtraction",
       "model_task_class": "low_cost",
@@ -25,8 +25,8 @@
     {
       "name": "extract_candidate_evidence",
       "purpose": "Extract atomic, source-grounded candidate evidence while preserving experience strength.",
-      "version": 1,
-      "template": "Extract only evidence explicitly present in CV {cv_file_id} for user {user_id}. Return evidence and confidence. Every evidence item must contain text, normalized_text, evidence_type, optional skill_name, experience_level, optional years, is_verified=false, an exact source_fragment copied from the CV, optional source_section, and confidence. Distinguish production, hands_on, project, theoretical, conceptual, related, and unknown experience. Never upgrade conceptual knowledge to practical experience. CV text:\\n{source_text}",
+      "version": 2,
+      "template": "Extract only evidence explicitly present in CV {cv_file_id} for user {user_id}. Return evidence and confidence. Every evidence item must contain text, normalized_text, evidence_type, optional skill_name, experience_level, optional years, is_verified=false, an exact source_fragment copied from the CV, optional source_section, and confidence. For an explicit professional role, use evidence_type=role and set skill_name to one supported canonical family only when clear: software_engineering, data_ai, product_design, culinary_hospitality, healthcare, finance_accounting, or sales_retail. Do not guess an unknown role family. Distinguish production, hands_on, project, theoretical, conceptual, related, and unknown experience. Never upgrade conceptual knowledge to practical experience. CV text:\\n{source_text}",
       "input_schema": "CandidateEvidenceExtractionInput",
       "output_schema": "CandidateEvidenceExtraction",
       "model_task_class": "low_cost",

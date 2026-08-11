@@ -41,6 +41,8 @@ class ExperienceLevel(StrEnum):
 
 
 class EvidenceType(StrEnum):
+    ROLE = "role"
+    SENIORITY = "seniority"
     WORK_EXPERIENCE = "work_experience"
     PROJECT_EXPERIENCE = "project_experience"
     SKILL_STATEMENT = "skill_statement"

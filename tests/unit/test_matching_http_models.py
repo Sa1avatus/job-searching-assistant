@@ -34,7 +34,8 @@ class _ContractRerankRequest(BaseModel):
 
 class _ContractResult(BaseModel):
     id: str
-    score: float = Field(ge=0, le=1)
+    score: float
+    normalized_score: float | None = Field(default=None, ge=0, le=1)
     rank: int = Field(ge=1)
     text: str | None = None
     metadata: dict[str, Any] | None = None
@@ -55,6 +56,11 @@ class _ContractRerankResponse(BaseModel):
     model: str
     model_revision: str
     device: str
+    requested_revision: str
+    resolved_revision: str
+    backend: str
+    rerank_mode: str
+    active_provider: str
     results: list[_ContractResult]
     usage: _ContractUsage
 
@@ -131,9 +137,14 @@ def test_http_reranker_preserves_raw_scores_and_orders_normalized_scores() -> No
                 "model": "BAAI/bge-reranker-v2-m3",
                 "model_revision": "revision-2",
                 "device": "cpu",
+                "requested_revision": "main",
+                "resolved_revision": "revision-2",
+                "backend": "onnx_pairwise",
+                "rerank_mode": "pairwise",
+                "active_provider": "CPUExecutionProvider",
                 "results": [
-                    {"id": "b", "score": 0.9, "rank": 1},
-                    {"id": "a", "score": 0.2, "rank": 2},
+                    {"id": "b", "score": 7.0, "normalized_score": 0.9, "rank": 1},
+                    {"id": "a", "score": -2.0, "normalized_score": 0.2, "rank": 2},
                 ],
                 "usage": {
                     "documents_received": 2,
@@ -158,7 +169,8 @@ def test_http_reranker_preserves_raw_scores_and_orders_normalized_scores() -> No
             result = await reranker.rerank("Requirement", candidates)
 
         assert [item.candidate.evidence_id for item in result] == ["b", "a"]
-        assert result[0].raw_score == 0.9
+        assert result[0].raw_score == 7.0
+        assert result[0].normalized_score == 0.9
         assert reranker.model_revision == "revision-2"
 
     asyncio.run(run())
@@ -193,6 +205,41 @@ def test_http_reranker_rejects_response_with_unknown_evidence_id() -> None:
                     "Requirement",
                     (RetrievalCandidate("a", "Evidence", 1, 1, 1),),
                 )
+
+    asyncio.run(run())
+
+
+def test_http_reranker_rejects_unbounded_score_without_normalized_score() -> None:
+    async def run() -> None:
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "request_id": "123e4567-e89b-12d3-a456-426614174000",
+                    "model": "test-reranker",
+                    "model_revision": "1",
+                    "device": "cpu",
+                    "results": [{"id": "a", "score": 7.0, "rank": 1}],
+                    "usage": {
+                        "documents_received": 1,
+                        "documents_scored": 1,
+                        "cache_hits": 0,
+                        "latency_ms": 1,
+                    },
+                },
+            )
+        )
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://reranker.test",
+        ) as client:
+            with pytest.raises(MatchingModelServiceError) as captured:
+                await HttpReranker(client, api_key=SecretStr("test-secret")).rerank(
+                    "Requirement",
+                    (RetrievalCandidate("a", "Evidence", 1, 1, 1),),
+                )
+
+        assert captured.value.code == "contract_mismatch"
 
     asyncio.run(run())
 

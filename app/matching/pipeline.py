@@ -12,10 +12,18 @@ from sqlalchemy.orm import Session
 
 from app.matching.extraction import (
     CandidateEvidenceExtractor,
+    EvidenceType,
     ExperienceLevel,
     RequirementImportance,
     RequirementType,
     VacancyRequirementExtractor,
+)
+from app.matching.relevance import (
+    HardRelevanceGate,
+    RelevanceDecision,
+    RelevanceEvidence,
+    RelevanceRequirement,
+    RelevanceResult,
 )
 from app.matching.scoring import (
     DeterministicMatchScorer,
@@ -71,6 +79,7 @@ class MatchingPipeline:
         scorer: DeterministicMatchScorer,
         *,
         evidence_indexer: EvidenceIndexer | None = None,
+        relevance_gate: HardRelevanceGate | None = None,
         shadow_mode: bool = True,
         fallback_enabled: bool = True,
     ) -> None:
@@ -81,6 +90,7 @@ class MatchingPipeline:
         self._reranker = reranker
         self._scorer = scorer
         self._evidence_indexer = evidence_indexer
+        self._relevance_gate = relevance_gate or HardRelevanceGate()
         self._shadow_mode = shadow_mode
         self._fallback_enabled = fallback_enabled
 
@@ -121,6 +131,34 @@ class MatchingPipeline:
             metrics.observe("extraction_duration_seconds", extraction_duration)
             metrics.set_gauge("requirements_per_vacancy", float(len(requirement_rows)))
             self._session.flush()
+            self._session.execute(
+                delete(RequirementMatchRow).where(
+                    RequirementMatchRow.application_id == application.id
+                )
+            )
+            relevance = self._evaluate_relevance(requirement_rows, evidence_rows)
+            if relevance.decision is RelevanceDecision.REJECT:
+                aggregate = self._store_rejected_aggregate(
+                    application,
+                    cv_file,
+                    requirement_rows,
+                    relevance,
+                )
+                if not self._shadow_mode:
+                    application.match_score = round(aggregate.final_score)
+                aggregate.status = "scored"
+                self._session.commit()
+                metrics.increment("matching_runs_total")
+                metrics.increment("hard_relevance_rejections_total")
+                metrics.observe("matching_duration_seconds", time.perf_counter() - total_started)
+                logger.info(
+                    "matching_run_rejected_by_hard_relevance_gate",
+                    run_id=run_id,
+                    application_id=application.id,
+                    vacancy_id=vacancy.id,
+                    reason_codes=[reason.value for reason in relevance.reasons],
+                )
+                return aggregate
             if self._evidence_indexer is not None:
                 self._set_status(application.id, "indexing")
                 indexing_started = time.perf_counter()
@@ -132,11 +170,6 @@ class MatchingPipeline:
                 metrics.observe("embedding_duration_seconds", indexing_duration)
                 metrics.set_gauge("evidence_index_size", float(len(evidence_rows)))
             self._set_status(application.id, "retrieving")
-            self._session.execute(
-                delete(RequirementMatchRow).where(
-                    RequirementMatchRow.application_id == application.id
-                )
-            )
             self._set_status(application.id, "reranking")
             assessments = []
             for requirement in requirement_rows:
@@ -147,6 +180,7 @@ class MatchingPipeline:
                 application,
                 cv_file,
                 deterministic_score,
+                relevance=relevance,
             )
             if not self._shadow_mode:
                 application.match_score = deterministic_score.final_score
@@ -334,6 +368,75 @@ class MatchingPipeline:
         self._session.add_all(rows)
         return rows
 
+    def _evaluate_relevance(
+        self,
+        requirements: tuple[VacancyRequirementRow, ...],
+        evidence: tuple[CandidateEvidenceRow, ...],
+    ) -> RelevanceResult:
+        gate_types = {
+            RequirementType.ROLE,
+            RequirementType.SENIORITY,
+            RequirementType.LANGUAGE,
+            RequirementType.LOCATION,
+            RequirementType.WORK_AUTHORIZATION,
+        }
+        evidence_type_map = {
+            EvidenceType.ROLE: RequirementType.ROLE,
+            EvidenceType.SENIORITY: RequirementType.SENIORITY,
+            EvidenceType.LANGUAGE: RequirementType.LANGUAGE,
+            EvidenceType.LOCATION: RequirementType.LOCATION,
+            EvidenceType.AUTHORIZATION: RequirementType.WORK_AUTHORIZATION,
+        }
+        typed_requirements = tuple(
+            RelevanceRequirement(
+                requirement_id=row.id,
+                requirement_type=requirement_type,
+                importance=RequirementImportance(row.importance),
+                canonical_value=row.normalized_text,
+                is_blocker=row.is_blocker,
+            )
+            for row in requirements
+            if (requirement_type := RequirementType(row.requirement_type)) in gate_types
+        )
+        typed_evidence: list[RelevanceEvidence] = []
+        for row in evidence:
+            mapped_requirement_type = evidence_type_map.get(EvidenceType(row.evidence_type))
+            if mapped_requirement_type is None:
+                continue
+            typed_evidence.append(
+                RelevanceEvidence(
+                    requirement_type=mapped_requirement_type,
+                    canonical_value=row.skill_name or row.normalized_text,
+                )
+            )
+        return self._relevance_gate.evaluate(typed_requirements, tuple(typed_evidence))
+
+    def _store_rejected_aggregate(
+        self,
+        application: ApplicationRow,
+        cv_file: CvFileRow,
+        requirements: tuple[VacancyRequirementRow, ...],
+        relevance: RelevanceResult,
+    ) -> ApplicationMatchResultRow:
+        rejected_ids = set(relevance.rejected_requirement_ids)
+        assessments = tuple(
+            RequirementAssessment(
+                requirement_id=row.id,
+                requirement_type=RequirementType(row.requirement_type),
+                importance=RequirementImportance(row.importance),
+                weight=row.weight,
+                is_blocker=row.is_blocker or row.id in rejected_ids,
+                match_level=(MatchLevel.BLOCKER if row.id in rejected_ids else MatchLevel.MISSING),
+            )
+            for row in requirements
+        )
+        return self._store_aggregate(
+            application,
+            cv_file,
+            self._scorer.score(assessments),
+            relevance=relevance,
+        )
+
     async def _match_requirement(
         self,
         application: ApplicationRow,
@@ -449,6 +552,8 @@ class MatchingPipeline:
         application: ApplicationRow,
         cv_file: CvFileRow,
         score: DeterministicScore,
+        *,
+        relevance: RelevanceResult | None = None,
     ) -> ApplicationMatchResultRow:
         aggregate = self._session.get(ApplicationMatchResultRow, application.id)
         if aggregate is None:
@@ -483,7 +588,20 @@ class MatchingPipeline:
                 "revision": self._reranker.model_revision,
             },
         }
-        aggregate.explanation_json = {"summary": list(score.explanation)}
+        aggregate.explanation_json = {
+            "summary": list(score.explanation),
+            **(
+                {
+                    "hard_gate": {
+                        "decision": relevance.decision.value,
+                        "reason_codes": [reason.value for reason in relevance.reasons],
+                        "rejected_requirement_ids": list(relevance.rejected_requirement_ids),
+                    }
+                }
+                if relevance is not None
+                else {}
+            ),
+        }
         aggregate.calculated_at = datetime.now(UTC)
         return aggregate
 

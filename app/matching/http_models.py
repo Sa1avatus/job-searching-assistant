@@ -32,7 +32,8 @@ class _EmbeddingResponse(_StrictResponse):
 
 class _RerankResult(_StrictResponse):
     id: str
-    score: float = Field(ge=0, le=1)
+    score: float
+    normalized_score: float | None = Field(default=None, ge=0, le=1)
     rank: int = Field(ge=1)
     text: str | None = None
     metadata: dict[str, object] | None = None
@@ -53,6 +54,11 @@ class _RerankResponse(_StrictResponse):
     model: str
     model_revision: str
     device: str
+    requested_revision: str | None = None
+    resolved_revision: str | None = None
+    backend: str | None = None
+    rerank_mode: str | None = None
+    active_provider: str | None = None
     results: list[_RerankResult]
     usage: _RerankUsage
 
@@ -165,13 +171,24 @@ class HttpReranker:
         if actual_ids != expected_ids:
             raise MatchingModelServiceError("Reranker response evidence IDs do not match request")
         self.model_name = payload.model
-        self.model_revision = payload.model_revision
+        self.model_revision = payload.resolved_revision or payload.model_revision
+        normalized_by_id: dict[str, float] = {}
+        for result in payload.results:
+            normalized = result.normalized_score
+            if normalized is None and 0 <= result.score <= 1:
+                normalized = result.score
+            if normalized is None:
+                raise MatchingModelServiceError(
+                    "Reranker returned an unbounded score without normalized_score",
+                    code="contract_mismatch",
+                )
+            normalized_by_id[result.id] = normalized
         reranked = tuple(
             (
                 RerankedCandidate(
                     candidate=candidate_by_id[result.id],
                     raw_score=result.score,
-                    normalized_score=result.score,
+                    normalized_score=normalized_by_id[result.id],
                 ),
                 result.rank,
             )

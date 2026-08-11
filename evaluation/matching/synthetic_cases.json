@@ -20,6 +20,16 @@
     "reviewer_notes": "Lexical overlap must not imply role fit."
   },
   {
+    "id": "sous-chef-vs-software-engineer",
+    "vacancy": "Sous Chef required to lead kitchen preparation and service.",
+    "candidate_profile": "Software engineer building production Python services.",
+    "expected_eligibility": false,
+    "expected_score_range": [0, 20],
+    "expected_matched_requirements": [],
+    "expected_missing_requirements": ["culinary_hospitality"],
+    "reviewer_notes": "Explicit cross-family role mismatch must be rejected before retrieval and reranking."
+  },
+  {
     "id": "kubernetes-hands-on",
     "vacancy": "Hands-on Kubernetes production operations are required.",
     "candidate_profile": "Operated Kubernetes clusters, deployments and incident response in production.",
