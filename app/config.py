@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     matching_model_timeout_seconds: float = Field(default=120, ge=1, le=600)
     reranker_service_url: str | None = None
     reranker_api_key: SecretStr | None = None
+    rag_service_url: str | None = None
+    rag_api_key: SecretStr | None = None
+    rag_project_id: str | None = None
+    rag_collection: str = "default"
+    rag_timeout_seconds: float = Field(default=30, ge=1, le=300)
+    rag_enabled: bool = False
     worker_lease_seconds: int = Field(default=120, ge=10, le=3600)
     worker_poll_seconds: float = Field(default=2.0, ge=0.1, le=60)
     worker_retry_seconds: int = Field(default=30, ge=1, le=3600)
@@ -78,13 +84,16 @@ class Settings(BaseSettings):
         "hh_access_token",
         "browser_state_encryption_key",
         "reranker_api_key",
+        "rag_api_key",
         mode="before",
     )
     @classmethod
     def empty_secret_is_none(cls, value: object) -> object:
         return None if value == "" else value
 
-    @field_validator("embedding_service_url", "reranker_service_url", mode="before")
+    @field_validator(
+        "embedding_service_url", "reranker_service_url", "rag_service_url", mode="before"
+    )
     @classmethod
     def empty_service_url_is_none(cls, value: object) -> object:
         return None if value == "" else value
