@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     opensearch_evidence_index_prefix: str = "candidate-evidence"
     opensearch_evidence_read_alias: str = "candidate-evidence-read"
     opensearch_evidence_write_alias: str = "candidate-evidence-write"
-    embedding_dimensions: int = Field(default=1024, ge=1, le=65_536)
+    embedding_dimensions: int = Field(default=384, ge=1, le=65_536)
     matching_v2_enabled: bool = False
     matching_v2_shadow_mode: bool = True
     matching_v2_fallback_enabled: bool = True

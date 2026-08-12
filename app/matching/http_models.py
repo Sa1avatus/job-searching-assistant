@@ -68,9 +68,9 @@ class HttpEmbeddingClient:
         self,
         http_client: httpx.AsyncClient,
         *,
-        model_name: str = "BAAI/bge-m3",
+        model_name: str = "intfloat/multilingual-e5-small",
         model_revision: str = "main",
-        dimensions: int = 1024,
+        dimensions: int = 384,
     ) -> None:
         self._http_client = http_client
         self.model_name = model_name
