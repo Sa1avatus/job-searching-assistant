@@ -2183,6 +2183,29 @@ async def discover_vacancies_stream(
                         }
                     )
 
+            # Ingest vacancy into RAG service
+            if settings.rag_enabled:
+                try:
+                    from app.matching.rag_client import create_rag_client
+                    from app.services.vacancy_rag_ingestion import VacancyRagIngestionService
+
+                    rag = create_rag_client(
+                        service_url=settings.rag_service_url,
+                        api_key=settings.rag_api_key.get_secret_value() if settings.rag_api_key else None,
+                        project_id=settings.rag_project_id,
+                        collection=settings.rag_collection,
+                        timeout_seconds=settings.rag_timeout_seconds,
+                        enabled=True,
+                    )
+                    with SessionFactory() as rag_session:
+                        app_row = rag_session.get(ApplicationRow, application_id)
+                        if app_row is not None:
+                            await VacancyRagIngestionService(rag_session, rag).ingest_vacancy(
+                                app_row.vacancy_id,
+                            )
+                except Exception:  # noqa: BLE001 - RAG ingestion failure must not block search
+                    pass
+
             try:
                 async with httpx.AsyncClient(
                     timeout=60, follow_redirects=False, trust_env=False
