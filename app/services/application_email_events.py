@@ -30,9 +30,12 @@ class ApplicationEmailEventService:
         self,
         session: Session,
         timeline: ApplicationTimelineService | None = None,
+        *,
+        auto_update_enabled: bool = True,
     ) -> None:
         self._session = session
         self._timeline = timeline or ApplicationTimelineService(session)
+        self._auto_update_enabled = auto_update_enabled
 
     def ingest(
         self,
@@ -107,6 +110,8 @@ class ApplicationEmailEventService:
 
     def _apply_outcome(self, event: ApplicationEmailEventRow) -> bool:
         if event.status_applied or event.application_id is None:
+            return False
+        if not self._auto_update_enabled:
             return False
         application_status = _APPLICATION_STATUS_BY_OUTCOME.get(event.outcome)
         if application_status is None:

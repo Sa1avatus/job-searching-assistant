@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 from app.services.application_email_events import ApplicationEmailEventService
 from app.services.recruitment import EntityNotFoundError
@@ -218,5 +219,51 @@ def test_ingest_does_not_apply_unknown_outcome() -> None:
             assert result.event.outcome == "unknown"
             assert result.event.status_applied is False
             assert session.get(ApplicationRow, "application-1").status == "submitted"
+    finally:
+        engine.dispose()
+
+
+def test_ingest_does_not_auto_update_when_disabled() -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    try:
+        with Session(engine) as session:
+            session.add(UserRow(id="user-1", display_name="Test"))
+            session.add(
+                VacancyRow(
+                    id="vacancy-1",
+                    source_url="https://example.test/jobs/auto",
+                    title="Engineer",
+                    company="Example",
+                )
+            )
+            session.add(
+                ApplicationRow(
+                    id="app-auto",
+                    user_id="user-1",
+                    vacancy_id="vacancy-1",
+                    status="submitted",
+                    match_score=80,
+                )
+            )
+            session.commit()
+
+            service = ApplicationEmailEventService(
+                session, auto_update_enabled=False
+            )
+            result = service.ingest(
+                "user-1",
+                "Rejection",
+                "Unfortunately, we will not be moving forward.",
+                application_id="app-auto",
+            )
+
+            assert result.event.outcome == "rejected"
+            assert result.event.status_applied is False
+            assert session.get(ApplicationRow, "app-auto").status == "submitted"
     finally:
         engine.dispose()
