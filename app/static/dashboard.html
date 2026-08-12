@@ -572,6 +572,9 @@
       <textarea id="greenhouse-boards" placeholder="По одной ссылке на строку, например https://boards.greenhouse.io/company. Если оставить пустым, используются Greenhouse-доски из уже сохранённых вакансий."></textarea>
       <button id="search" type="button" class="primary">Найти вакансии</button>
       <button id="rerank-all" type="button" style="margin-left:8px;">Переранжировать</button>
+      <label style="margin-left:12px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
+        <input type="checkbox" id="direct-rerank"> Сразу в реранкер
+      </label>
       <div id="reranker-model-info" class="hint" style="margin-top:8px;"></div>
     </section>
 
@@ -3437,6 +3440,11 @@
           return;
         }
         showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
+        // Auto-rerank if checkbox is checked
+        if (document.querySelector('#direct-rerank')?.checked && outcomes.length > 0) {
+          await new Promise(r => setTimeout(r, 500));
+          document.querySelector('#rerank-all').click();
+        }
       } catch (error) { showError(error); }
     });
     async function loadRerankerModelInfo() {

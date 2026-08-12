@@ -2194,18 +2194,22 @@ async def discover_vacancies_stream(
                         service_url=settings.rag_service_url,
                         api_key=settings.rag_api_key.get_secret_value() if settings.rag_api_key else None,
                         project_id=settings.rag_project_id,
-                        collection=settings.rag_collection,
+                        collection="vacancies",
                         timeout_seconds=settings.rag_timeout_seconds,
                         enabled=True,
                     )
                     with SessionFactory() as rag_session:
                         app_row = rag_session.get(ApplicationRow, application_id)
                         if app_row is not None:
-                            await VacancyRagIngestionService(rag_session, rag).ingest_vacancy(
+                            result = await VacancyRagIngestionService(rag_session, rag).ingest_vacancy(
                                 app_row.vacancy_id,
                             )
-                except Exception:  # noqa: BLE001 - RAG ingestion failure must not block search
-                    pass
+                            if result:
+                                logger.info("rag_vacancy_ingested", application_id=application_id, document_id=result.document_id, status=result.status)
+                            else:
+                                logger.warning("rag_vacancy_ingest_skipped", application_id=application_id)
+                except Exception as rag_error:  # noqa: BLE001 - RAG ingestion failure must not block search
+                    logger.warning("rag_ingestion_failed", application_id=application_id, error=str(rag_error)[:200])
 
             try:
                 async with httpx.AsyncClient(
