@@ -176,6 +176,7 @@ class MatchingPipeline:
                 assessment = await self._match_requirement(application, cv_file, requirement)
                 assessments.append(assessment)
             deterministic_score = self._scorer.score(tuple(assessments))
+            self._session.flush()
             aggregate = self._store_aggregate(
                 application,
                 cv_file,
@@ -570,10 +571,17 @@ class MatchingPipeline:
         aggregate.work_format_score = score.work_format_score
         aggregate.location_score = score.location_score
         aggregate.domain_score = score.domain_score
+        aggregate.language_score = score.language_score
         aggregate.blocker_count = score.blocker_count
         aggregate.matched_required_count = score.matched_required_count
         aggregate.missing_required_count = score.missing_required_count
         aggregate.scoring_version = score.scoring_version
+        semantic_similarity, reranker_score, requirements_match = (
+            self._compute_aggregate_scores(application.id, score)
+        )
+        aggregate.semantic_similarity = semantic_similarity
+        aggregate.reranker_score = reranker_score
+        aggregate.requirements_match = requirements_match
         aggregate.model_versions_json = {
             "vacancy_extractor": {
                 "name": self._vacancy_extractor.model_name,
@@ -604,6 +612,46 @@ class MatchingPipeline:
         }
         aggregate.calculated_at = datetime.now(UTC)
         return aggregate
+
+    def _compute_aggregate_scores(
+        self,
+        application_id: str,
+        score: DeterministicScore,
+    ) -> tuple[float, float, float]:
+        rows = self._session.execute(
+            select(
+                RequirementMatchRow.hybrid_score,
+                RequirementMatchRow.reranker_score,
+                VacancyRequirementRow.weight,
+            )
+            .join(
+                VacancyRequirementRow,
+                VacancyRequirementRow.id == RequirementMatchRow.requirement_id,
+            )
+            .where(RequirementMatchRow.application_id == application_id)
+        ).all()
+        total_weight = sum(row[2] for row in rows)
+        if total_weight == 0:
+            return (0.0, 0.0, 0.0)
+        semantic_similarity = (
+            sum((row[0] or 0.0) * row[2] for row in rows) / total_weight
+        )
+        reranker_scores = [(row[1] or 0.0) * row[2] for row in rows if row[1] is not None]
+        reranker_weights = [row[2] for row in rows if row[1] is not None]
+        reranker_score = (
+            sum(reranker_scores) / sum(reranker_weights) if reranker_weights else 0.0
+        )
+        total_required = score.matched_required_count + score.missing_required_count
+        requirements_match = (
+            (score.matched_required_count / total_required * 100)
+            if total_required > 0
+            else 100.0
+        )
+        return (
+            round(semantic_similarity, 4),
+            round(reranker_score, 4),
+            round(requirements_match, 1),
+        )
 
     @staticmethod
     def _classify_match(

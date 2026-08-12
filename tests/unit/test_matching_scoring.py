@@ -116,3 +116,34 @@ def test_zero_weight_input_returns_bounded_zero_score() -> None:
 
     assert score.final_score == 0
     assert score.eligibility_status is EligibilityStatus.ELIGIBLE
+
+
+def test_language_score_computed_from_language_requirements() -> None:
+    score = DeterministicMatchScorer().score(
+        (
+            _assessment(
+                "english",
+                requirement_type=RequirementType.LANGUAGE,
+                match_level=MatchLevel.EXACT,
+                experience_level=None,
+            ),
+            _assessment(
+                "german",
+                requirement_type=RequirementType.LANGUAGE,
+                importance=RequirementImportance.PREFERRED,
+                match_level=MatchLevel.PARTIAL,
+                experience_level=None,
+            ),
+        )
+    )
+
+    assert score.language_score == 82
+    assert score.eligibility_status is EligibilityStatus.ELIGIBLE
+
+
+def test_language_score_zero_when_no_language_requirements() -> None:
+    score = DeterministicMatchScorer().score(
+        (_assessment("python"),),
+    )
+
+    assert score.language_score == 0

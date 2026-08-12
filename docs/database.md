@@ -19,7 +19,7 @@ ORM declarations are in `app/storage/tables.py`. Engine and session construction
 
 ## Migration rules
 
-The committed linear history currently runs from revision `0001` through `0023`. Confirm the actual
+The committed linear history currently runs from revision `0001` through `0027`. Confirm the actual
 head instead of copying that number into a new migration:
 
 ```powershell

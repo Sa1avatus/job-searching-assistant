@@ -557,6 +557,22 @@ class ApplicationMatchResultRow(Base):
             "final_score >= 0 AND final_score <= 100",
             name="ck_application_match_results_final_range",
         ),
+        CheckConstraint(
+            "language_score >= 0 AND language_score <= 100",
+            name="ck_application_match_results_language_range",
+        ),
+        CheckConstraint(
+            "semantic_similarity >= 0 AND semantic_similarity <= 1",
+            name="ck_application_match_results_semantic_range",
+        ),
+        CheckConstraint(
+            "reranker_score >= 0 AND reranker_score <= 1",
+            name="ck_application_match_results_reranker_range",
+        ),
+        CheckConstraint(
+            "requirements_match >= 0 AND requirements_match <= 100",
+            name="ck_application_match_results_requirements_range",
+        ),
     )
 
     application_id: Mapped[str] = mapped_column(
@@ -577,6 +593,10 @@ class ApplicationMatchResultRow(Base):
     work_format_score: Mapped[float] = mapped_column(Float, default=0.0)
     location_score: Mapped[float] = mapped_column(Float, default=0.0)
     domain_score: Mapped[float] = mapped_column(Float, default=0.0)
+    language_score: Mapped[float] = mapped_column(Float, default=0.0)
+    semantic_similarity: Mapped[float] = mapped_column(Float, default=0.0)
+    reranker_score: Mapped[float] = mapped_column(Float, default=0.0)
+    requirements_match: Mapped[float] = mapped_column(Float, default=0.0)
     blocker_count: Mapped[int] = mapped_column(Integer, default=0)
     matched_required_count: Mapped[int] = mapped_column(Integer, default=0)
     missing_required_count: Mapped[int] = mapped_column(Integer, default=0)

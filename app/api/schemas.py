@@ -243,6 +243,10 @@ class ApplicationMatchDetailsResponse(BaseModel):
     work_format_score: float
     location_score: float
     domain_score: float
+    language_score: float
+    semantic_similarity: float
+    reranker_score: float
+    requirements_match: float
     blocker_count: int
     matched_required_count: int
     missing_required_count: int

@@ -128,6 +128,10 @@ def test_match_details_returns_explainable_shadow_result() -> None:
                     work_format_score=0,
                     location_score=0,
                     domain_score=0,
+                    language_score=0,
+                    semantic_similarity=0.85,
+                    reranker_score=0.9,
+                    requirements_match=100.0,
                     blocker_count=0,
                     matched_required_count=1,
                     missing_required_count=0,
@@ -152,6 +156,10 @@ def test_match_details_returns_explainable_shadow_result() -> None:
     payload = response.json()
     assert payload["legacy_match_score"] == 55
     assert payload["final_score"] == 90
+    assert payload["language_score"] == 0
+    assert payload["semantic_similarity"] == 0.85
+    assert payload["reranker_score"] == 0.9
+    assert payload["requirements_match"] == 100.0
     assert payload["requirements"][0]["match_level"] == "strong"
     assert payload["requirements"][0]["evidence_experience_level"] == "production"
 

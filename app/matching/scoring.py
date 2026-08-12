@@ -71,6 +71,7 @@ class DeterministicScore:
     work_format_score: int
     location_score: int
     domain_score: int
+    language_score: int
     blocker_count: int
     matched_required_count: int
     missing_required_count: int
@@ -169,6 +170,9 @@ class DeterministicMatchScorer:
             ),
             domain_score=self._component_score(
                 assessments, effective_level_by_requirement, RequirementType.DOMAIN
+            ),
+            language_score=self._component_score(
+                assessments, effective_level_by_requirement, RequirementType.LANGUAGE
             ),
             blocker_count=len(blocker_assessments),
             matched_required_count=matched_required_count,
