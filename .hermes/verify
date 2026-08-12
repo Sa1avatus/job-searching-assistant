@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Custom verify script for hermes verify
+# Uses the project's own .venv instead of the Hermes venv
+cd "$(dirname "$0")/.."
+export PATH="$(pwd)/.venv/Scripts:$PATH"
+export PYTHONPATH="$(pwd);$(pwd)/.venv/Lib/site-packages"
+pytest tests/ -q --tb=short
