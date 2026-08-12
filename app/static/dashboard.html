@@ -326,6 +326,7 @@
       <div class="filter-actions">
         <button id="apply-vacancy-filters" type="button" class="primary">Применить</button>
         <button id="reset-vacancy-filters" type="button">Сбросить</button>
+        <button id="rerank-filtered" type="button" style="margin-left:8px;">🔄 Переранжировать все</button>
       </div>
       <div id="vacancy-summary" class="task-state"></div>
       <div id="vacancy-list" class="vacancy-list"></div>
@@ -3034,6 +3035,40 @@
       const blacklist = element('button', 'Компания в чёрный список'); blacklist.type = 'button';
       blacklist.addEventListener('click', () => blacklistCompany(item.company, true).catch(showError));
       const detailsButton = element('button', 'Почему подходит'); detailsButton.type = 'button';
+      const rerankBtn = element('button', '🔄'); rerankBtn.type = 'button';
+      rerankBtn.title = currentLanguage === 'en' ? 'Re-rank this vacancy' : 'Переранжировать эту вакансию';
+      rerankBtn.style.cssText = 'padding:4px 8px;font-size:14px;';
+      rerankBtn.addEventListener('click', async () => {
+        rerankBtn.disabled = true;
+        rerankBtn.textContent = '…';
+        try {
+          const resp = await fetch(`/v1/applications/${item.application_id}/recalculate-match?force=true`, {
+            method: 'POST', headers: headers(false)
+          });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          // Poll for result
+          for (let i = 0; i < 30; i++) {
+            await new Promise(r => setTimeout(r, 1000));
+            const det = await fetch(`/v1/applications/${item.application_id}/match-details`, { headers: headers(false) });
+            if (det.ok) {
+              const data = await det.json();
+              if (data.status === 'scored' || data.status === 'degraded') {
+                const newScore = Math.round(data.final_score);
+                const meter = card.querySelector('.match-meter');
+                if (meter) meter.replaceWith(createMatchMeter(newScore));
+                card.dataset.matchScore = String(newScore);
+                break;
+              }
+            }
+          }
+          rerankBtn.textContent = '✓';
+          setTimeout(() => { rerankBtn.textContent = '🔄'; rerankBtn.disabled = false; }, 2000);
+        } catch (e) {
+          rerankBtn.textContent = '✗';
+          showError(e);
+          setTimeout(() => { rerankBtn.textContent = '🔄'; rerankBtn.disabled = false; }, 3000);
+        }
+      });
       const details = element('div', undefined, 'match-details'); details.hidden = true;
       detailsButton.addEventListener('click', () => {
         loadMatchDetails(item.application_id, details, detailsButton).catch(showError);
@@ -3041,7 +3076,7 @@
       if (!['submitted', 'interview'].includes(item.status)) {
         actions.append(reject, blacklist);
       }
-      actions.append(detailsButton, applicationLink, link);
+      actions.append(rerankBtn, detailsButton, applicationLink, link);
       const statusEditor = createStatusEditor(item, 'status', async () => {
         await loadSavedVacancies(vacancyPage);
         restoreSearchResults();
@@ -3303,6 +3338,58 @@
       document.querySelector('#vacancy-work-format').value = 'all';
       document.querySelector('#vacancy-employment-type').value = 'all';
       vacancyPage = 1; loadSavedVacancies().catch(showError);
+    });
+    document.querySelector('#rerank-filtered').addEventListener('click', async () => {
+      const btn = document.querySelector('#rerank-filtered');
+      btn.disabled = true;
+      try {
+        // Load all vacancies matching current filters
+        const params = new URLSearchParams({
+          query: document.querySelector('#vacancy-query').value.trim(),
+          source: document.querySelector('#vacancy-source').value,
+          status_filter: document.querySelector('#vacancy-status').value,
+          location: document.querySelector('#vacancy-location').value.trim(),
+          min_match_score: document.querySelector('#vacancy-score').value || '0',
+          work_format: document.querySelector('#vacancy-work-format').value,
+          employment_type: document.querySelector('#vacancy-employment-type').value,
+          page: '1',
+          page_size: '500'
+        });
+        const publishedFrom = document.querySelector('#vacancy-published-from').value;
+        const publishedTo = document.querySelector('#vacancy-published-to').value;
+        if (publishedFrom) params.set('published_from', publishedFrom);
+        if (publishedTo) params.set('published_to', publishedTo);
+        const resp = await fetch(`/v1/users/${userIdInput.value.trim()}/vacancies?${params}`, { headers: headers(false) });
+        const payload = await asJson(resp);
+        const items = payload.items || [];
+        if (!items.length) {
+          showStatus(currentLanguage === 'en' ? 'No vacancies to re-rank.' : 'Нет вакансий для переранжирования.');
+          btn.disabled = false;
+          return;
+        }
+        let done = 0, failed = 0;
+        const total = items.length;
+        const updateProgress = () => {
+          showStatus(`Переранжирование: ${done}/${total}${failed ? `, ошибок: ${failed}` : ''}`);
+        };
+        updateProgress();
+        for (const item of items) {
+          if (!item.application_id) { done++; continue; }
+          try {
+            await fetch(`/v1/applications/${item.application_id}/recalculate-match?force=true`, {
+              method: 'POST', headers: headers(false)
+            });
+          } catch { failed++; }
+          done++;
+          updateProgress();
+        }
+        // Wait for all to complete then refresh
+        showStatus('Ожидание завершения…');
+        await new Promise(r => setTimeout(r, 5000));
+        await loadSavedVacancies(vacancyPage);
+        showStatus(`Переранжирование завершено для ${total} вакансий.`);
+      } catch (e) { showError(e); }
+      btn.disabled = false;
     });
     document.querySelector('#vacancy-previous').addEventListener('click', () => loadSavedVacancies(vacancyPage - 1).catch(showError));
     document.querySelector('#vacancy-next').addEventListener('click', () => loadSavedVacancies(vacancyPage + 1).catch(showError));
