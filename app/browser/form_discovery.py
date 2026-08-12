@@ -32,11 +32,39 @@ class FieldObservation(TypedDict):
 SEMANTIC_TERMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("email", ("email", "e-mail")),
     ("phone", ("phone", "telephone", "mobile")),
-    ("full_name", ("full name", "name")),
+    ("full_name", ("full name", "name", "first name", "last name")),
+    ("first_name", ("first name", "given name")),
+    ("last_name", ("last name", "surname", "family name")),
     ("resume", ("resume", "cv", "curriculum vitae")),
-    ("salary", ("salary", "compensation", "pay")),
+    ("salary", ("salary", "compensation", "pay", "expected salary")),
     ("experience", ("experience", "years worked", "years of work")),
-    ("work_authorization", ("work authorization", "authorized to work", "visa")),
+    ("work_authorization", (
+        "work authorization", "authorized to work", "visa",
+        "sponsorship", "legally authorized",
+    )),
+    ("linkedin", ("linkedin", "linkedin profile", "linkedin url")),
+    ("github", ("github", "github profile", "github url", "portfolio")),
+    ("website", ("website", "personal website", "portfolio url")),
+    ("location", (
+        "location", "city", "address", "country", "state",
+        "willing to relocate", "preferred location",
+    )),
+    ("education", (
+        "education", "degree", "university", "college", "school",
+        "field of study", "major", "gpa",
+    )),
+    ("start_date", (
+        "start date", "available date", "earliest start",
+        "availability", "notice period",
+    )),
+    ("cover_letter", (
+        "cover letter", "motivation letter", "additional information",
+        "why do you want", "tell us about",
+    )),
+    ("gender", ("gender", "sex", "pronouns")),
+    ("ethnicity", ("ethnicity", "race", "ethnic background")),
+    ("disability", ("disability", "disabled", "handicap")),
+    ("veteran", ("veteran", "military", "armed forces")),
 )
 
 
