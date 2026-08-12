@@ -10,14 +10,14 @@ class _StrictResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class _ReadyResponse(_StrictResponse):
+class _ReadyResponse(BaseModel):
     status: str
     model_ready: bool
     redis: str
     error: str | None
 
 
-class _CurrentModelResponse(_StrictResponse):
+class _CurrentModelResponse(BaseModel):
     name: str
     revision: str
     device: str

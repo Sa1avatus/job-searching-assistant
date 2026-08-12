@@ -22,7 +22,7 @@ class _StrictResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class _EmbeddingResponse(_StrictResponse):
+class _EmbeddingResponse(BaseModel):
     vectors: list[list[float]]
     model_name: str
     model_revision: str
@@ -30,7 +30,7 @@ class _EmbeddingResponse(_StrictResponse):
     normalization_method: str
 
 
-class _RerankResult(_StrictResponse):
+class _RerankResult(BaseModel):
     id: str
     score: float
     normalized_score: float | None = Field(default=None, ge=0, le=1)
@@ -42,14 +42,14 @@ class _RerankResult(_StrictResponse):
     cache_hit: bool = False
 
 
-class _RerankUsage(_StrictResponse):
+class _RerankUsage(BaseModel):
     documents_received: int = Field(ge=0)
     documents_scored: int = Field(ge=0)
     cache_hits: int = Field(ge=0)
     latency_ms: int = Field(ge=0)
 
 
-class _RerankResponse(_StrictResponse):
+class _RerankResponse(BaseModel):
     request_id: UUID
     model: str
     model_revision: str
