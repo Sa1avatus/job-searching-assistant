@@ -208,6 +208,25 @@ class ApplicationEmailEventService:
             )
         )
 
+    def list_review_items(
+        self,
+        user_id: str,
+    ) -> list[ApplicationEmailEventRow]:
+        return list(
+            self._session.scalars(
+                select(ApplicationEmailEventRow)
+                .where(
+                    ApplicationEmailEventRow.user_id == user_id,
+                    (
+                        ApplicationEmailEventRow.outcome == "unknown"
+                    ) | (
+                        ApplicationEmailEventRow.application_id.is_(None)
+                    ),
+                )
+                .order_by(ApplicationEmailEventRow.processed_at.desc())
+            ).all()
+        )
+
 
 def _message_fingerprint(subject: str, body: str) -> str:
     normalized = "\n".join((subject.strip(), body.strip())).encode()

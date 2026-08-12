@@ -267,3 +267,25 @@ def test_ingest_does_not_auto_update_when_disabled() -> None:
             assert session.get(ApplicationRow, "app-auto").status == "submitted"
     finally:
         engine.dispose()
+
+
+def test_list_review_items_returns_unknown_and_unmatched_events() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add(UserRow(id="user-1", display_name="Candidate"))
+            session.commit()
+            service = ApplicationEmailEventService(session)
+            service.ingest(
+                "user-1",
+                "Application update",
+                "Unfortunately, we will not be moving forward.",
+            )
+            service.ingest("user-1", "Newsletter", "Weekly hiring digest.")
+            review_items = service.list_review_items("user-1")
+            assert len(review_items) >= 1
+            outcomes = {item.outcome for item in review_items}
+            assert "unknown" in outcomes
+    finally:
+        engine.dispose()
