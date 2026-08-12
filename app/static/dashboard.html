@@ -571,6 +571,8 @@
       <label for="greenhouse-boards">Доски Greenhouse</label>
       <textarea id="greenhouse-boards" placeholder="По одной ссылке на строку, например https://boards.greenhouse.io/company. Если оставить пустым, используются Greenhouse-доски из уже сохранённых вакансий."></textarea>
       <button id="search" type="button" class="primary">Найти вакансии</button>
+      <button id="rerank-all" type="button" style="margin-left:8px;">Переранжировать</button>
+      <div id="reranker-model-info" class="hint" style="margin-top:8px;"></div>
     </section>
 
     <section id="results" class="step" data-panel="search"></section>
@@ -721,6 +723,7 @@
       'везде': 'anywhere',
       'По одной ссылке на строку, например https://boards.greenhouse.io/company. Если оставить пустым, используются Greenhouse-доски из уже сохранённых вакансий.': 'One URL per line, for example https://boards.greenhouse.io/company. Leave empty to use Greenhouse boards from saved vacancies.',
       'Найти вакансии': 'Find vacancies',
+      'Переранжировать': 'Re-rank',
       'Сопроводительное письмо (можно отредактировать)': 'Cover letter (editable)',
       'Принять и откликнуться': 'Accept and apply',
       'Открыть для рассмотрения': 'Open for review',
@@ -2578,6 +2581,7 @@
     function renderResult(item) {
       const card = element('article');
       card.dataset.searchResultKey = item.application_id || item.source_url;
+      if (item.application_id) card.dataset.applicationId = item.application_id;
       card.dataset.matchScore = String(Number(item.match_score) || 0);
       const top = element('div', undefined, 'topline');
       const title = element('div');
@@ -2994,6 +2998,7 @@
 
     function renderSavedVacancy(item) {
       const card = element('article', undefined, 'vacancy-card');
+      if (item.application_id) card.dataset.applicationId = item.application_id;
       const top = element('div', undefined, 'topline');
       const title = element('div');
       title.append(element('div', item.company, 'company'), element('h3', item.title));
@@ -3434,6 +3439,69 @@
         showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
       } catch (error) { showError(error); }
     });
+    async function loadRerankerModelInfo() {
+      const info = document.querySelector('#reranker-model-info');
+      if (!info) return;
+      try {
+        const response = await fetch('/api/v1/admin/reranker/status', { headers: headers(false) });
+        if (!response.ok) { info.textContent = ''; return; }
+        const data = await response.json();
+        if (data.model) {
+          const label = currentLanguage === 'en'
+            ? `Reranker: ${data.model}${data.model_revision ? ' @ ' + data.model_revision : ''} — ${data.status}`
+            : `Реранжировщик: ${data.model}${data.model_revision ? ' @ ' + data.model_revision : ''} — ${data.status}`;
+          info.textContent = label;
+        } else {
+          info.textContent = currentLanguage === 'en'
+            ? `Reranker: ${data.status}`
+            : `Реранжировщик: ${data.status}`;
+        }
+      } catch { info.textContent = ''; }
+    }
+
+    document.querySelector('#rerank-all').addEventListener('click', async () => {
+      try {
+        const cards = document.querySelectorAll('#results .vacancy-card');
+        if (!cards.length) {
+          showStatus(currentLanguage === 'en' ? 'No vacancies to re-rank.' : 'Нет вакансий для переранжирования.');
+          return;
+        }
+        const button = document.querySelector('#rerank-all');
+        button.disabled = true;
+        let done = 0;
+        let failed = 0;
+        const total = cards.length;
+        const updateProgress = () => {
+          showStatus(
+            currentLanguage === 'en'
+              ? `Re-ranking: ${done}/${total}${failed ? `, failed: ${failed}` : ''}`
+              : `Переранжирование: ${done}/${total}${failed ? `, ошибок: ${failed}` : ''}`
+          );
+        };
+        updateProgress();
+        for (const card of cards) {
+          const appId = card.dataset.applicationId;
+          if (!appId) { done++; continue; }
+          try {
+            await fetch(`/v1/applications/${appId}/recalculate-match`, {
+              method: 'POST', headers: headers(false)
+            });
+          } catch { failed++; }
+          done++;
+          updateProgress();
+        }
+        button.disabled = false;
+        showStatus(
+          currentLanguage === 'en'
+            ? `Re-ranking dispatched for ${total} vacancies. Check match details for updated scores.`
+            : `Переранжирование запущено для ${total} вакансий. Обновлённые оценки появятся в «Почему подходит».`
+        );
+        loadRerankerModelInfo().catch(() => {});
+      } catch (error) { showError(error); document.querySelector('#rerank-all').disabled = false; }
+    });
+
+    loadRerankerModelInfo().catch(() => {});
+
     async function loadUserWorkspace() {
       localStorage.setItem('dashboardUserId', userIdInput.value.trim());
       loadSavedLlmPreference();
