@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.services.application_email_classifier import classify_application_email
+from app.services.application_timeline import ApplicationTimelineService
 from app.services.recruitment import EntityNotFoundError
 from app.storage.tables import ApplicationEmailEventRow, ApplicationRow, UserRow, VacancyRow
 
@@ -25,8 +26,13 @@ class ApplicationEmailEventResult:
 
 
 class ApplicationEmailEventService:
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        timeline: ApplicationTimelineService | None = None,
+    ) -> None:
         self._session = session
+        self._timeline = timeline or ApplicationTimelineService(session)
 
     def ingest(
         self,
@@ -72,6 +78,14 @@ class ApplicationEmailEventService:
             outcome=classify_application_email(subject, body).value,
         )
         self._session.add(event)
+        if application_id is not None:
+            self._timeline.record(
+                application_id,
+                "email_received",
+                new_value=event.outcome,
+                detail={"fingerprint": fingerprint},
+                source="email_event",
+            )
         status_updated = self._apply_outcome(event)
         try:
             self._session.commit()
@@ -100,8 +114,15 @@ class ApplicationEmailEventService:
         application = self._session.get(ApplicationRow, event.application_id)
         if application is None or application.user_id != event.user_id:
             return False
+        previous_status = application.status
         application.status = application_status
         event.status_applied = True
+        self._timeline.record_status_change(
+            event.application_id,
+            previous_status,
+            application_status,
+            source="email_event",
+        )
         return True
 
     def match_application(
