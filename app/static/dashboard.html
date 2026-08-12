@@ -2579,7 +2579,7 @@
     }
 
     function renderResult(item) {
-      const card = element('article');
+      const card = element('article', undefined, 'vacancy-card');
       card.dataset.searchResultKey = item.application_id || item.source_url;
       if (item.application_id) card.dataset.applicationId = item.application_id;
       card.dataset.matchScore = String(Number(item.match_score) || 0);
