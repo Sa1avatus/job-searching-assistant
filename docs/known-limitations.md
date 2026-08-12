@@ -75,6 +75,17 @@ verified beyond controlled fixtures.
 - Matching v2 requires separately configured embedding and reranker services. The independent
   reranker has not been claimed as live-compatible until its bearer-authenticated Docker smoke test
   is explicitly run; when it is absent or unavailable, matching uses conservative hybrid scores.
+- RAG enrichment is optional and informational only. When `APP_RAG_ENABLED=false` (default) or
+  the RAG service is unavailable, the pipeline uses local data only and records the fallback in
+  the explanation. RAG never changes the deterministic score.
+- Skill normalization resolves common aliases (Postgres→postgresql, K8s→kubernetes) during
+  extraction. Unknown skills pass through unchanged. Custom aliases can be injected via
+  `SkillNormalizer(aliases={...})`.
+- Email classification uses regex patterns for EN and RU. Ambiguous emails (both rejection and
+  next-stage signals, or no signals) produce `UNKNOWN` outcome and appear in the review queue.
+  Automatic status updates only happen for high-confidence outcomes.
+- EML/MBOX/ZIP file import providers skip corrupted files gracefully. ZIP import rejects path
+  traversal attempts (`../..`, absolute paths) and enforces decompression size limits.
 - Human-action/CAPTCHA checkpoints and encrypted Playwright storage state are durable. The worker
   does not yet reconnect an open tab, preserve in-memory JavaScript state, or automatically resume
   an external action; recovery starts a new context from cookies/localStorage.
