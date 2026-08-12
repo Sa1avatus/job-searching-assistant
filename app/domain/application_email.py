@@ -4,6 +4,7 @@ from enum import StrEnum
 class ApplicationEmailOutcome(StrEnum):
     REJECTED = "rejected"
     NEXT_STAGE = "next_stage"
+    OFFER = "offer"
     UNKNOWN = "unknown"
 
 
@@ -24,7 +25,7 @@ _CATEGORY_OUTCOME_MAP: dict[EmailCategory, ApplicationEmailOutcome] = {
     EmailCategory.REJECTION: ApplicationEmailOutcome.REJECTED,
     EmailCategory.INTERVIEW_INVITATION: ApplicationEmailOutcome.NEXT_STAGE,
     EmailCategory.INTERVIEW_RESCHEDULE: ApplicationEmailOutcome.NEXT_STAGE,
-    EmailCategory.OFFER: ApplicationEmailOutcome.NEXT_STAGE,
+    EmailCategory.OFFER: ApplicationEmailOutcome.OFFER,
     EmailCategory.TEST_ASSIGNMENT: ApplicationEmailOutcome.NEXT_STAGE,
 }
 

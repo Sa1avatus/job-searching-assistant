@@ -15,6 +15,7 @@ from app.storage.tables import ApplicationEmailEventRow, ApplicationRow, UserRow
 _APPLICATION_STATUS_BY_OUTCOME = {
     "rejected": "rejected",
     "next_stage": "interview",
+    "offer": "offer",
 }
 
 

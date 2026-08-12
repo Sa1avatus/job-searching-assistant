@@ -11,6 +11,18 @@ ApplicationStatus = Literal[
     "skipped",
     "submitted",
     "interview",
+    "offer",
+    "withdrawn",
 ]
 
 APPLICATION_STATUSES: tuple[ApplicationStatus, ...] = get_args(ApplicationStatus)
+
+TERMINAL_STATUSES: frozenset[ApplicationStatus] = frozenset({
+    "rejected",
+    "skipped",
+    "withdrawn",
+})
+
+ACTIVE_STATUSES: frozenset[ApplicationStatus] = frozenset(
+    set(APPLICATION_STATUSES) - TERMINAL_STATUSES
+)
