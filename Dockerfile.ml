@@ -1,6 +1,4 @@
-# syntax=docker/dockerfile:1.7
-
-FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -15,7 +13,7 @@ COPY requirements-ml.txt ./
 RUN --mount=type=cache,id=matching-pip-cache,target=/root/.cache/pip,sharing=locked \
     pip install --retries 10 -r requirements-ml.txt
 
-COPY . .
+COPY ml_service ./ml_service
 
 EXPOSE 8090
 
