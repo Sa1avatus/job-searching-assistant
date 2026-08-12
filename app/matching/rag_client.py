@@ -207,8 +207,7 @@ class RagHttpClient:
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 response = await client.get(
-                    f"{self._base_url}/v1/admin/system/health",
-                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    f"{self._base_url}/health/live",
                 )
                 response.raise_for_status()
                 data = response.json()
