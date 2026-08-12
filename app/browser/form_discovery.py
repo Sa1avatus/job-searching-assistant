@@ -230,3 +230,41 @@ def _to_form_field(observation: FieldObservation, index: int) -> FormField:
         ),
         locator_candidates=candidates,
     )
+
+
+def form_fingerprint(fields: tuple[FormField, ...]) -> str:
+    import hashlib
+
+    parts = []
+    for field in sorted(fields, key=lambda f: f.field_id):
+        parts.append(
+            f"{field.field_id}:{field.field_type.value}:"
+            f"{field.label}:{field.is_required}"
+        )
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+
+
+def detect_form_changes(
+    old_fields: tuple[FormField, ...],
+    new_fields: tuple[FormField, ...],
+) -> dict[str, object]:
+    old_by_id = {f.field_id: f for f in old_fields}
+    new_by_id = {f.field_id: f for f in new_fields}
+    added = sorted(set(new_by_id) - set(old_by_id))
+    removed = sorted(set(old_by_id) - set(new_by_id))
+    changed: list[str] = []
+    for fid in sorted(set(old_by_id) & set(new_by_id)):
+        old, new = old_by_id[fid], new_by_id[fid]
+        if (
+            old.field_type != new.field_type
+            or old.is_required != new.is_required
+            or old.label != new.label
+            or old.options != new.options
+        ):
+            changed.append(fid)
+    return {
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+        "stable": not added and not removed and not changed,
+    }
