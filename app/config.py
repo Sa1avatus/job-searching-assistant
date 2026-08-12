@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     reranker_service_url: str | None = None
     reranker_api_key: SecretStr | None = None
     rag_service_url: str | None = None
+    browser_worker_url: str = "http://browser-worker:8080"
     rag_api_key: SecretStr | None = None
     rag_project_id: str | None = None
     rag_collection: str = "default"

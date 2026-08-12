@@ -34,8 +34,6 @@ from sqlalchemy.orm import Session
 from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChallenge
 from adapters.job_boards.contracts import ADAPTER_CAPABILITIES
 from adapters.job_boards.greenhouse_api import GreenhouseJobBoardApi
-from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter
-from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
 from adapters.job_boards.linkedin_reference import LinkedInJobReference
 from app.api.schemas import (
     ActiveCvFileRequest,
@@ -116,8 +114,6 @@ from app.api.statistics_schemas import (
     ApplicationStatisticsResponse,
     ApplicationSyncResponse,
 )
-from app.browser.engine import PlaywrightEngine
-from app.browser.selector_library import SelectorLibrary
 from app.browser.session_probe import probe_browser_session
 from app.browser.session_service import BrowserSessionService
 from app.browser.session_store import InvalidBrowserState, delete_browser_state_file
@@ -233,7 +229,8 @@ from app.storage.tables import (
     WorkerHeartbeatRow,
     WorkflowTaskRow,
 )
-from app.workers.browser_tasks import _restore_browser_session
+from app.services.browser_worker_client import BrowserWorkerClient
+from app.services.http_adapters import HttpHeadHunterAdapter, HttpLinkedInAdapter
 from app.workers.browser_worker import create_session_store
 
 configure_logging()
@@ -469,23 +466,6 @@ async def model_router() -> AsyncIterator[ModelRouter]:
     async with httpx.AsyncClient(timeout=60, follow_redirects=False, trust_env=False) as client:
         yield ModelRouter(build_model_providers(client, settings))
 
-
-async def headhunter_browser_adapter() -> AsyncIterator[HeadHunterBrowserAdapter]:
-    """A HeadHunterBrowserAdapter for read-only search/extraction (no captured session needed).
-
-    api.hh.ru's anonymous access is CAPTCHA-limited in practice, so search and vacancy reads go
-    through a real Chromium instance against hh.ru's public pages instead. Only the separate
-    apply step needs a session captured via scripts/browser_login_capture.py.
-    """
-    settings = get_settings()
-    task_artifact_directory = settings.artifact_directory / "browser-worker" / "headhunter-read"
-    async with PlaywrightEngine(
-        headless=settings.browser_headless,
-        timeout_ms=settings.browser_timeout_ms,
-        artifact_directory=task_artifact_directory,
-        selector_library=SelectorLibrary(settings.artifact_directory),
-    ) as browser_engine:
-        yield HeadHunterBrowserAdapter(browser_engine)
 
 
 def document_storage() -> DocumentStorage:
@@ -841,51 +821,19 @@ async def synchronize_application_statuses(
             detail="APP_BROWSER_STATE_ENCRYPTION_KEY is required",
         )
     store = create_session_store(settings)
-    probes: dict[str, ApplicationSubmissionProbe] = {}
-    async with AsyncExitStack() as stack:
-        headhunter_state = _restore_browser_session(
-            SessionFactory,
-            store,
-            user_id=user_id,
-            site_key="headhunter",
-        )
-        if headhunter_state is not None:
-            engine = await stack.enter_async_context(
-                PlaywrightEngine(
-                    headless=settings.browser_headless,
-                    timeout_ms=settings.browser_timeout_ms,
-                    artifact_directory=(
-                        settings.artifact_directory / "browser-worker" / f"hh-sync-{user_id}"
-                    ),
-                    storage_state=headhunter_state,
-                    selector_library=SelectorLibrary(settings.artifact_directory),
-                )
-            )
-            probes["headhunter"] = HeadHunterBrowserAdapter(engine)
-        if settings.enable_linkedin_apply:
-            linkedin_state = _restore_browser_session(
-                SessionFactory,
-                store,
-                user_id=user_id,
-                site_key="linkedin",
-            )
-            if linkedin_state is not None:
-                engine = await stack.enter_async_context(
-                    PlaywrightEngine(
-                        headless=settings.browser_headless,
-                        timeout_ms=settings.browser_timeout_ms,
-                        artifact_directory=(
-                            settings.artifact_directory / "browser-worker" / f"li-sync-{user_id}"
-                        ),
-                        storage_state=linkedin_state,
-                        selector_library=SelectorLibrary(settings.artifact_directory),
-                    )
-                )
-                probes["linkedin-reference"] = LinkedInBrowserAdapter(engine)
-        try:
-            summary = await ApplicationStatusSyncService(session).synchronize(user_id, probes)
-        except EntityNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
+    probes: dict[str, object] = {}
+    browser_client = BrowserWorkerClient(settings.browser_worker_url)
+    headhunter_probe = await browser_client.probe(user_id=user_id, site_key="headhunter")
+    if headhunter_probe.valid:
+        probes["headhunter"] = HttpHeadHunterAdapter(browser_client, user_id)
+    if settings.enable_linkedin_apply:
+        linkedin_probe = await browser_client.probe(user_id=user_id, site_key="linkedin")
+        if linkedin_probe.valid:
+            probes["linkedin-reference"] = HttpLinkedInAdapter(browser_client, user_id)
+    try:
+        summary = await ApplicationStatusSyncService(session).synchronize(user_id, probes)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
     return ApplicationSyncResponse.model_validate(asdict(summary))
 
 
@@ -2053,33 +2001,17 @@ async def discover_headhunter_vacancies(
     job-seeker API. Only creates vacancies/applications for human review.
     """
     settings = get_settings()
-    store = create_session_store(settings)
-    state = _restore_browser_session(SessionFactory, store, user_id=user_id, site_key="headhunter")
-    if state is None:
-        raise HTTPException(
-            status_code=409,
-            detail="Авторизуйтесь на hh.ru в разделе «Сессии сайтов» личного кабинета",
-        )
-    task_artifact_directory = (
-        settings.artifact_directory / "browser-worker" / f"hh-discover-{user_id}"
-    )
+    browser_client = BrowserWorkerClient(settings.browser_worker_url)
+    adapter = HttpHeadHunterAdapter(browser_client, user_id)
     try:
-        async with PlaywrightEngine(
-            headless=settings.browser_headless,
-            timeout_ms=settings.browser_timeout_ms,
-            artifact_directory=task_artifact_directory,
-            storage_state=state,
-            selector_library=SelectorLibrary(settings.artifact_directory),
-        ) as browser_engine:
-            adapter = HeadHunterBrowserAdapter(browser_engine)
-            outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
-                user_id,
-                headhunter_adapter=adapter,
-                locations=request.locations,
-                limit=request.limit,
-                search_text=request.search_text,
-                cv_file_id=request.cv_file_id,
-            )
+        outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
+            user_id,
+            headhunter_adapter=adapter,
+            locations=request.locations,
+            limit=request.limit,
+            search_text=request.search_text,
+            cv_file_id=request.cv_file_id,
+        )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except NoSearchKeywordsError as error:
@@ -2123,33 +2055,17 @@ async def discover_linkedin_vacancies(
             status_code=403,
             detail="LinkedIn browser automation is disabled (APP_ENABLE_LINKEDIN_APPLY=false)",
         )
-    store = create_session_store(settings)
-    state = _restore_browser_session(SessionFactory, store, user_id=user_id, site_key="linkedin")
-    if state is None:
-        raise HTTPException(
-            status_code=409,
-            detail="Авторизуйтесь в LinkedIn в разделе «Сессии сайтов» личного кабинета",
-        )
-    task_artifact_directory = (
-        settings.artifact_directory / "browser-worker" / f"li-discover-{user_id}"
-    )
+    browser_client = BrowserWorkerClient(settings.browser_worker_url)
+    adapter = HttpLinkedInAdapter(browser_client, user_id)
     try:
-        async with PlaywrightEngine(
-            headless=settings.browser_headless,
-            timeout_ms=settings.browser_timeout_ms,
-            artifact_directory=task_artifact_directory,
-            storage_state=state,
-            selector_library=SelectorLibrary(settings.artifact_directory),
-        ) as browser_engine:
-            adapter = LinkedInBrowserAdapter(browser_engine)
-            outcomes = await JobDiscoveryService(session).discover_linkedin_vacancies(
-                user_id,
-                linkedin_adapter=adapter,
-                locations=request.locations,
-                limit=request.limit,
-                search_text=request.search_text,
-                cv_file_id=request.cv_file_id,
-            )
+        outcomes = await JobDiscoveryService(session).discover_linkedin_vacancies(
+            user_id,
+            linkedin_adapter=adapter,
+            locations=request.locations,
+            limit=request.limit,
+            search_text=request.search_text,
+            cv_file_id=request.cv_file_id,
+        )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except NoSearchKeywordsError as error:
@@ -2388,47 +2304,31 @@ async def discover_vacancies_stream(
                         raise LinkedInSessionRequiredError(
                             "LinkedIn browser automation is disabled"
                         )
-                    store = create_session_store(settings)
-                    state = _restore_browser_session(
-                        SessionFactory, store, user_id=user_id, site_key=source
-                    )
-                    if state is None:
-                        raise LinkedInSessionRequiredError(
-                            f"Authorize {source} in Site sessions before searching"
+                    browser_client = BrowserWorkerClient(settings.browser_worker_url)
+                    if source == "headhunter":
+                        adapter = HttpHeadHunterAdapter(browser_client, user_id)
+                    else:
+                        adapter = HttpLinkedInAdapter(browser_client, user_id)
+                    if source == "headhunter":
+                        await service.discover_headhunter_vacancies(
+                            user_id,
+                            headhunter_adapter=adapter,
+                            locations=request.locations,
+                            limit=request.limit,
+                            search_text=request.search_text,
+                            cv_file_id=request.cv_file_id,
+                            on_outcome=on_outcome,
                         )
-                    artifact_prefix = "hh" if source == "headhunter" else "li"
-                    artifact_directory = (
-                        settings.artifact_directory
-                        / "browser-worker"
-                        / f"{artifact_prefix}-discover-{user_id}"
-                    )
-                    async with PlaywrightEngine(
-                        headless=settings.browser_headless,
-                        timeout_ms=settings.browser_timeout_ms,
-                        artifact_directory=artifact_directory,
-                        storage_state=state,
-                        selector_library=SelectorLibrary(settings.artifact_directory),
-                    ) as browser_engine:
-                        if source == "headhunter":
-                            await service.discover_headhunter_vacancies(
-                                user_id,
-                                headhunter_adapter=HeadHunterBrowserAdapter(browser_engine),
-                                locations=request.locations,
-                                limit=request.limit,
-                                search_text=request.search_text,
-                                cv_file_id=request.cv_file_id,
-                                on_outcome=on_outcome,
-                            )
-                        else:
-                            await service.discover_linkedin_vacancies(
-                                user_id,
-                                linkedin_adapter=LinkedInBrowserAdapter(browser_engine),
-                                locations=request.locations,
-                                limit=request.limit,
-                                search_text=request.search_text,
-                                cv_file_id=request.cv_file_id,
-                                on_outcome=on_outcome,
-                            )
+                    else:
+                        await service.discover_linkedin_vacancies(
+                            user_id,
+                            linkedin_adapter=adapter,
+                            locations=request.locations,
+                            limit=request.limit,
+                            search_text=request.search_text,
+                            cv_file_id=request.cv_file_id,
+                            on_outcome=on_outcome,
+                        )
         except Exception as error:  # noqa: BLE001 - one source must not end the whole stream
             await queue.put({"event": "source_error", "source": source, "error": str(error)})
         finally:
@@ -2529,27 +2429,30 @@ async def import_greenhouse_vacancy(
 async def import_headhunter_vacancy(
     request: HeadHunterImportRequest,
     session: Annotated[Session, Depends(session_scope)],
-    adapter: Annotated[HeadHunterBrowserAdapter, Depends(headhunter_browser_adapter)],
 ) -> ImportedVacancyResponse:
-    """Import one hh.ru vacancy by URL using a real browser (not api.hh.ru).
+    """Import one hh.ru vacancy by URL using the browser-worker (not api.hh.ru).
 
     api.hh.ru's anonymous access is CAPTCHA-limited in practice, so extraction reads the public
     vacancy page directly through Chromium instead — no login/session is required for this.
     """
+    settings = get_settings()
+    browser_client = BrowserWorkerClient(settings.browser_worker_url)
     try:
-        extracted = await adapter.extract_vacancy(str(request.source_url))
+        data = await browser_client.extract_headhunter(
+            user_id="anonymous", url=str(request.source_url)
+        )
         vacancy = RecruitmentService(session).create_vacancy(
-            source_url=extracted.source_url,
-            title=extracted.title,
-            company=extracted.company,
-            required_skills=list(extracted.required_skills),
+            source_url=data.get("source_url", str(request.source_url)),
+            title=data.get("title", ""),
+            company=data.get("company", ""),
+            required_skills=list(data.get("required_skills", [])),
             preferred_skills=[],
-            location=extracted.location,
-            description_text=extracted.description_text,
+            location=data.get("location", ""),
+            description_text=data.get("description_text", ""),
             adapter_name="headhunter",
-            source_evidence_url=extracted.source_url,
-            application_fields=[asdict(field) for field in extracted.form_fields],
-            requires_sensitive_review=extracted.requires_sensitive_review,
+            source_evidence_url=data.get("source_url", str(request.source_url)),
+            application_fields=[],
+            requires_sensitive_review=data.get("requires_sensitive_review", False),
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

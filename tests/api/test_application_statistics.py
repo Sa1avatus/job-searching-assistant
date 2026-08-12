@@ -173,7 +173,17 @@ def test_application_sync_skips_source_without_saved_session(
         browser_state_encryption_key=("MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="),
     )
     monkeypatch.setattr(api_main, "get_settings", lambda: settings)
-    monkeypatch.setattr(api_main, "_restore_browser_session", lambda *args, **kwargs: None)
+    # Mock BrowserWorkerClient.probe to return invalid (no session)
+    from app.services.browser_worker_client import BrowserProbeResult
+    import asyncio
+
+    async def _fake_probe(self, **kw):
+        return BrowserProbeResult(valid=False, details="no session")
+
+    monkeypatch.setattr(
+        "app.services.browser_worker_client.BrowserWorkerClient.probe",
+        _fake_probe,
+    )
     app.dependency_overrides[session_scope] = test_session_scope
     try:
         with TestClient(app) as client:

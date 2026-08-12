@@ -63,7 +63,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: Dockerfile.browser
+      dockerfile: Dockerfile
     restart: unless-stopped
     environment:
       APP_DATABASE_URL: "postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment"
@@ -192,7 +192,9 @@ services:
       APP_ENABLE_LINKEDIN_APPLY: "${APP_ENABLE_LINKEDIN_APPLY:-false}"
       APP_MAX_BROWSER_STATE_BYTES: "2097152"
       APP_WORKER_POLL_SECONDS: "2"
-    command: ["python", "-m", "app.workers.browser_worker"]
+    command: ["python", "-m", "app.workers.browser_http_server"]
+    ports:
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
