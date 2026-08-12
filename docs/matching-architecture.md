@@ -6,7 +6,7 @@ relationship between legacy and v2 results.
 The pipeline is:
 
 ```text
-structured extraction -> hard relevance gate -> evidence indexing -> hybrid retrieval -> reranking -> deterministic scoring
+structured extraction -> skill normalization -> hard relevance gate -> evidence indexing -> hybrid retrieval -> reranking -> deterministic scoring -> RAG enrichment
 ```
 
 PostgreSQL owns requirements, candidate evidence, embedding metadata, per-requirement matches, and
@@ -17,6 +17,9 @@ source-grounded inputs but never choose the final score.
 
 - `app/matching/extraction.py` and `model_extractors.py` produce versioned vacancy requirements and
   candidate evidence.
+- `app/matching/normalization.py` resolves skill aliases (Postgres→postgresql, K8s→kubernetes, etc.)
+  during extraction. Applied to requirement normalized_text and evidence skill_name before matching.
+  Custom aliases can be injected via the constructor.
 - `app/matching/relevance.py` rejects only explicit typed contradictions before indexing and model
   ranking. Missing or unknown typed evidence is reviewable and never becomes an automatic reject.
   Every aggregate explanation records the gate decision; rejected results also record stable reason
@@ -24,8 +27,17 @@ source-grounded inputs but never choose the final score.
 - `app/matching/indexing.py` and `opensearch_index.py` own evidence projection and aliases.
 - `app/matching/retrieval.py` fuses bounded lexical and dense candidates with mandatory user and
   resume filters.
+- `app/matching/rag_client.py` provides an optional RAG integration layer. `RagClient` protocol
+  with `search()`, `ingest_document()`, and `health()` methods. `RagHttpClient` implements the
+  actual `rag-platform` contract; `RagFallbackClient` returns empty results when RAG is unavailable.
+  RAG is never a hard dependency — the pipeline works identically without it.
 - `app/matching/scoring.py` applies deterministic weights, blockers, eligibility, and score caps.
-- `app/matching/pipeline.py` coordinates stages and persists the result.
+  Component scores include hard_skill, preferred_skill, role, seniority, experience, work_format,
+  location, domain, and language. Aggregate quality signals include semantic_similarity (weighted
+  avg hybrid_score, 0–1), reranker_score (weighted avg normalized reranker score, 0–1), and
+  requirements_match (required match ratio, 0–100%).
+- `app/matching/pipeline.py` coordinates stages, persists the result, and optionally enriches the
+  explanation with RAG context from related vacancies and profiles.
 - `app/matching/jobs.py` and `backfill.py` provide durable, idempotent execution.
 - `ml_service/` remains the optional embedding HTTP service. Reranking can be delegated to the
   independent sibling `reranker-service` through its bearer-authenticated public API; ordinary
@@ -52,6 +64,7 @@ creating duplicates.
 - Missing work authorization cannot be compensated by another skill category.
 - The final 0–100 score is a pure function of versioned inputs and scoring configuration.
 - A network response or model output never directly supplies the final score.
+- RAG context enrichment is informational only — it never changes the deterministic score.
 
 ## Failure behavior
 
@@ -62,6 +75,8 @@ creating duplicates.
 - Reranker failure uses normalized hybrid scores with a conservative cap.
 - Missing independent reranker configuration performs no network call and follows the same
   conservative hybrid-score fallback.
+- RAG unavailability is logged and recorded in the explanation as an error dict; the pipeline
+  continues with local data only.
 - A failed shadow calculation does not block the existing discovery/application path.
 
 `applications.match_score` retains its legacy meaning in shadow mode. When v2 is deliberately
