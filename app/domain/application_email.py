@@ -32,3 +32,6 @@ _CATEGORY_OUTCOME_MAP: dict[EmailCategory, ApplicationEmailOutcome] = {
 
 def outcome_for_category(category: EmailCategory) -> ApplicationEmailOutcome:
     return _CATEGORY_OUTCOME_MAP.get(category, ApplicationEmailOutcome.UNKNOWN)
+
+
+APPLICATION_EMAIL_CATEGORIES: tuple[str, ...] = tuple(c.value for c in EmailCategory)
