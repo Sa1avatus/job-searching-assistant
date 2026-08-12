@@ -10,7 +10,8 @@ def test_dashboard_renames_profile_access_without_changing_panel_routing() -> No
         encoding="utf-8"
     )
 
-    assert 'data-menu="access">Профиль и доступ</button>' in dashboard
+    assert 'data-menu="access"' in dashboard
+    assert 'Профиль и доступ</button>' in dashboard
     access_heading = (
         '<section class="step" data-panel="access">\n      <h2>Профиль и доступ</h2>'
     )

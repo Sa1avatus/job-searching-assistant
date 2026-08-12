@@ -11,7 +11,7 @@ def test_dashboard_exposes_editable_profile_facts_block() -> None:
     assert 'id="profile-facts-list"' in dashboard
     assert "async function loadProfileFacts()" in dashboard
     assert "`/v1/users/${userId}/facts`" in dashboard
-    assert "`/v1/users/${userId}/facts/${editor.dataset.factId}`" in dashboard
+    assert "`/v1/users/${userId}/facts/${factId}`" in dashboard
     assert "method: 'POST'" in dashboard
     assert "method: 'PUT'" in dashboard
     assert "method: 'DELETE'" in dashboard
