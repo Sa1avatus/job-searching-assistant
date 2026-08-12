@@ -3343,47 +3343,62 @@
       const btn = document.querySelector('#rerank-filtered');
       btn.disabled = true;
       try {
-        // Load all vacancies matching current filters
-        const params = new URLSearchParams({
-          query: document.querySelector('#vacancy-query').value.trim(),
-          source: document.querySelector('#vacancy-source').value,
-          status_filter: document.querySelector('#vacancy-status').value,
-          location: document.querySelector('#vacancy-location').value.trim(),
-          min_match_score: document.querySelector('#vacancy-score').value || '0',
-          work_format: document.querySelector('#vacancy-work-format').value,
-          employment_type: document.querySelector('#vacancy-employment-type').value,
-          page: '1',
-          page_size: '500'
-        });
+        // Load all vacancies matching current filters (paginated, max 100 per page)
+        const baseParams = new URLSearchParams();
+        const q = document.querySelector('#vacancy-query').value.trim();
+        if (q) baseParams.set('query', q);
+        const src = document.querySelector('#vacancy-source').value;
+        if (src && src !== 'all') baseParams.set('source', src);
+        const st = document.querySelector('#vacancy-status').value;
+        if (st && st !== 'all') baseParams.set('status_filter', st);
+        const loc = document.querySelector('#vacancy-location').value.trim();
+        if (loc) baseParams.set('location', loc);
+        const score = document.querySelector('#vacancy-score').value || '0';
+        if (score !== '0') baseParams.set('min_match_score', score);
+        const wf = document.querySelector('#vacancy-work-format').value;
+        if (wf && wf !== 'all') baseParams.set('work_format', wf);
+        const et = document.querySelector('#vacancy-employment-type').value;
+        if (et && et !== 'all') baseParams.set('employment_type', et);
         const publishedFrom = document.querySelector('#vacancy-published-from').value;
         const publishedTo = document.querySelector('#vacancy-published-to').value;
-        if (publishedFrom) params.set('published_from', publishedFrom);
-        if (publishedTo) params.set('published_to', publishedTo);
-        const resp = await fetch(`/v1/users/${userIdInput.value.trim()}/vacancies?${params}`, { headers: headers(false) });
-        const payload = await asJson(resp);
-        const items = payload.items || [];
-        if (!items.length) {
+        if (publishedFrom) baseParams.set('published_from', publishedFrom);
+        if (publishedTo) baseParams.set('published_to', publishedTo);
+
+        // Collect all application_ids across pages
+        const allAppIds = [];
+        for (let pg = 1; pg <= 20; pg++) {
+          const params = new URLSearchParams(baseParams);
+          params.set('page', String(pg));
+          params.set('page_size', '100');
+          const resp = await fetch(`/v1/users/${userIdInput.value.trim()}/vacancies?${params}`, { headers: headers(false) });
+          if (!resp.ok) break;
+          const payload = await asJson(resp);
+          const items = payload.items || [];
+          for (const item of items) {
+            if (item.application_id) allAppIds.push(item.application_id);
+          }
+          if (items.length < 100 || pg >= (payload.total_pages || 1)) break;
+        }
+        if (!allAppIds.length) {
           showStatus(currentLanguage === 'en' ? 'No vacancies to re-rank.' : 'Нет вакансий для переранжирования.');
           btn.disabled = false;
           return;
         }
         let done = 0, failed = 0;
-        const total = items.length;
+        const total = allAppIds.length;
         const updateProgress = () => {
           showStatus(`Переранжирование: ${done}/${total}${failed ? `, ошибок: ${failed}` : ''}`);
         };
         updateProgress();
-        for (const item of items) {
-          if (!item.application_id) { done++; continue; }
+        for (const appId of allAppIds) {
           try {
-            await fetch(`/v1/applications/${item.application_id}/recalculate-match?force=true`, {
+            await fetch(`/v1/applications/${appId}/recalculate-match?force=true`, {
               method: 'POST', headers: headers(false)
             });
           } catch { failed++; }
           done++;
           updateProgress();
         }
-        // Wait for all to complete then refresh
         showStatus('Ожидание завершения…');
         await new Promise(r => setTimeout(r, 5000));
         await loadSavedVacancies(vacancyPage);
