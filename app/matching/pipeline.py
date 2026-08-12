@@ -19,6 +19,7 @@ from app.matching.extraction import (
     VacancyRequirementExtractor,
 )
 from app.matching.normalization import SkillNormalizer
+from app.matching.rag_client import RagClient
 from app.matching.relevance import (
     HardRelevanceGate,
     RelevanceDecision,
@@ -82,6 +83,7 @@ class MatchingPipeline:
         evidence_indexer: EvidenceIndexer | None = None,
         relevance_gate: HardRelevanceGate | None = None,
         skill_normalizer: SkillNormalizer | None = None,
+        rag_client: RagClient | None = None,
         shadow_mode: bool = True,
         fallback_enabled: bool = True,
     ) -> None:
@@ -94,6 +96,7 @@ class MatchingPipeline:
         self._evidence_indexer = evidence_indexer
         self._relevance_gate = relevance_gate or HardRelevanceGate()
         self._skill_normalizer = skill_normalizer or SkillNormalizer()
+        self._rag_client = rag_client
         self._shadow_mode = shadow_mode
         self._fallback_enabled = fallback_enabled
 
@@ -180,12 +183,14 @@ class MatchingPipeline:
                 assessments.append(assessment)
             deterministic_score = self._scorer.score(tuple(assessments))
             self._session.flush()
+            rag_context = await self._fetch_rag_context(vacancy, application)
             aggregate = self._store_aggregate(
                 application,
                 cv_file,
                 deterministic_score,
                 relevance=relevance,
                 assessments=tuple(assessments),
+                rag_context=rag_context,
             )
             if not self._shadow_mode:
                 application.match_score = deterministic_score.final_score
@@ -566,6 +571,7 @@ class MatchingPipeline:
         *,
         relevance: RelevanceResult | None = None,
         assessments: tuple[RequirementAssessment, ...] = (),
+        rag_context: dict[str, object] | None = None,
     ) -> ApplicationMatchResultRow:
         aggregate = self._session.get(ApplicationMatchResultRow, application.id)
         if aggregate is None:
@@ -639,6 +645,8 @@ class MatchingPipeline:
                 explanation["missing_requirement_ids"] = missing_ids
             if blocker_ids:
                 explanation["blocker_requirement_ids"] = blocker_ids
+        if rag_context:
+            explanation["rag_context"] = rag_context
         aggregate.explanation_json = explanation
         aggregate.calculated_at = datetime.now(UTC)
         return aggregate
@@ -682,6 +690,50 @@ class MatchingPipeline:
             round(reranker_score, 4),
             round(requirements_match, 1),
         )
+
+    async def _fetch_rag_context(
+        self,
+        vacancy: VacancyRow,
+        application: ApplicationRow,
+    ) -> dict[str, object] | None:
+        if self._rag_client is None:
+            return None
+        query = f"{vacancy.title} {vacancy.company} {vacancy.location}".strip()
+        if not query:
+            return None
+        try:
+            response = await self._rag_client.search(
+                query,
+                collections=("vacancies", "profiles"),
+                top_k=3,
+            )
+            return {
+                "request_id": response.request_id,
+                "result_count": len(response.results),
+                "effective_mode": response.effective_mode,
+                "degraded": response.degraded,
+                "sources": [
+                    {
+                        "document_id": r.document_id,
+                        "collection": r.collection,
+                        "score": round(r.score, 4),
+                        "reranker_score": (
+                            round(r.reranker_score, 4)
+                            if r.reranker_score is not None
+                            else None
+                        ),
+                    }
+                    for r in response.results[:5]
+                ],
+            }
+        except Exception as error:
+            logger.warning(
+                "rag_context_fetch_failed",
+                vacancy_id=vacancy.id,
+                application_id=application.id,
+                error_type=type(error).__name__,
+            )
+            return {"error": f"{type(error).__name__}: unavailable"}
 
     @staticmethod
     def _classify_match(
