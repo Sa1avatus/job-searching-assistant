@@ -2600,6 +2600,9 @@ def application_match_details(
             match_level=requirement_match.match_level,
             explanation=requirement_match.explanation,
             retrieval_model_versions=requirement_match.retrieval_model_versions_json,
+            entailment_relation=requirement_match.entailment_relation,
+            evidence_strength=requirement_match.evidence_strength,
+            is_hard_blocker=requirement_match.is_hard_blocker,
         )
         for requirement_match, requirement, evidence in rows
     ]
@@ -2634,6 +2637,10 @@ def application_match_details(
         started_at=aggregate.started_at,
         calculated_at=aggregate.calculated_at,
         requirements=requirement_details,
+        required_score=aggregate.required_score,
+        preferred_score=aggregate.preferred_score,
+        bonus_score=aggregate.bonus_score,
+        confidence=aggregate.confidence,
     )
 
 

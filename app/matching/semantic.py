@@ -91,9 +91,7 @@ class FakeEmbeddingClient:
 
     def _vector_for_text(self, text: str) -> tuple[float, ...]:
         digest = hashlib.sha256(text.encode("utf-8")).digest()
-        values = [
-            (digest[index % len(digest)] / 127.5) - 1.0 for index in range(self.dimensions)
-        ]
+        values = [(digest[index % len(digest)] / 127.5) - 1.0 for index in range(self.dimensions)]
         magnitude = math.sqrt(sum(value * value for value in values))
         if magnitude == 0:
             values[0] = 1.0

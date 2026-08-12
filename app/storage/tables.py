@@ -577,6 +577,10 @@ class RequirementMatchRow(Base):
     explanation: Mapped[str] = mapped_column(Text)
     retrieval_model_versions_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Entailment columns
+    entailment_relation: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    evidence_strength: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_hard_blocker: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class ApplicationMatchResultRow(Base):
@@ -639,6 +643,11 @@ class ApplicationMatchResultRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
     )
+    # Claim pipeline scoring columns
+    required_score: Mapped[float] = mapped_column(Float, default=0.0)
+    preferred_score: Mapped[float] = mapped_column(Float, default=0.0)
+    bonus_score: Mapped[float] = mapped_column(Float, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class ApplicationAnswerRow(Base):

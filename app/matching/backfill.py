@@ -124,9 +124,9 @@ class MatchingBackfillService:
     def pending_matching_count(self) -> int:
         return int(
             self._session.scalar(
-                select(func.count()).select_from(ApplicationRow).where(
-                    ApplicationRow.selected_cv_file_id.is_not(None)
-                )
+                select(func.count())
+                .select_from(ApplicationRow)
+                .where(ApplicationRow.selected_cv_file_id.is_not(None))
             )
             or 0
         )

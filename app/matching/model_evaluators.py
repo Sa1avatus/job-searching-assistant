@@ -1,0 +1,178 @@
+"""LLM-backed claim decomposer and evidence evaluator.
+
+Uses the existing ModelRouter to perform structured LLM calls
+for requirement decomposition and evidence entailment evaluation.
+"""
+
+from __future__ import annotations
+
+from app.llm.router import ModelRequest, ModelRouter, ModelTaskClass
+from app.matching.claims import (
+    Criticality,
+    RequirementDecomposition,
+)
+from app.matching.entailment import (
+    EntailmentRelation,
+    EntailmentResult,
+    compute_evidence_strength,
+)
+from app.matching.extraction import RequirementImportance, StrictExtractionModel
+from app.matching.normalization import SkillNormalizer
+from app.prompts.registry import PromptRegistry
+
+_IMPORTANCE_TO_CRITICALITY = {
+    RequirementImportance.REQUIRED.value: Criticality.REQUIRED,
+    RequirementImportance.PREFERRED.value: Criticality.PREFERRED,
+    RequirementImportance.OPTIONAL.value: Criticality.BONUS,
+    RequirementImportance.UNKNOWN.value: Criticality.PREFERRED,
+}
+
+
+class RouterRequirementDecomposer:
+    """Decomposes vacancy requirements into atomic claims via LLM."""
+
+    model_name = "model-router"
+    model_version = "provider-selected"
+    schema_version = "1"
+
+    def __init__(
+        self,
+        router: ModelRouter,
+        prompt_registry: PromptRegistry,
+        *,
+        skill_normalizer: SkillNormalizer | None = None,
+    ) -> None:
+        self._router = router
+        self._prompt_registry = prompt_registry
+        self._skill_normalizer = skill_normalizer or SkillNormalizer()
+
+    async def decompose(
+        self,
+        *,
+        requirement_id: str,
+        requirement_text: str,
+        requirement_type: str,
+        importance: str,
+        is_blocker: bool,
+    ) -> RequirementDecomposition:
+        prompt = self._prompt_registry.render(
+            "decompose_requirement",
+            {
+                "requirement_id": requirement_id,
+                "requirement_text": requirement_text,
+                "requirement_type": requirement_type,
+                "importance": importance,
+                "is_blocker": str(is_blocker),
+            },
+        )
+        result = await self._router.route(
+            ModelRequest(
+                task_name="decompose_requirement",
+                task_class=ModelTaskClass.LOW_COST,
+                prompt=prompt,
+                max_cost_usd=0.05,
+                timeout_seconds=60,
+            ),
+            RequirementDecomposition,
+        )
+        # Normalize subjects
+        normalized_claims = []
+        for claim in result.claims:
+            normalized = self._skill_normalizer.normalize(claim.subject)
+            normalized_claims.append(
+                claim.model_copy(update={"normalized_subject": normalized.canonical})
+            )
+        result = result.model_copy(update={"claims": normalized_claims})
+        return result
+
+
+class RouterEvidenceEvaluator:
+    """Evaluates evidence entailment against claims via LLM."""
+
+    model_name = "model-router"
+    model_version = "provider-selected"
+
+    def __init__(
+        self,
+        router: ModelRouter,
+        prompt_registry: PromptRegistry,
+    ) -> None:
+        self._router = router
+        self._prompt_registry = prompt_registry
+
+    async def evaluate(
+        self,
+        *,
+        claim_id: str,
+        claim_text: str,
+        claim_type: str,
+        evidence_id: str,
+        evidence_text: str,
+        semantic_score: float | None = None,
+        reranker_score: float | None = None,
+    ) -> EntailmentResult:
+        prompt = self._prompt_registry.render(
+            "evaluate_evidence_entailment",
+            {
+                "claim_id": claim_id,
+                "claim_text": claim_text,
+                "claim_type": claim_type,
+                "evidence_id": evidence_id,
+                "evidence_text": evidence_text,
+            },
+        )
+        raw_result = await self._router.route(
+            ModelRequest(
+                task_name="evaluate_evidence_entailment",
+                task_class=ModelTaskClass.LOW_COST,
+                prompt=prompt,
+                max_cost_usd=0.03,
+                timeout_seconds=60,
+            ),
+            _RawEntailmentResult,
+        )
+
+        # Convert raw result to typed EntailmentRelation
+        try:
+            relation = EntailmentRelation(raw_result.relation)
+        except ValueError:
+            relation = EntailmentRelation.UNKNOWN
+
+        # Compute evidence strength
+        entailment_score = raw_result.entailment_score
+        if entailment_score == 0.0:
+            # Derive from relation
+            _RELATION_BASE_SCORE = {
+                EntailmentRelation.ENTAILED: 0.95,
+                EntailmentRelation.PARTIAL: 0.6,
+                EntailmentRelation.RELATED_BUT_INSUFFICIENT: 0.3,
+                EntailmentRelation.CONTRADICTED: 0.0,
+                EntailmentRelation.UNKNOWN: 0.0,
+            }
+            entailment_score = _RELATION_BASE_SCORE.get(relation, 0.0)
+
+        strength, category = compute_evidence_strength(
+            relation, semantic_score, reranker_score, entailment_score
+        )
+
+        return EntailmentResult(
+            claim_id=claim_id,
+            evidence_id=evidence_id,
+            relation=relation,
+            confidence=raw_result.confidence,
+            reason=raw_result.reason,
+            semantic_score=semantic_score,
+            reranker_score=reranker_score,
+            entailment_score=round(entailment_score, 4),
+            evidence_strength=strength,
+            evidence_strength_category=category,
+        )
+
+
+class _RawEntailmentResult(StrictExtractionModel):
+    """Internal schema for LLM entailment evaluation output."""
+
+    relation: str
+    confidence: float = 0.5
+    reason: str = ""
+    entailment_score: float = 0.0

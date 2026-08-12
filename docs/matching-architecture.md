@@ -6,7 +6,9 @@ relationship between legacy and v2 results.
 The pipeline is:
 
 ```text
-structured extraction -> skill normalization -> hard relevance gate -> evidence indexing -> hybrid retrieval -> reranking -> deterministic scoring -> RAG enrichment
+structured extraction -> skill normalization -> hard relevance gate -> evidence indexing ->
+  claim decomposition -> per-claim retrieval -> reranking -> entailment evaluation ->
+  deterministic scoring -> gap analysis -> RAG enrichment
 ```
 
 PostgreSQL owns requirements, candidate evidence, embedding metadata, per-requirement matches, and
@@ -22,15 +24,22 @@ source-grounded inputs but never choose the final score.
   Custom aliases can be injected via the constructor.
 - `app/matching/relevance.py` rejects only explicit typed contradictions before indexing and model
   ranking. Missing or unknown typed evidence is reviewable and never becomes an automatic reject.
-  Every aggregate explanation records the gate decision; rejected results also record stable reason
-  codes and the affected requirement identifiers.
 - `app/matching/indexing.py` and `opensearch_index.py` own evidence projection and aliases.
 - `app/matching/retrieval.py` fuses bounded lexical and dense candidates with mandatory user and
   resume filters.
-- `app/matching/rag_client.py` provides an optional RAG integration layer. `RagClient` protocol
-  with `search()`, `ingest_document()`, and `health()` methods. `RagHttpClient` implements the
-  actual `rag-platform` contract; `RagFallbackClient` returns empty results when RAG is unavailable.
-  RAG is never a hard dependency — the pipeline works identically without it.
+- `app/matching/claims.py` defines atomic claim decomposition models and the decomposer protocol.
+- `app/matching/claim_pipeline.py` orchestrates the claim-based matching pipeline:
+  requirement decomposition → per-claim retrieval → reranking → entailment evaluation → aggregation.
+- `app/matching/entailment.py` defines evidence entailment evaluation with the five-level relation
+  model (entailed, partial, related_but_insufficient, contradicted, unknown) and evidence strength
+  computation.
+- `app/matching/duration.py` provides deterministic duration evaluation using union intervals to
+  avoid double-counting parallel work.
+- `app/matching/gap_analysis.py` produces profile gap analysis distinguishing skill gaps from
+  evidence gaps, duration gaps, and metadata gaps.
+- `app/matching/model_evaluators.py` contains LLM-backed requirement decomposer and evidence
+  evaluator implementations using the existing ModelRouter.
+- `app/matching/rag_client.py` provides an optional RAG integration layer.
 - `app/matching/scoring.py` applies deterministic weights, blockers, eligibility, and score caps.
   Component scores include hard_skill, preferred_skill, role, seniority, experience, work_format,
   location, domain, and language. Aggregate quality signals include semantic_similarity (weighted
@@ -39,9 +48,34 @@ source-grounded inputs but never choose the final score.
 - `app/matching/pipeline.py` coordinates stages, persists the result, and optionally enriches the
   explanation with RAG context from related vacancies and profiles.
 - `app/matching/jobs.py` and `backfill.py` provide durable, idempotent execution.
-- `ml_service/` remains the optional embedding HTTP service. Reranking can be delegated to the
-  independent sibling `reranker-service` through its bearer-authenticated public API; ordinary
-  tests use contract-accurate fakes.
+
+## Claim-based matching pipeline
+
+When both `RequirementDecomposer` and `EvidenceEvaluator` are injected, the pipeline uses the
+claim-based path:
+
+1. **Decomposition**: Each vacancy requirement is decomposed into atomic claims with types like
+   skill, experience_duration, practical_experience, production_experience, technology, etc.
+   Logical relationships (AND, OR) and criticality levels (required, preferred, bonus, hard_blocker)
+   are preserved.
+
+2. **Per-claim retrieval**: Each atomic claim gets its own targeted retrieval query, enabling
+   more focused evidence search than the whole-requirement text.
+
+3. **Entailment evaluation**: Retrieved evidence is evaluated against the claim using an LLM
+   that answers "does this evidence prove this claim?" — NOT "are these texts similar?".
+   Five relation levels: entailed, partial, related_but_insufficient, contradicted, unknown.
+
+4. **Evidence strength**: Computed from semantic score (25%), reranker score (25%), and entailment
+   score (50%). Capped by relation level: related_but_insufficient ≤ 0.49, etc.
+
+5. **Aggregation**: Claim results are aggregated into requirement-level assessments using AND
+   semantics (default). All required claims must be entailed for full match.
+
+6. **Gap analysis**: After matching, identifies real skill gaps vs evidence gaps where experience
+   exists but isn't sufficiently documented.
+
+When decomposer/evaluator are not available, falls back to the legacy whole-requirement path.
 
 ## Run lifecycle and idempotency
 
@@ -56,14 +90,14 @@ creating duplicates.
 ## Scoring invariants
 
 - Required requirements outweigh preferred and optional requirements.
-- A hard blocker sets ineligibility and caps the score regardless of semantic similarity.
-- An explicit incompatible role family or known authorization contradiction stops before indexing,
-  retrieval, and reranking and persists stable reason codes in the aggregate explanation.
-- Conceptual evidence cannot become hands-on or production evidence.
-- Related evidence receives a lower capped contribution.
-- Missing work authorization cannot be compensated by another skill category.
-- The final 0–100 score is a pure function of versioned inputs and scoring configuration.
-- A network response or model output never directly supplies the final score.
+- A hard blocker (work authorization, mandatory location, etc.) sets score to 0.
+- Regular required requirements use proportional penalty: missing N out of M caps score at
+  max(20, 80 * (1 - N/M)), NOT a fixed 49.
+- Entailment relation overrides legacy match level when available.
+- Semantic similarity alone is never sufficient evidence for a match.
+- Related_but_insufficient evidence is capped at strength 0.49.
+- The final score includes separate required_score, preferred_score, bonus_score, confidence, and
+  hard_blockers list.
 - RAG context enrichment is informational only — it never changes the deterministic score.
 
 ## Failure behavior
@@ -73,15 +107,14 @@ creating duplicates.
 - Embedding failure falls back to lexical retrieval.
 - OpenSearch failure falls back to a bounded PostgreSQL lexical scan without mutating business data.
 - Reranker failure uses normalized hybrid scores with a conservative cap.
+- Claim decomposition failure falls back to legacy whole-requirement matching.
+- Entailment evaluation failure marks the claim as unknown (not entailed).
 - Missing independent reranker configuration performs no network call and follows the same
   conservative hybrid-score fallback.
 - RAG unavailability is logged and recorded in the explanation as an error dict; the pipeline
   continues with local data only.
-- A failed shadow calculation does not block the existing discovery/application path.
 
 `applications.match_score` retains its legacy meaning in shadow mode. When v2 is deliberately
-promoted, the deterministic final score can be synchronized to that compatibility field. Promotion
-requires the reviewed evaluation and rollback process in `matching-evaluation.md` and
-`matching-operations.md`.
+promoted, the deterministic final score can be synchronized to that compatibility field.
 
 See `matching-data-model.md` for persistence and `matching-local-development.md` for local checks.

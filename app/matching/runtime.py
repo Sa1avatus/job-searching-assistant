@@ -14,6 +14,7 @@ from app.llm.providers.gemini import GeminiProvider
 from app.llm.router import ModelProvider, ModelRouter
 from app.matching.http_models import HttpEmbeddingClient, HttpReranker, UnavailableReranker
 from app.matching.indexing import EvidenceReindexService
+from app.matching.model_evaluators import RouterEvidenceEvaluator, RouterRequirementDecomposer
 from app.matching.model_extractors import (
     RouterCandidateEvidenceExtractor,
     RouterVacancyRequirementExtractor,
@@ -118,6 +119,9 @@ class MatchingRuntime:
                     dimensions=self._settings.embedding_dimensions,
                 )
                 await search_index.ensure_index()
+                # Create claim decomposer and evidence evaluator
+                claim_decomposer = RouterRequirementDecomposer(router, prompt_registry)
+                evidence_evaluator = RouterEvidenceEvaluator(router, prompt_registry)
                 pipeline = MatchingPipeline(
                     session,
                     RouterVacancyRequirementExtractor(router, prompt_registry),
@@ -134,6 +138,8 @@ class MatchingRuntime:
                         embedding_client,
                         search_index,
                     ),
+                    claim_decomposer=claim_decomposer,
+                    evidence_evaluator=evidence_evaluator,
                     shadow_mode=self._settings.matching_v2_shadow_mode,
                     fallback_enabled=self._settings.matching_v2_fallback_enabled,
                 )

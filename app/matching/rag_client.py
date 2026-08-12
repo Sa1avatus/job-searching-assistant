@@ -123,9 +123,7 @@ class RagHttpClient:
             RagSearchResult(
                 chunk_id=str(item.get("chunk_id", "")),
                 document_id=str(item.get("document_id", "")),
-                external_document_id=str(
-                    item.get("external_document_id", "")
-                ),
+                external_document_id=str(item.get("external_document_id", "")),
                 collection=str(item.get("collection", "")),
                 content=str(item.get("content", "")),
                 score=float(item.get("score", 0)),
@@ -195,9 +193,7 @@ class RagHttpClient:
         )
         return RagDocumentResult(
             document_id=str(data.get("id", "")),
-            external_document_id=str(
-                data.get("external_document_id", external_document_id)
-            ),
+            external_document_id=str(data.get("external_document_id", external_document_id)),
             version=int(data.get("version", version)),
             status=str(data.get("status", "unknown")),
             content_hash=str(data.get("content_hash", "")),

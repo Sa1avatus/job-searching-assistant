@@ -225,8 +225,7 @@ class HybridRetriever:
         dense_by_id = _normalized_score_by_id(dense_hits)
         evidence_ids = tuple(
             dict.fromkeys(
-                [hit.evidence_id for hit in lexical_hits]
-                + [hit.evidence_id for hit in dense_hits]
+                [hit.evidence_id for hit in lexical_hits] + [hit.evidence_id for hit in dense_hits]
             )
         )
         stored_evidence = self._evidence_repository.load_by_ids(

@@ -1,3 +1,10 @@
+"""Vacancy-candidate matching pipeline.
+
+Coordinates extraction, indexing, retrieval, reranking, scoring, and optional
+RAG enrichment.  PostgreSQL owns requirements, candidate evidence, embedding
+metadata, per-requirement matches, and aggregate results.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -10,6 +17,9 @@ import structlog
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.matching.claim_pipeline import ClaimMatchPipeline, ClaimPipelineResult
+from app.matching.claims import RequirementDecomposer
+from app.matching.entailment import EvidenceEvaluator
 from app.matching.extraction import (
     CandidateEvidenceExtractor,
     EvidenceType,
@@ -84,6 +94,10 @@ class MatchingPipeline:
         relevance_gate: HardRelevanceGate | None = None,
         skill_normalizer: SkillNormalizer | None = None,
         rag_client: RagClient | None = None,
+        claim_decomposer: RequirementDecomposer | None = None,
+        evidence_evaluator: EvidenceEvaluator | None = None,
+        retrieval_top_k: int = 20,
+        reranker_top_k: int = 5,
         shadow_mode: bool = True,
         fallback_enabled: bool = True,
     ) -> None:
@@ -97,8 +111,25 @@ class MatchingPipeline:
         self._relevance_gate = relevance_gate or HardRelevanceGate()
         self._skill_normalizer = skill_normalizer or SkillNormalizer()
         self._rag_client = rag_client
+        self._claim_decomposer = claim_decomposer
+        self._evidence_evaluator = evidence_evaluator
+        self._retrieval_top_k = retrieval_top_k
+        self._reranker_top_k = reranker_top_k
         self._shadow_mode = shadow_mode
         self._fallback_enabled = fallback_enabled
+        # Claim pipeline instance (created when both decomposer and evaluator are available)
+        self._claim_pipeline: ClaimMatchPipeline | None = None
+        if claim_decomposer is not None and evidence_evaluator is not None:
+            self._claim_pipeline = ClaimMatchPipeline(
+                session=session,
+                decomposer=claim_decomposer,
+                evaluator=evidence_evaluator,
+                retriever=retriever,
+                reranker=reranker,
+                retrieval_top_k=retrieval_top_k,
+                reranker_top_k=reranker_top_k,
+                fallback_enabled=fallback_enabled,
+            )
 
     async def match(
         self,
@@ -175,15 +206,41 @@ class MatchingPipeline:
                 indexing_duration = time.perf_counter() - indexing_started
                 metrics.observe("embedding_duration_seconds", indexing_duration)
                 metrics.set_gauge("evidence_index_size", float(len(evidence_rows)))
+
             self._set_status(application.id, "retrieving")
             self._set_status(application.id, "reranking")
-            assessments = []
-            for requirement in requirement_rows:
-                assessment = await self._match_requirement(application, cv_file, requirement)
-                assessments.append(assessment)
+
+            # Choose pipeline: claim-based or legacy
+            assessments, claim_result = await self._run_matching(
+                application, cv_file, requirement_rows
+            )
+
             deterministic_score = self._scorer.score(tuple(assessments))
             self._session.flush()
             rag_context = await self._fetch_rag_context(vacancy, application)
+
+            # Build explanation with gap analysis if available
+            gap_analysis_dict = None
+            if claim_result and claim_result.gap_analysis:
+                gap_analysis_dict = {
+                    "total_gaps": claim_result.gap_analysis.total_gaps,
+                    "skill_gaps": claim_result.gap_analysis.skill_gaps,
+                    "evidence_gaps": claim_result.gap_analysis.evidence_gaps,
+                    "duration_gaps": claim_result.gap_analysis.duration_gaps,
+                    "metadata_gaps": claim_result.gap_analysis.gap_analysis
+                    if hasattr(claim_result.gap_analysis, "gap_analysis")
+                    else 0,
+                    "gaps": [
+                        {
+                            "gap_type": g.gap_type.value,
+                            "claim_subject": g.claim_subject,
+                            "description": g.description,
+                            "suggested_action": g.suggested_action,
+                        }
+                        for g in claim_result.gap_analysis.gaps[:20]
+                    ],
+                }
+
             aggregate = self._store_aggregate(
                 application,
                 cv_file,
@@ -191,6 +248,7 @@ class MatchingPipeline:
                 relevance=relevance,
                 assessments=tuple(assessments),
                 rag_context=rag_context,
+                gap_analysis=gap_analysis_dict,
             )
             if not self._shadow_mode:
                 application.match_score = deterministic_score.final_score
@@ -215,6 +273,7 @@ class MatchingPipeline:
                 fallback_used=False,
                 scoring_version=aggregate.scoring_version,
                 model_versions=aggregate.model_versions_json,
+                claim_pipeline_used=self._claim_pipeline is not None,
             )
             return aggregate
         except Exception as error:
@@ -246,6 +305,187 @@ class MatchingPipeline:
                 fallback_used=self._fallback_enabled,
             )
             raise
+
+    async def _run_matching(
+        self,
+        application: ApplicationRow,
+        cv_file: CvFileRow,
+        requirement_rows: tuple[VacancyRequirementRow, ...],
+    ) -> tuple[list[RequirementAssessment], ClaimPipelineResult | None]:
+        """Run matching through claim pipeline if available, else legacy."""
+        if self._claim_pipeline is not None:
+            try:
+                claim_result = await self._claim_pipeline.match_requirements(
+                    application_id=application.id,
+                    user_id=application.user_id,
+                    cv_file_id=cv_file.id,
+                    requirements=requirement_rows,
+                )
+                # Persist requirement match rows with claim details
+                for req_result in claim_result.requirement_results:
+                    best_entailment = None
+                    for cr in req_result.claim_results:
+                        if cr.best_entailment is not None and (
+                            best_entailment is None
+                            or cr.evidence_strength > best_entailment.evidence_strength
+                        ):
+                            best_entailment = cr.best_entailment
+
+                    self._session.add(
+                        RequirementMatchRow(
+                            application_id=application.id,
+                            requirement_id=req_result.requirement_id,
+                            evidence_id=best_entailment.evidence_id if best_entailment else None,
+                            lexical_score=None,
+                            dense_score=None,
+                            hybrid_score=best_entailment.semantic_score
+                            if best_entailment
+                            else None,
+                            reranker_raw_score=None,
+                            reranker_score=best_entailment.reranker_score
+                            if best_entailment
+                            else None,
+                            final_match_score=round(req_result.overall_strength * 100, 4),
+                            match_level=req_result.match_level.value,
+                            explanation=req_result.explanation,
+                            retrieval_model_versions_json={
+                                "pipeline": "claim-based",
+                                "decomposer": {
+                                    "name": self._claim_decomposer.model_name,
+                                    "version": self._claim_decomposer.model_version,
+                                },
+                                "evaluator": {
+                                    "name": self._evidence_evaluator.model_name,
+                                    "version": self._evidence_evaluator.model_version,
+                                },
+                                "reranker": {
+                                    "name": self._reranker.model_name,
+                                    "revision": self._reranker.model_revision,
+                                },
+                            },
+                        )
+                    )
+                metrics.increment("claim_pipeline_runs_total")
+                return claim_result.assessments, claim_result
+            except Exception as error:
+                logger.warning(
+                    "claim_pipeline_failed_falling_back_to_legacy",
+                    error_type=type(error).__name__,
+                )
+                metrics.increment("claim_pipeline_fallback_total")
+
+        # Legacy path
+        assessments = []
+        for requirement in requirement_rows:
+            assessment = await self._match_requirement_legacy(application, cv_file, requirement)
+            assessments.append(assessment)
+        return assessments, None
+
+    async def _match_requirement_legacy(
+        self,
+        application: ApplicationRow,
+        cv_file: CvFileRow,
+        requirement: VacancyRequirementRow,
+    ) -> RequirementAssessment:
+        """Legacy whole-requirement matching (kept for backward compatibility)."""
+        retrieval_started = time.perf_counter()
+        candidates = await self._retriever.retrieve(
+            requirement.normalized_text,
+            user_id=application.user_id,
+            cv_file_id=cv_file.id,
+        )
+        metrics.observe("retrieval_duration_seconds", time.perf_counter() - retrieval_started)
+        metrics.set_gauge("reranker_candidates_per_requirement", float(len(candidates)))
+        reranker_started = time.perf_counter()
+        reranker_available = True
+        try:
+            reranked = await self._reranker.rerank(requirement.normalized_text, candidates)
+        except Exception as error:
+            if not self._fallback_enabled:
+                raise
+            reranker_available = False
+            metrics.increment("reranker_unavailable_total")
+            logger.warning(
+                "reranker_unavailable",
+                application_id=application.id,
+                requirement_id=requirement.id,
+                failure_type=type(error).__name__,
+            )
+            reranked = tuple(
+                RerankedCandidate(
+                    candidate=candidate,
+                    raw_score=candidate.hybrid_score,
+                    normalized_score=candidate.hybrid_score,
+                )
+                for candidate in sorted(
+                    candidates,
+                    key=lambda item: (item.hybrid_score, item.evidence_id),
+                    reverse=True,
+                )
+            )
+        metrics.observe("reranker_duration_seconds", time.perf_counter() - reranker_started)
+        best_candidate = reranked[0] if reranked else None
+        evidence = (
+            self._session.get(CandidateEvidenceRow, best_candidate.candidate.evidence_id)
+            if best_candidate is not None
+            else None
+        )
+        match_level = self._classify_match(
+            best_candidate.normalized_score if best_candidate is not None else 0,
+            evidence,
+            is_blocker=requirement.is_blocker,
+        )
+        final_match_score = (
+            round(100 * best_candidate.normalized_score, 4) if best_candidate is not None else 0.0
+        )
+        self._session.add(
+            RequirementMatchRow(
+                application_id=application.id,
+                requirement_id=requirement.id,
+                evidence_id=evidence.id if evidence is not None else None,
+                lexical_score=(
+                    best_candidate.candidate.lexical_score if best_candidate is not None else None
+                ),
+                dense_score=(
+                    best_candidate.candidate.dense_score if best_candidate is not None else None
+                ),
+                hybrid_score=(
+                    best_candidate.candidate.hybrid_score if best_candidate is not None else None
+                ),
+                reranker_raw_score=(
+                    best_candidate.raw_score
+                    if best_candidate is not None and reranker_available
+                    else None
+                ),
+                reranker_score=(
+                    best_candidate.normalized_score
+                    if best_candidate is not None and reranker_available
+                    else None
+                ),
+                final_match_score=final_match_score,
+                match_level=match_level.value,
+                explanation=self._requirement_explanation(match_level, evidence),
+                retrieval_model_versions_json={
+                    "pipeline": "legacy",
+                    "reranker": {
+                        "name": self._reranker.model_name,
+                        "revision": self._reranker.model_revision,
+                        "status": "available" if reranker_available else "reranker_unavailable",
+                    },
+                },
+            )
+        )
+        return RequirementAssessment(
+            requirement_id=requirement.id,
+            requirement_type=RequirementType(requirement.requirement_type),
+            importance=RequirementImportance(requirement.importance),
+            weight=requirement.weight,
+            is_blocker=requirement.is_blocker,
+            match_level=match_level,
+            evidence_experience_level=(
+                ExperienceLevel(evidence.experience_level) if evidence is not None else None
+            ),
+        )
 
     def _start_run(
         self,
@@ -442,6 +682,7 @@ class MatchingPipeline:
                 importance=RequirementImportance(row.importance),
                 weight=row.weight,
                 is_blocker=row.is_blocker or row.id in rejected_ids,
+                is_hard_blocker=row.is_blocker or row.id in rejected_ids,
                 match_level=(MatchLevel.BLOCKER if row.id in rejected_ids else MatchLevel.MISSING),
             )
             for row in requirements
@@ -453,116 +694,6 @@ class MatchingPipeline:
             relevance=relevance,
         )
 
-    async def _match_requirement(
-        self,
-        application: ApplicationRow,
-        cv_file: CvFileRow,
-        requirement: VacancyRequirementRow,
-    ) -> RequirementAssessment:
-        retrieval_started = time.perf_counter()
-        candidates = await self._retriever.retrieve(
-            requirement.normalized_text,
-            user_id=application.user_id,
-            cv_file_id=cv_file.id,
-        )
-        metrics.observe(
-            "retrieval_duration_seconds",
-            time.perf_counter() - retrieval_started,
-        )
-        metrics.set_gauge("reranker_candidates_per_requirement", float(len(candidates)))
-        reranker_started = time.perf_counter()
-        reranker_available = True
-        try:
-            reranked = await self._reranker.rerank(requirement.normalized_text, candidates)
-        except Exception as error:
-            if not self._fallback_enabled:
-                raise
-            reranker_available = False
-            metrics.increment("reranker_unavailable_total")
-            logger.warning(
-                "reranker_unavailable",
-                application_id=application.id,
-                requirement_id=requirement.id,
-                failure_type=type(error).__name__,
-            )
-            reranked = tuple(
-                RerankedCandidate(
-                    candidate=candidate,
-                    raw_score=candidate.hybrid_score,
-                    normalized_score=candidate.hybrid_score,
-                )
-                for candidate in sorted(
-                    candidates,
-                    key=lambda item: (item.hybrid_score, item.evidence_id),
-                    reverse=True,
-                )
-            )
-        metrics.observe(
-            "reranker_duration_seconds",
-            time.perf_counter() - reranker_started,
-        )
-        best_candidate = reranked[0] if reranked else None
-        evidence = (
-            self._session.get(CandidateEvidenceRow, best_candidate.candidate.evidence_id)
-            if best_candidate is not None
-            else None
-        )
-        match_level = self._classify_match(
-            best_candidate.normalized_score if best_candidate is not None else 0,
-            evidence,
-            is_blocker=requirement.is_blocker,
-        )
-        final_match_score = (
-            round(100 * best_candidate.normalized_score, 4) if best_candidate is not None else 0.0
-        )
-        self._session.add(
-            RequirementMatchRow(
-                application_id=application.id,
-                requirement_id=requirement.id,
-                evidence_id=evidence.id if evidence is not None else None,
-                lexical_score=(
-                    best_candidate.candidate.lexical_score if best_candidate is not None else None
-                ),
-                dense_score=(
-                    best_candidate.candidate.dense_score if best_candidate is not None else None
-                ),
-                hybrid_score=(
-                    best_candidate.candidate.hybrid_score if best_candidate is not None else None
-                ),
-                reranker_raw_score=(
-                    best_candidate.raw_score
-                    if best_candidate is not None and reranker_available
-                    else None
-                ),
-                reranker_score=(
-                    best_candidate.normalized_score
-                    if best_candidate is not None and reranker_available
-                    else None
-                ),
-                final_match_score=final_match_score,
-                match_level=match_level.value,
-                explanation=self._requirement_explanation(match_level, evidence),
-                retrieval_model_versions_json={
-                    "reranker": {
-                        "name": self._reranker.model_name,
-                        "revision": self._reranker.model_revision,
-                        "status": ("available" if reranker_available else "reranker_unavailable"),
-                    }
-                },
-            )
-        )
-        return RequirementAssessment(
-            requirement_id=requirement.id,
-            requirement_type=RequirementType(requirement.requirement_type),
-            importance=RequirementImportance(requirement.importance),
-            weight=requirement.weight,
-            is_blocker=requirement.is_blocker,
-            match_level=match_level,
-            evidence_experience_level=(
-                ExperienceLevel(evidence.experience_level) if evidence is not None else None
-            ),
-        )
-
     def _store_aggregate(
         self,
         application: ApplicationRow,
@@ -572,6 +703,7 @@ class MatchingPipeline:
         relevance: RelevanceResult | None = None,
         assessments: tuple[RequirementAssessment, ...] = (),
         rag_context: dict[str, object] | None = None,
+        gap_analysis: dict[str, object] | None = None,
     ) -> ApplicationMatchResultRow:
         aggregate = self._session.get(ApplicationMatchResultRow, application.id)
         if aggregate is None:
@@ -593,8 +725,8 @@ class MatchingPipeline:
         aggregate.matched_required_count = score.matched_required_count
         aggregate.missing_required_count = score.missing_required_count
         aggregate.scoring_version = score.scoring_version
-        semantic_similarity, reranker_score, requirements_match = (
-            self._compute_aggregate_scores(application.id, score)
+        semantic_similarity, reranker_score, requirements_match = self._compute_aggregate_scores(
+            application.id, score
         )
         aggregate.semantic_similarity = semantic_similarity
         aggregate.reranker_score = reranker_score
@@ -612,6 +744,7 @@ class MatchingPipeline:
                 "name": self._reranker.model_name,
                 "revision": self._reranker.model_revision,
             },
+            "claim_pipeline": self._claim_pipeline is not None,
         }
         explanation: dict[str, object] = {
             "summary": list(score.explanation),
@@ -629,15 +762,12 @@ class MatchingPipeline:
                 if a.match_level not in {MatchLevel.MISSING, MatchLevel.BLOCKER}
             ]
             missing_ids = [
-                a.requirement_id
-                for a in assessments
-                if a.match_level is MatchLevel.MISSING
+                a.requirement_id for a in assessments if a.match_level is MatchLevel.MISSING
             ]
             blocker_ids = [
                 a.requirement_id
                 for a in assessments
-                if a.is_blocker
-                and a.match_level in {MatchLevel.MISSING, MatchLevel.BLOCKER}
+                if a.is_blocker and a.match_level in {MatchLevel.MISSING, MatchLevel.BLOCKER}
             ]
             if matched_ids:
                 explanation["matched_requirement_ids"] = matched_ids
@@ -647,8 +777,21 @@ class MatchingPipeline:
                 explanation["blocker_requirement_ids"] = blocker_ids
         if rag_context:
             explanation["rag_context"] = rag_context
+        if gap_analysis:
+            explanation["gap_analysis"] = gap_analysis
+        # New fields
+        explanation["required_score"] = score.required_score
+        explanation["preferred_score"] = score.preferred_score
+        explanation["bonus_score"] = score.bonus_score
+        explanation["hard_blockers"] = list(score.hard_blockers)
+        explanation["confidence"] = score.confidence
         aggregate.explanation_json = explanation
         aggregate.calculated_at = datetime.now(UTC)
+        # Persist new scoring fields
+        aggregate.required_score = score.required_score
+        aggregate.preferred_score = score.preferred_score
+        aggregate.bonus_score = score.bonus_score
+        aggregate.confidence = score.confidence
         return aggregate
 
     def _compute_aggregate_scores(
@@ -671,19 +814,13 @@ class MatchingPipeline:
         total_weight = sum(row[2] for row in rows)
         if total_weight == 0:
             return (0.0, 0.0, 0.0)
-        semantic_similarity = (
-            sum((row[0] or 0.0) * row[2] for row in rows) / total_weight
-        )
+        semantic_similarity = sum((row[0] or 0.0) * row[2] for row in rows) / total_weight
         reranker_scores = [(row[1] or 0.0) * row[2] for row in rows if row[1] is not None]
         reranker_weights = [row[2] for row in rows if row[1] is not None]
-        reranker_score = (
-            sum(reranker_scores) / sum(reranker_weights) if reranker_weights else 0.0
-        )
+        reranker_score = sum(reranker_scores) / sum(reranker_weights) if reranker_weights else 0.0
         total_required = score.matched_required_count + score.missing_required_count
         requirements_match = (
-            (score.matched_required_count / total_required * 100)
-            if total_required > 0
-            else 100.0
+            (score.matched_required_count / total_required * 100) if total_required > 0 else 100.0
         )
         return (
             round(semantic_similarity, 4),
@@ -718,9 +855,7 @@ class MatchingPipeline:
                         "collection": r.collection,
                         "score": round(r.score, 4),
                         "reranker_score": (
-                            round(r.reranker_score, 4)
-                            if r.reranker_score is not None
-                            else None
+                            round(r.reranker_score, 4) if r.reranker_score is not None else None
                         ),
                     }
                     for r in response.results[:5]
@@ -781,13 +916,6 @@ class MatchingPipeline:
     ) -> str:
         source_hash = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
         identity = ":".join(
-            (
-                entity_type,
-                entity_id,
-                model_name,
-                model_version,
-                schema_version,
-                source_hash,
-            )
+            (entity_type, entity_id, model_name, model_version, schema_version, source_hash)
         )
         return str(uuid.uuid5(uuid.NAMESPACE_URL, identity))

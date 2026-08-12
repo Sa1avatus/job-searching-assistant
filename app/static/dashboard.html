@@ -3115,39 +3115,66 @@
         const payload = await asJson(response);
         const heading = element(
           'strong',
-          `Matching v2: ${Math.round(payload.final_score)}% · статус ${payload.status}`
+          `Matching v2: ${Math.round(payload.final_score)}% · статус ${payload.status}` +
+          (payload.required_score !== undefined ? `\nОбязательные: ${Math.round(payload.required_score)}% · Желательные: ${Math.round(payload.preferred_score || 0)}% · Плюсы: ${Math.round(payload.bonus_score || 0)}%` : '')
         );
         const summary = element(
           'div',
-          `Обязательных требований найдено: ${payload.matched_required_count}; не найдено: ${payload.missing_required_count}.`,
+          `Подтверждено: ${payload.matched_required_count} · Не подтверждено: ${payload.missing_required_count} · Hard blockers: ${payload.blocker_count}` +
+          (payload.confidence ? ` · Уверенность: ${Math.round(payload.confidence * 100)}%` : ''),
           'task-state'
         );
         container.replaceChildren(heading, summary);
         if (payload.fallback_reason) {
           container.append(element('div', `Fallback: ${payload.fallback_reason}`, 'task-state'));
         }
-        const blockers = payload.requirements.filter(requirement => requirement.match_level === 'blocker');
-        const missing = payload.requirements.filter(
-          requirement => ['missing', 'theoretical_only'].includes(requirement.match_level)
-        );
-        const supported = payload.requirements.filter(requirement => requirement.evidence_text);
+        // Categorize requirements by entailment relation
+        const entailed = payload.requirements.filter(r => r.entailment_relation === 'entailed');
+        const partial = payload.requirements.filter(r => r.entailment_relation === 'partial');
+        const relatedInsufficient = payload.requirements.filter(r => r.entailment_relation === 'related_but_insufficient');
+        const blockers = payload.requirements.filter(r => r.match_level === 'blocker' || r.is_hard_blocker);
+        const missing = payload.requirements.filter(r => ['missing', 'theoretical_only'].includes(r.match_level) && !r.is_hard_blocker);
         appendMatchDetailList(
           container,
-          'Блокирующие требования',
+          '🚫 Блокирующие',
           blockers,
           requirement => requirement.requirement_text
         );
         appendMissingSkillsTags(
           container,
-          'Чего не хватает',
+          '❌ Не подтверждено',
           missing,
           requirement => requirement.requirement_text
         );
         appendMatchDetailList(
           container,
-          'Подтверждения в резюме',
-          supported,
-          requirement => `${requirement.requirement_text}: ${requirement.evidence_source_fragment || requirement.evidence_text}`
+          '✅ Подтверждено',
+          entailed,
+          requirement => `${requirement.requirement_text}: ${requirement.evidence_source_fragment || requirement.evidence_text || ''}` +
+            (requirement.evidence_strength !== null ? ` (${Math.round(requirement.evidence_strength * 100)}%)` : '')
+        );
+        appendMatchDetailList(
+          container,
+          '🔶 Частично подтверждено',
+          partial,
+          requirement => `${requirement.requirement_text}: ${requirement.evidence_source_fragment || requirement.evidence_text || ''}` +
+            (requirement.evidence_strength !== null ? ` (${Math.round(requirement.evidence_strength * 100)}%)` : '')
+        );
+        appendMatchDetailList(
+          container,
+          '🔗 Связанные, но недостаточные',
+          relatedInsufficient,
+          requirement => `${requirement.requirement_text}: ${requirement.evidence_text || ''}` +
+            (requirement.explanation ? ` — ${requirement.explanation.split('\\n')[0]}` : '')
+        );
+        appendMatchDetailList(
+          container,
+          '📊 Decomposition',
+          payload.requirements.filter(r => r.retrieval_model_versions && r.retrieval_model_versions.pipeline === 'claim-based'),
+          requirement => {
+            const lines = requirement.explanation.split('\\n');
+            return lines.slice(0, Math.min(lines.length, 8)).join('<br>');
+          }
         );
         button.textContent = 'Скрыть объяснение';
       } finally {

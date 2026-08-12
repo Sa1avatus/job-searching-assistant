@@ -66,15 +66,11 @@ class MatchingJobService:
                 )
             )
             existing = self._session.scalar(
-                select(WorkflowTaskRow).where(
-                    WorkflowTaskRow.idempotency_key == idempotency_key
-                )
+                select(WorkflowTaskRow).where(WorkflowTaskRow.idempotency_key == idempotency_key)
             )
             if existing is not None:
                 self._session.execute(
-                    delete(TaskTransitionRow).where(
-                        TaskTransitionRow.task_id == existing.id
-                    )
+                    delete(TaskTransitionRow).where(TaskTransitionRow.task_id == existing.id)
                 )
                 self._session.delete(existing)
                 self._session.flush()
@@ -96,9 +92,7 @@ class MatchingJobService:
             )
             repository.save(workflow_task)
         task = self._session.scalar(
-            select(WorkflowTaskRow).where(
-                WorkflowTaskRow.idempotency_key == idempotency_key
-            )
+            select(WorkflowTaskRow).where(WorkflowTaskRow.idempotency_key == idempotency_key)
         )
         if task is None:
             raise RuntimeError("Matching task was not persisted")

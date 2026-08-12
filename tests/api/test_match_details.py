@@ -135,7 +135,7 @@ def test_match_details_returns_explainable_shadow_result() -> None:
                     blocker_count=0,
                     matched_required_count=1,
                     missing_required_count=0,
-                    scoring_version="matching-v2.1",
+                    scoring_version="matching-v2.2",
                     model_versions_json={"reranker": {"name": "fake"}},
                     explanation_json={"summary": ["Supported"]},
                     calculated_at=datetime.now(UTC),

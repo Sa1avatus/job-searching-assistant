@@ -225,6 +225,9 @@ class RequirementMatchDetailResponse(BaseModel):
     match_level: str
     explanation: str
     retrieval_model_versions: dict[str, object]
+    entailment_relation: str | None = None
+    evidence_strength: float | None = None
+    is_hard_blocker: bool = False
 
 
 class ApplicationMatchDetailsResponse(BaseModel):
@@ -258,6 +261,10 @@ class ApplicationMatchDetailsResponse(BaseModel):
     started_at: datetime | None
     calculated_at: datetime | None
     requirements: list[RequirementMatchDetailResponse]
+    required_score: float = 0.0
+    preferred_score: float = 0.0
+    bonus_score: float = 0.0
+    confidence: float = 0.0
 
 
 class TaskTransitionResponse(BaseModel):

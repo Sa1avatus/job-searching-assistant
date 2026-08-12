@@ -32,6 +32,28 @@
       "model_task_class": "low_cost",
       "created_on": "2026-07-26",
       "is_active": true
+    },
+    {
+      "name": "decompose_requirement",
+      "purpose": "Decompose a composite vacancy requirement into atomic claims with logical relationships.",
+      "version": 1,
+      "template": "Decompose this vacancy requirement into atomic, independently testable claims. Each claim must be a single assertion that can be verified against candidate evidence.\n\nRequirement: {requirement_text}\nType: {requirement_type}\nImportance: {importance}\nIs blocker: {is_blocker}\n\nRules:\n- Extract atomic claims while preserving logical relationships.\n- Do not invent requirements beyond what the text states.\n- Do not turn examples or bonus technologies into mandatory requirements.\n- Preserve numeric thresholds (years, levels).\n- Preserve OR semantics: 'PostgreSQL or MySQL' creates OR claims, not AND.\n- Preserve AND semantics: 'Python and FastAPI' requires both.\n- 'will be a plus' / 'nice to have' / 'желательно' → preferred or bonus criticality.\n- Mandatory language without 'plus'/'nice to have' → required criticality.\n- Explicit blockers (work authorization, mandatory location) → hard_blocker.\n- For duration claims (X years of Y), set claim_type=experience_duration, operator='>=', required_value=N, unit='years'.\n- For practical/production claims, set claim_type=practical_experience or production_experience.\n- For technology claims, set claim_type=technology or skill.\n- Set requirement_id to {requirement_id}.\n- Generate unique claim IDs as '{requirement_id}-claim-N'.\n- Set is_composite=true if more than one claim is extracted.\n\nReturn the decomposition with all claims.",
+      "input_schema": "DecomposeRequirementInput",
+      "output_schema": "RequirementDecomposition",
+      "model_task_class": "low_cost",
+      "created_on": "2026-08-13",
+      "is_active": true
+    },
+    {
+      "name": "evaluate_evidence_entailment",
+      "purpose": "Evaluate whether evidence entails, partially supports, or is merely related to an atomic claim.",
+      "version": 1,
+      "template": "Evaluate whether the following evidence CONFIRMS the specific claim. This is an entailment task, not a similarity task.\n\nClaim: {claim_text}\nClaim type: {claim_type}\nEvidence: {evidence_text}\n\nRules:\n- The evidence must explicitly or logically establish the claim.\n- Topical similarity is NOT sufficient for entailment.\n- Do not infer experience duration from technology lists alone.\n- Do not infer production usage from experimentation or model training.\n- Do not infer RAG from generic LLM integration.\n- Do not infer commercial experience unless the source explicitly establishes it.\n- Do not assume unstated technologies.\n- 'NLP classification pipelines using TensorFlow and PyTorch' does NOT entail 'production Python backend development'.\n- 'Designed LLM integrations' does NOT entail 'practical RAG experience'.\n- 'Built Python/FastAPI backend services deployed with Docker' DOES entail 'production Python development'.\n- 'Developed RAG service with embedding retrieval and reranking' DOES entail 'practical RAG'.\n\nReturn: relation (entailed, partial, related_but_insufficient, contradicted, unknown), confidence (0-1), reason, and entailment_score (0-1, how strongly the evidence supports the claim).",
+      "input_schema": "EvaluateEntailmentInput",
+      "output_schema": "EntailmentResult",
+      "model_task_class": "low_cost",
+      "created_on": "2026-08-13",
+      "is_active": true
     }
   ]
 }
