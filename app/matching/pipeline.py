@@ -18,6 +18,7 @@ from app.matching.extraction import (
     RequirementType,
     VacancyRequirementExtractor,
 )
+from app.matching.normalization import SkillNormalizer
 from app.matching.relevance import (
     HardRelevanceGate,
     RelevanceDecision,
@@ -80,6 +81,7 @@ class MatchingPipeline:
         *,
         evidence_indexer: EvidenceIndexer | None = None,
         relevance_gate: HardRelevanceGate | None = None,
+        skill_normalizer: SkillNormalizer | None = None,
         shadow_mode: bool = True,
         fallback_enabled: bool = True,
     ) -> None:
@@ -91,6 +93,7 @@ class MatchingPipeline:
         self._scorer = scorer
         self._evidence_indexer = evidence_indexer
         self._relevance_gate = relevance_gate or HardRelevanceGate()
+        self._skill_normalizer = skill_normalizer or SkillNormalizer()
         self._shadow_mode = shadow_mode
         self._fallback_enabled = fallback_enabled
 
@@ -297,7 +300,9 @@ class MatchingPipeline:
             VacancyRequirementRow(
                 vacancy_id=vacancy.id,
                 requirement_text=requirement.text,
-                normalized_text=requirement.normalized_text,
+                normalized_text=self._skill_normalizer.normalize(
+                    requirement.normalized_text
+                ).canonical,
                 requirement_type=requirement.requirement_type.value,
                 importance=requirement.importance.value,
                 weight=requirement.weight,
@@ -353,7 +358,11 @@ class MatchingPipeline:
                 evidence_text=evidence.text,
                 normalized_text=evidence.normalized_text,
                 evidence_type=evidence.evidence_type.value,
-                skill_name=evidence.skill_name,
+                skill_name=(
+                    self._skill_normalizer.normalize(evidence.skill_name).canonical
+                    if evidence.skill_name is not None
+                    else None
+                ),
                 experience_level=evidence.experience_level.value,
                 years=evidence.years,
                 is_verified=evidence.is_verified,
