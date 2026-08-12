@@ -128,7 +128,7 @@ def test_http_reranker_preserves_raw_scores_and_orders_normalized_scores() -> No
                     {"id": "a", "text": "Evidence A", "metadata": {}},
                     {"id": "b", "text": "Evidence B", "metadata": {}},
                 ],
-                "top_n": None,
+                "top_n": 2,
                 "return_documents": False,
                 "truncate": True,
             }
