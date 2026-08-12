@@ -182,6 +182,7 @@ class MatchingPipeline:
                 cv_file,
                 deterministic_score,
                 relevance=relevance,
+                assessments=tuple(assessments),
             )
             if not self._shadow_mode:
                 application.match_score = deterministic_score.final_score
@@ -555,6 +556,7 @@ class MatchingPipeline:
         score: DeterministicScore,
         *,
         relevance: RelevanceResult | None = None,
+        assessments: tuple[RequirementAssessment, ...] = (),
     ) -> ApplicationMatchResultRow:
         aggregate = self._session.get(ApplicationMatchResultRow, application.id)
         if aggregate is None:
@@ -596,20 +598,39 @@ class MatchingPipeline:
                 "revision": self._reranker.model_revision,
             },
         }
-        aggregate.explanation_json = {
+        explanation: dict[str, object] = {
             "summary": list(score.explanation),
-            **(
-                {
-                    "hard_gate": {
-                        "decision": relevance.decision.value,
-                        "reason_codes": [reason.value for reason in relevance.reasons],
-                        "rejected_requirement_ids": list(relevance.rejected_requirement_ids),
-                    }
-                }
-                if relevance is not None
-                else {}
-            ),
         }
+        if relevance is not None:
+            explanation["hard_gate"] = {
+                "decision": relevance.decision.value,
+                "reason_codes": [reason.value for reason in relevance.reasons],
+                "rejected_requirement_ids": list(relevance.rejected_requirement_ids),
+            }
+        if assessments:
+            matched_ids = [
+                a.requirement_id
+                for a in assessments
+                if a.match_level not in {MatchLevel.MISSING, MatchLevel.BLOCKER}
+            ]
+            missing_ids = [
+                a.requirement_id
+                for a in assessments
+                if a.match_level is MatchLevel.MISSING
+            ]
+            blocker_ids = [
+                a.requirement_id
+                for a in assessments
+                if a.is_blocker
+                and a.match_level in {MatchLevel.MISSING, MatchLevel.BLOCKER}
+            ]
+            if matched_ids:
+                explanation["matched_requirement_ids"] = matched_ids
+            if missing_ids:
+                explanation["missing_requirement_ids"] = missing_ids
+            if blocker_ids:
+                explanation["blocker_requirement_ids"] = blocker_ids
+        aggregate.explanation_json = explanation
         aggregate.calculated_at = datetime.now(UTC)
         return aggregate
 
