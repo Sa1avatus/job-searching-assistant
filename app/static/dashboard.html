@@ -3486,7 +3486,7 @@
           if (!appId) { done++; continue; }
           appIds.push(appId);
           try {
-            await fetch(`/v1/applications/${appId}/recalculate-match`, {
+            await fetch(`/v1/applications/${appId}/recalculate-match?force=true`, {
               method: 'POST', headers: headers(false)
             });
           } catch { failed++; }
@@ -3499,20 +3499,27 @@
           : 'Ожидание обновления оценок…');
         const scoreMap = new Map();
         for (const appId of appIds) {
+          let scoreFound = false;
           for (let attempt = 0; attempt < 30; attempt++) {
             try {
               const resp = await fetch(`/v1/applications/${appId}/match-details`, { headers: headers(false) });
               if (resp.ok) {
                 const data = await resp.json();
+                console.log(`[rerank] ${appId} attempt=${attempt} status=${data.status} final_score=${data.final_score}`);
                 if (data.status === 'scored' || data.status === 'degraded') {
                   scoreMap.set(appId, Math.round(data.final_score));
+                  scoreFound = true;
                   break;
                 }
+              } else {
+                console.log(`[rerank] ${appId} attempt=${attempt} HTTP ${resp.status}`);
               }
-            } catch { /* retry */ }
+            } catch (e) { console.log(`[rerank] ${appId} attempt=${attempt} error=${e.message}`); }
             await new Promise(r => setTimeout(r, 1000));
           }
+          if (!scoreFound) console.warn(`[rerank] ${appId} — no score after 30 attempts`);
         }
+        console.log(`[rerank] scoreMap:`, Object.fromEntries(scoreMap));
         // Update cards with new scores
         const results = document.querySelector('#results');
         const cardsArray = Array.from(results.querySelectorAll('.vacancy-card'));

@@ -1769,6 +1769,7 @@ def delete_profile_fact(
 def recalculate_application_match(
     application_id: str,
     session: Annotated[Session, Depends(session_scope)],
+    force: bool = False,
 ) -> WorkflowTaskResponse:
     settings = get_settings()
     if not settings.matching_v2_enabled:
@@ -1777,7 +1778,7 @@ def recalculate_application_match(
             detail="Matching v2 is disabled; set APP_MATCHING_V2_ENABLED=true",
         )
     try:
-        task = MatchingJobService(session).schedule(application_id)
+        task = MatchingJobService(session).schedule(application_id, force=force)
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except MatchingJobNotReadyError as error:

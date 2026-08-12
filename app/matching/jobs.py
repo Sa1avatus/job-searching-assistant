@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.domain.models import TaskState
@@ -10,6 +10,8 @@ from app.storage.tables import (
     ApplicationMatchResultRow,
     ApplicationRow,
     CvFileRow,
+    RequirementMatchRow,
+    TaskTransitionRow,
     VacancyRow,
     WorkflowTaskRow,
 )
@@ -26,7 +28,7 @@ class MatchingJobService:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def schedule(self, application_id: str) -> WorkflowTaskRow:
+    def schedule(self, application_id: str, *, force: bool = False) -> WorkflowTaskRow:
         application = self._session.get(ApplicationRow, application_id)
         if application is None:
             raise LookupError("Application not found")
@@ -50,6 +52,33 @@ class MatchingJobService:
         ).hexdigest()[:20]
         idempotency_key = f"matching-v2:{application.id}:{content_version}"
         repository = SqlTaskRepository(self._session)
+
+        # Force re-run: delete old task, results and requirement matches
+        if force:
+            self._session.execute(
+                delete(RequirementMatchRow).where(
+                    RequirementMatchRow.application_id == application.id
+                )
+            )
+            self._session.execute(
+                delete(ApplicationMatchResultRow).where(
+                    ApplicationMatchResultRow.application_id == application.id
+                )
+            )
+            existing = self._session.scalar(
+                select(WorkflowTaskRow).where(
+                    WorkflowTaskRow.idempotency_key == idempotency_key
+                )
+            )
+            if existing is not None:
+                self._session.execute(
+                    delete(TaskTransitionRow).where(
+                        TaskTransitionRow.task_id == existing.id
+                    )
+                )
+                self._session.delete(existing)
+                self._session.flush()
+
         workflow_task = repository.get_or_create(
             idempotency_key,
             application.id,
