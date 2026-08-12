@@ -3479,9 +3479,12 @@
           );
         };
         updateProgress();
+        // Dispatch re-ranking for each vacancy
+        const appIds = [];
         for (const card of cards) {
           const appId = card.dataset.applicationId;
           if (!appId) { done++; continue; }
+          appIds.push(appId);
           try {
             await fetch(`/v1/applications/${appId}/recalculate-match`, {
               method: 'POST', headers: headers(false)
@@ -3490,11 +3493,70 @@
           done++;
           updateProgress();
         }
+        // Poll for updated scores
+        showStatus(currentLanguage === 'en'
+          ? 'Waiting for scores to update…'
+          : 'Ожидание обновления оценок…');
+        const scoreMap = new Map();
+        for (const appId of appIds) {
+          for (let attempt = 0; attempt < 30; attempt++) {
+            try {
+              const resp = await fetch(`/v1/applications/${appId}/match-details`, { headers: headers(false) });
+              if (resp.ok) {
+                const data = await resp.json();
+                if (data.status === 'scored' || data.status === 'degraded') {
+                  scoreMap.set(appId, Math.round(data.final_score));
+                  break;
+                }
+              }
+            } catch { /* retry */ }
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+        // Update cards with new scores
+        const results = document.querySelector('#results');
+        const cardsArray = Array.from(results.querySelectorAll('.vacancy-card'));
+        for (const card of cardsArray) {
+          const appId = card.dataset.applicationId;
+          if (appId && scoreMap.has(appId)) {
+            const newScore = scoreMap.get(appId);
+            card.dataset.matchScore = String(newScore);
+            const meter = card.querySelector('.match-meter');
+            if (meter) {
+              const newMeter = createMatchMeter(newScore);
+              meter.replaceWith(newMeter);
+            }
+          }
+        }
+        // Re-sort cards by score (descending)
+        cardsArray.sort((a, b) => Number(b.dataset.matchScore || 0) - Number(a.dataset.matchScore || 0));
+        for (const card of cardsArray) {
+          results.appendChild(card);
+        }
+        // Update cached scores in localStorage
+        const storageKey = searchResultsStorageKey();
+        if (storageKey) {
+          const raw = localStorage.getItem(storageKey);
+          if (raw) {
+            try {
+              const cached = JSON.parse(raw);
+              if (cached?.version === SEARCH_RESULTS_VERSION && Array.isArray(cached.outcomes)) {
+                cached.outcomes = cached.outcomes.map(item => {
+                  if (item.application_id && scoreMap.has(item.application_id)) {
+                    return { ...item, match_score: scoreMap.get(item.application_id) };
+                  }
+                  return item;
+                });
+                localStorage.setItem(storageKey, JSON.stringify(cached));
+              }
+            } catch { /* ignore */ }
+          }
+        }
         button.disabled = false;
         showStatus(
           currentLanguage === 'en'
-            ? `Re-ranking dispatched for ${total} vacancies. Check match details for updated scores.`
-            : `Переранжирование запущено для ${total} вакансий. Обновлённые оценки появятся в «Почему подходит».`
+            ? `Re-ranking complete. Updated scores for ${scoreMap.size} vacancies.`
+            : `Переранжирование завершено. Обновлены оценки для ${scoreMap.size} вакансий.`
         );
         loadRerankerModelInfo().catch(() => {});
       } catch (error) { showError(error); document.querySelector('#rerank-all').disabled = false; }
