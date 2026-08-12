@@ -3666,6 +3666,15 @@
 
     loadRerankerModelInfo().catch(() => {});
 
+    // Persist direct-rerank checkbox
+    const directRerankCb = document.querySelector('#direct-rerank');
+    if (directRerankCb) {
+      directRerankCb.checked = localStorage.getItem('directRerank') === 'true';
+      directRerankCb.addEventListener('change', () => {
+        localStorage.setItem('directRerank', String(directRerankCb.checked));
+      });
+    }
+
     async function loadUserWorkspace() {
       localStorage.setItem('dashboardUserId', userIdInput.value.trim());
       loadSavedLlmPreference();
