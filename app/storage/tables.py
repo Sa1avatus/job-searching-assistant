@@ -498,6 +498,35 @@ class ApplicationEmailEventRow(Base):
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class ApplicationTimelineEventRow(Base):
+    __tablename__ = "application_timeline_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ("
+            "'status_change', 'email_received', 'email_sent', "
+            "'note_added', 'match_calculated', 'manual_update'"
+            ")",
+            name="ck_application_timeline_events_event_type",
+        ),
+        Index(
+            "ix_application_timeline_events_app_occurred",
+            "application_id",
+            "occurred_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(50), index=True)
+    previous_value: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    new_value: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    detail_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    source: Mapped[str] = mapped_column(String(100), default="system")
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class RequirementMatchRow(Base):
     __tablename__ = "requirement_matches"
     __table_args__ = (
