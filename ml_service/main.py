@@ -56,7 +56,7 @@ class ModelRuntime:
         )
         self.embedding_model_revision = os.getenv("EMBEDDING_MODEL_REVISION", "main")
         self.reranker_model_name = os.getenv(
-            "RERANKER_MODEL_NAME", "cross-encoder/ettin-reranker-68m-v1"
+            "RERANKER_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-2-v2"
         )
         self.reranker_model_revision = os.getenv("RERANKER_MODEL_REVISION", "main")
         self.device = os.getenv("MODEL_DEVICE", "cpu")
