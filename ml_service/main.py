@@ -77,7 +77,6 @@ class ModelRuntime:
         self.reranker_model = CrossEncoder(
             self.reranker_model_name,
             revision=self.reranker_model_revision,
-            automodel_args={"trust_remote_code": True},
             device=self.device,
         )
 
