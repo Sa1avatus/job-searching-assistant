@@ -111,7 +111,7 @@ class HttpReranker:
         self,
         http_client: httpx.AsyncClient,
         *,
-        model_name: str = "BAAI/bge-reranker-v2-m3",
+        model_name: str = "Qwen/Qwen3-Reranker-0.6B",
         model_revision: str = "main",
         api_key: SecretStr,
     ) -> None:
@@ -144,7 +144,7 @@ class HttpReranker:
                         }
                         for candidate in candidates
                     ],
-                    "top_n": None,
+                    "top_n": len(candidates),
                     "return_documents": False,
                     "truncate": True,
                 },
