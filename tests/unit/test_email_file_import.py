@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.email_file_import import EmlImportProvider
+from app.services.email_file_import import EmlImportProvider, ZipEmlImportProvider
 
 _EML_CONTENT = b"""From: sender@example.com
 To: recipient@example.com
@@ -65,3 +65,47 @@ def test_eml_import_rejects_too_many_files(tmp_path: Path) -> None:
     paths = [tmp_path / f"f{i}.eml" for i in range(101)]
     with pytest.raises(ValueError, match="Too many EML files"):
         EmlImportProvider(paths, max_files=100)
+
+
+@pytest.mark.asyncio
+async def test_zip_import_extracts_eml_files(tmp_path: Path) -> None:
+    import zipfile
+
+    zip_path = tmp_path / "emails.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("email1.eml", _EML_CONTENT)
+        zf.writestr("email2.eml", _EML_CONTENT)
+        zf.writestr("readme.txt", "not an email")
+
+    provider = ZipEmlImportProvider(zip_path)
+    messages = await provider.fetch_messages()
+
+    assert len(messages) == 2
+    assert all(m.subject == "Test email" for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_zip_import_blocks_path_traversal(tmp_path: Path) -> None:
+    import zipfile
+
+    zip_path = tmp_path / "malicious.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("../../etc/passwd.eml", _EML_CONTENT)
+        zf.writestr("safe.eml", _EML_CONTENT)
+
+    provider = ZipEmlImportProvider(zip_path)
+    messages = await provider.fetch_messages()
+
+    assert len(messages) == 1
+    assert messages[0].subject == "Test email"
+
+
+@pytest.mark.asyncio
+async def test_zip_import_handles_corrupted_zip(tmp_path: Path) -> None:
+    bad_zip = tmp_path / "bad.zip"
+    bad_zip.write_bytes(b"not a zip file")
+
+    provider = ZipEmlImportProvider(bad_zip)
+    messages = await provider.fetch_messages()
+
+    assert messages == []

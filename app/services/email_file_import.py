@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mailbox
+import zipfile
 from email import message_from_bytes, policy
 from pathlib import Path
 
@@ -94,3 +95,58 @@ def _extract_mbox_body(message: mailbox.mboxMessage) -> str:
         charset = message.get_content_charset() or "utf-8"
         return payload.decode(charset, errors="replace")
     return ""
+
+
+class ZipEmlImportProvider:
+    """Import .eml files from a ZIP archive with path traversal protection."""
+
+    def __init__(
+        self,
+        zip_path: Path,
+        *,
+        max_files: int = 100,
+        max_uncompressed_bytes: int = 50 * 1024 * 1024,
+    ) -> None:
+        self._zip_path = zip_path
+        self._max_files = max_files
+        self._max_uncompressed = max_uncompressed_bytes
+
+    async def fetch_messages(self) -> list[ApplicationEmailMessage]:
+        messages: list[ApplicationEmailMessage] = []
+        try:
+            with zipfile.ZipFile(self._zip_path) as zf:
+                total_size = sum(info.file_size for info in zf.infolist())
+                if total_size > self._max_uncompressed:
+                    return []
+                eml_count = 0
+                for info in zf.infolist():
+                    if eml_count >= self._max_files:
+                        break
+                    if not info.filename.endswith(".eml"):
+                        continue
+                    if _is_unsafe_path(info.filename):
+                        continue
+                    try:
+                        raw = zf.read(info.filename)
+                        message = message_from_bytes(raw, policy=policy.default)
+                        messages.append(
+                            ApplicationEmailMessage(
+                                subject=_decode_header_value(
+                                    message.get("Subject", "")
+                                ),
+                                body=_plain_text_body(message),
+                            )
+                        )
+                        eml_count += 1
+                    except Exception:  # noqa: BLE001
+                        continue
+        except (zipfile.BadZipFile, OSError):
+            pass
+        return messages
+
+
+def _is_unsafe_path(filename: str) -> bool:
+    parts = filename.replace("\\", "/").split("/")
+    if any(part == ".." for part in parts):
+        return True
+    return bool(filename.startswith("/"))
