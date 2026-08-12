@@ -38,6 +38,15 @@ class RagHealthStatus:
     details: dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class RagDocumentResult:
+    document_id: str
+    external_document_id: str
+    version: int
+    status: str
+    content_hash: str
+
+
 class RagClient(Protocol):
     async def search(
         self,
@@ -47,6 +56,19 @@ class RagClient(Protocol):
         mode: str = "hybrid",
         top_k: int = 10,
     ) -> RagSearchResponse: ...
+
+    async def ingest_document(
+        self,
+        *,
+        external_document_id: str,
+        content: str,
+        collection: str,
+        title: str = "",
+        document_type: str = "text",
+        language: str = "und",
+        version: int = 1,
+        metadata: dict[str, Any] | None = None,
+    ) -> RagDocumentResult: ...
 
     async def health(self) -> RagHealthStatus: ...
 
@@ -133,6 +155,54 @@ class RagHttpClient:
             degraded=bool(trace.get("degraded", False)),
         )
 
+    async def ingest_document(
+        self,
+        *,
+        external_document_id: str,
+        content: str,
+        collection: str,
+        title: str = "",
+        document_type: str = "text",
+        language: str = "und",
+        version: int = 1,
+        metadata: dict[str, Any] | None = None,
+    ) -> RagDocumentResult:
+        payload = {
+            "project_id": self._project_id,
+            "collection": collection,
+            "external_document_id": external_document_id,
+            "content": content,
+            "document_type": document_type,
+            "title": title,
+            "language": language,
+            "version": version,
+            "metadata": metadata or {},
+        }
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(
+                f"{self._base_url}/v1/documents",
+                json=payload,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+            )
+            response.raise_for_status()
+        data = response.json()
+        logger.info(
+            "rag_document_ingested",
+            document_id=data.get("id"),
+            external_document_id=external_document_id,
+            collection=collection,
+            status=data.get("status"),
+        )
+        return RagDocumentResult(
+            document_id=str(data.get("id", "")),
+            external_document_id=str(
+                data.get("external_document_id", external_document_id)
+            ),
+            version=int(data.get("version", version)),
+            status=str(data.get("status", "unknown")),
+            content_hash=str(data.get("content_hash", "")),
+        )
+
     async def health(self) -> RagHealthStatus:
         try:
             async with httpx.AsyncClient(timeout=5) as client:
@@ -172,6 +242,27 @@ class RagFallbackClient:
             results=(),
             effective_mode="fallback",
             degraded=True,
+        )
+
+    async def ingest_document(
+        self,
+        *,
+        external_document_id: str,
+        content: str,
+        collection: str,
+        title: str = "",
+        document_type: str = "text",
+        language: str = "und",
+        version: int = 1,
+        metadata: dict[str, Any] | None = None,
+    ) -> RagDocumentResult:
+        del content, collection, title, document_type, language, version, metadata
+        return RagDocumentResult(
+            document_id="",
+            external_document_id=external_document_id,
+            version=0,
+            status="skipped",
+            content_hash="",
         )
 
     async def health(self) -> RagHealthStatus:
