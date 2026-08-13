@@ -455,7 +455,7 @@
           <div class="facts-verified-filter">
             <span>Только подтверждённые</span>
             <label class="facts-switch" aria-label="Только подтверждённые">
-              <input id="profile-fact-verified-filter" type="checkbox" checked>
+              <input id="profile-fact-verified-filter" type="checkbox">
               <span class="facts-switch__track" aria-hidden="true"></span>
             </label>
           </div>
@@ -658,6 +658,7 @@
       if (className) node.className = className;
       return node;
     };
+    const _esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const TRANSLATIONS = {
       'Личный кабинет': 'Dashboard',
       'Поиск и отклик на вакансии': 'Job search and applications',
@@ -1339,6 +1340,44 @@
         });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const result = await resp.json();
+        const lang = currentLanguage === 'en';
+        let candidatesHtml = '';
+        if (result.candidates && result.candidates.length) {
+          const rows = result.candidates.map(c => {
+            const status = c.duplicate_status === 'new'
+              ? '<span style="color:#6ee7b7">● новый</span>'
+              : c.duplicate_status === 'merge_candidate'
+                ? '<span style="color:#facc15">⇄ слияние</span>'
+                : '<span style="color:#f87171">= дубль</span>';
+            const conf = c.confidence != null ? `${Math.round(c.confidence * 100)}%` : '—';
+            const srcText = c.source_text ? `<div style="color:#7a8ab5;font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:500px" title="${_esc(c.source_text)}">${_esc(c.source_text)}</div>` : '';
+            return `<tr>
+              <td style="padding:4px 8px;white-space:nowrap">${_esc(c.category)}</td>
+              <td style="padding:4px 8px;white-space:nowrap;font-weight:700">${_esc(c.name)}</td>
+              <td style="padding:4px 8px">${_esc(c.value || '—')}${srcText}</td>
+              <td style="padding:4px 8px;text-align:center">${conf}</td>
+              <td style="padding:4px 8px;text-align:center">${status}</td>
+            </tr>`;
+          }).join('');
+          candidatesHtml = `
+            <details style="margin-top:8px">
+              <summary style="cursor:pointer;color:#8da2fb;font-weight:700;font-size:13px">
+                ${lang ? 'Imported facts' : 'Импортированные факты'} (${result.candidates.length})
+              </summary>
+              <div style="max-height:340px;overflow:auto;margin-top:6px;border:1px solid #30426d;border-radius:8px">
+                <table style="width:100%;border-collapse:collapse;font-size:12px">
+                  <thead><tr style="background:#111a34">
+                    <th style="padding:6px 8px;text-align:left">${lang ? 'Category' : 'Категория'}</th>
+                    <th style="padding:6px 8px;text-align:left">${lang ? 'Name' : 'Название'}</th>
+                    <th style="padding:6px 8px;text-align:left">${lang ? 'Value' : 'Значение'}</th>
+                    <th style="padding:6px 8px">${lang ? 'Conf' : 'Увер.'}</th>
+                    <th style="padding:6px 8px">${lang ? 'Status' : 'Статус'}</th>
+                  </tr></thead>
+                  <tbody>${rows}</tbody>
+                </table>
+              </div>
+            </details>`;
+        }
         resultDiv.innerHTML = `<strong>Импорт завершён:</strong>
           <div class="stats">
             <span class="stat"><span class="num">${result.facts_created}</span> новых</span>
@@ -1346,8 +1385,13 @@
             <span class="stat"><span class="num">${result.facts_skipped}</span> пропущено</span>
             <span class="stat"><span class="num">${result.facts_rejected}</span> отклонено</span>
           </div>
-          <div>Batch ID: ${result.batch_id}</div>`;
+          <div style="color:#7a8ab5;font-size:11px">Batch ID: ${result.batch_id}</div>
+          ${candidatesHtml}`;
         await loadProfileFacts();
+        // Show newly imported facts: turn off verified-only filter, set source to file
+        document.querySelector('#profile-fact-verified-filter').checked = false;
+        document.querySelector('#profile-fact-source-filter').value = 'file';
+        renderProfileFacts();
         showStatus(`Импортировано из ${file.name}.`);
       } catch (error) { showError(error); }
       event.target.value = '';
@@ -1375,14 +1419,57 @@
         });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const result = await resp.json();
-        resultDiv.innerHTML = `<strong>${currentLanguage === 'en' ? 'Extraction complete:' : 'Извлечение завершено:'}</strong>
+        const lang = currentLanguage === 'en';
+        let candidatesHtml = '';
+        if (result.candidates && result.candidates.length) {
+          const rows = result.candidates.map(c => {
+            const status = c.duplicate_status === 'new'
+              ? '<span style="color:#6ee7b7">● новый</span>'
+              : c.duplicate_status === 'merge_candidate'
+                ? '<span style="color:#facc15">⇄ слияние</span>'
+                : '<span style="color:#f87171">= дубль</span>';
+            const conf = c.confidence != null ? `${Math.round(c.confidence * 100)}%` : '—';
+            const srcText = c.source_text ? `<div style="color:#7a8ab5;font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:500px" title="${_esc(c.source_text)}">${_esc(c.source_text)}</div>` : '';
+            return `<tr>
+              <td style="padding:4px 8px;white-space:nowrap">${_esc(c.category)}</td>
+              <td style="padding:4px 8px;white-space:nowrap;font-weight:700">${_esc(c.name)}</td>
+              <td style="padding:4px 8px">${_esc(c.value || '—')}${srcText}</td>
+              <td style="padding:4px 8px;text-align:center">${conf}</td>
+              <td style="padding:4px 8px;text-align:center">${status}</td>
+            </tr>`;
+          }).join('');
+          candidatesHtml = `
+            <details style="margin-top:8px">
+              <summary style="cursor:pointer;color:#8da2fb;font-weight:700;font-size:13px">
+                ${lang ? 'Extracted facts' : 'Извлечённые факты'} (${result.candidates.length})
+              </summary>
+              <div style="max-height:340px;overflow:auto;margin-top:6px;border:1px solid #30426d;border-radius:8px">
+                <table style="width:100%;border-collapse:collapse;font-size:12px">
+                  <thead><tr style="background:#111a34">
+                    <th style="padding:6px 8px;text-align:left">${lang ? 'Category' : 'Категория'}</th>
+                    <th style="padding:6px 8px;text-align:left">${lang ? 'Name' : 'Название'}</th>
+                    <th style="padding:6px 8px;text-align:left">${lang ? 'Value' : 'Значение'}</th>
+                    <th style="padding:6px 8px">${lang ? 'Conf' : 'Увер.'}</th>
+                    <th style="padding:6px 8px">${lang ? 'Status' : 'Статус'}</th>
+                  </tr></thead>
+                  <tbody>${rows}</tbody>
+                </table>
+              </div>
+            </details>`;
+        }
+        resultDiv.innerHTML = `<strong>${lang ? 'Extraction complete:' : 'Извлечение завершено:'}</strong>
           <div class="stats">
-            <span class="stat"><span class="num">${result.facts_created}</span> ${currentLanguage === 'en' ? 'new' : 'новых'}</span>
-            <span class="stat"><span class="num">${result.facts_merged}</span> ${currentLanguage === 'en' ? 'merged' : 'объединено'}</span>
-            <span class="stat"><span class="num">${result.facts_skipped}</span> ${currentLanguage === 'en' ? 'skipped' : 'пропущено'}</span>
+            <span class="stat"><span class="num">${result.facts_created}</span> ${lang ? 'new' : 'новых'}</span>
+            <span class="stat"><span class="num">${result.facts_merged}</span> ${lang ? 'merged' : 'объединено'}</span>
+            <span class="stat"><span class="num">${result.facts_skipped}</span> ${lang ? 'skipped' : 'пропущено'}</span>
           </div>
-          <div>Batch ID: ${result.batch_id}</div>`;
+          <div style="color:#7a8ab5;font-size:11px">Batch ID: ${result.batch_id}</div>
+          ${candidatesHtml}`;
         await loadProfileFacts();
+        // Show newly extracted facts: turn off verified-only filter, set source to resume
+        document.querySelector('#profile-fact-verified-filter').checked = false;
+        document.querySelector('#profile-fact-source-filter').value = 'resume';
+        renderProfileFacts();
         showStatus(currentLanguage === 'en' ? 'Facts extracted from resume.' : 'Факты извлечены из резюме.');
       } catch (error) { showError(error); }
     });
@@ -3186,31 +3273,44 @@
       if (keySkills) card.append(keySkills);
       const summaryNode = createSummaryAffordance(item.vacancy_summary);
       if (summaryNode) card.append(summaryNode);
-      const actions = element('div', undefined, 'actions');
-      const link = element('a', 'Открыть вакансию');
-      link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
-      const applicationLink = element('a', 'Материалы и решение');
+      const actions = element('div', undefined, 'actions card-actions');
+      const details = element('div', undefined, 'match-details'); details.hidden = true;
+      // Main buttons — equal width in 3-column grid
+      const detailsButton = element('button', currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит');
+      detailsButton.type = 'button';
+      detailsButton.addEventListener('click', () => {
+        loadMatchDetails(item.application_id, details, detailsButton).catch(showError);
+      });
+      const applicationLink = element('a', currentLanguage === 'en' ? 'Materials & decision' : 'Материалы и решение');
       applicationLink.href = `/review?application_id=${encodeURIComponent(item.application_id)}`;
       applicationLink.className = 'link-btn';
-      const reject = element('button', 'Отклонить', 'danger'); reject.type = 'button';
-      reject.addEventListener('click', () => rejectVacancy(item.application_id, card).catch(showError));
-      const blacklist = element('button', 'Компания в чёрный список'); blacklist.type = 'button';
-      blacklist.addEventListener('click', () => blacklistCompany(item.company, true).catch(showError));
-      const detailsButton = element('button', 'Почему подходит'); detailsButton.type = 'button';
-      const rerankBtn = element('button', '🔄'); rerankBtn.type = 'button';
-      rerankBtn.title = currentLanguage === 'en' ? 'Re-rank this vacancy' : 'Переранжировать эту вакансию';
-      rerankBtn.style.cssText = 'padding:4px 8px;font-size:14px;';
-      rerankBtn.addEventListener('click', async () => {
-        rerankBtn.disabled = true;
-        rerankBtn.textContent = '…';
+      const sourceLabel = ({hh:'hh.ru',linkedin:'LinkedIn',greenhouse:'Greenhouse'})[item.source] || item.source || 'site';
+      const link = element('a', currentLanguage === 'en' ? `Open on ${sourceLabel}` : `Открыть на ${sourceLabel}`);
+      link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
+      // Overflow menu — same pattern as search cards
+      const moreActions = element('div', undefined, 'more-actions');
+      const moreToggle = element('button', '\u22EF', 'more-actions__toggle');
+      moreToggle.type = 'button';
+      moreToggle.title = currentLanguage === 'en' ? 'More actions' : 'Другие действия';
+      moreToggle.setAttribute('aria-label', moreToggle.title);
+      moreToggle.setAttribute('aria-haspopup', 'menu');
+      moreToggle.setAttribute('aria-expanded', 'false');
+      const moreMenu = element('div', undefined, 'more-actions__menu');
+      moreMenu.hidden = true;
+      moreMenu.setAttribute('role', 'menu');
+      const recalcBtn = element('button', currentLanguage === 'en' ? 'Recalculate match' : 'Рассчитать подробно');
+      recalcBtn.type = 'button';
+      recalcBtn.addEventListener('click', async () => {
+        moreMenu.hidden = true;
+        recalcBtn.disabled = true;
+        recalcBtn.textContent = currentLanguage === 'en' ? 'Calculating…' : 'Рассчитываем…';
         try {
           const resp = await fetch(`/v1/applications/${item.application_id}/recalculate-match?force=true`, {
             method: 'POST', headers: headers(false)
           });
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          // Poll for result
-          for (let i = 0; i < 30; i++) {
-            await new Promise(r => setTimeout(r, 1000));
+          for (let i = 0; i < 60; i++) {
+            await new Promise(r => setTimeout(r, 2000));
             const det = await fetch(`/v1/applications/${item.application_id}/match-details`, { headers: headers(false) });
             if (det.ok) {
               const data = await det.json();
@@ -3219,26 +3319,34 @@
                 const meter = card.querySelector('.match-meter');
                 if (meter) meter.replaceWith(createMatchMeter(newScore));
                 card.dataset.matchScore = String(newScore);
-                break;
+                recalcBtn.textContent = '\u2713 ' + (currentLanguage === 'en' ? 'Done' : 'Готово');
+                setTimeout(() => { recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate match' : 'Рассчитать подробно'; recalcBtn.disabled = false; }, 2000);
+                return;
               }
             }
           }
-          rerankBtn.textContent = '✓';
-          setTimeout(() => { rerankBtn.textContent = '🔄'; rerankBtn.disabled = false; }, 2000);
+          recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate match' : 'Рассчитать подробно'; recalcBtn.disabled = false;
         } catch (e) {
-          rerankBtn.textContent = '✗';
+          recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate match' : 'Рассчитать подробно'; recalcBtn.disabled = false;
           showError(e);
-          setTimeout(() => { rerankBtn.textContent = '🔄'; rerankBtn.disabled = false; }, 3000);
         }
       });
-      const details = element('div', undefined, 'match-details'); details.hidden = true;
-      detailsButton.addEventListener('click', () => {
-        loadMatchDetails(item.application_id, details, detailsButton).catch(showError);
-      });
+      moreMenu.append(recalcBtn);
       if (!['submitted', 'interview'].includes(item.status)) {
-        actions.append(reject, blacklist);
+        const rejectBtn = element('button', currentLanguage === 'en' ? 'Reject' : 'Отклонить', 'danger');
+        rejectBtn.type = 'button';
+        rejectBtn.addEventListener('click', () => { moreMenu.hidden = true; rejectVacancy(item.application_id, card).catch(showError); });
+        const blacklistBtn = element('button', currentLanguage === 'en' ? 'Blacklist company' : 'Компания в чёрный список');
+        blacklistBtn.type = 'button';
+        blacklistBtn.addEventListener('click', () => { moreMenu.hidden = true; blacklistCompany(item.company, true).catch(showError); });
+        moreMenu.append(rejectBtn, blacklistBtn);
       }
-      actions.append(rerankBtn, detailsButton, applicationLink, link);
+      moreToggle.addEventListener('click', () => {
+        moreMenu.hidden = !moreMenu.hidden;
+        moreToggle.setAttribute('aria-expanded', String(!moreMenu.hidden));
+      });
+      moreActions.append(moreToggle, moreMenu);
+      actions.append(detailsButton, applicationLink, link, moreActions);
       const statusEditor = createStatusEditor(item, 'status', async () => {
         await loadSavedVacancies(vacancyPage);
         restoreSearchResults();
