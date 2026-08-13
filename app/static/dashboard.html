@@ -567,6 +567,7 @@
       <div class="row" style="margin-top:16px;">
         <div><label for="resume-selector">Мои резюме</label><select id="resume-selector"></select></div>
         <div style="flex:0"><label>&nbsp;</label><button id="analyze-resume" type="button">Проанализировать выбранное</button></div>
+        <div style="flex:0"><label>&nbsp;</label><button id="send-resume-to-rag" type="button">Отправить в RAG</button></div>
         <div style="flex:0"><label>&nbsp;</label><button id="delete-resume" type="button" class="danger">Удалить выбранное</button></div>
       </div>
       <div id="resume-state" class="hint"></div>
@@ -1401,17 +1402,27 @@
     document.querySelector('#fact-extract-resume-btn').addEventListener('click', async () => {
       const userId = userIdInput.value.trim();
       if (!userId) { showError(new Error('Set User ID first')); return; }
-      // Get list of CVs to let user pick
+      // Use the resume explicitly marked active in the resume panel.
       try {
         const cvs = await asJson(await fetchWithTimeout(`/v1/users/${userId}/cv-files`, {headers: headers(false)}));
         if (!Array.isArray(cvs) || cvs.length === 0) {
           showError(new Error(currentLanguage === 'en' ? 'No resumes found. Upload a resume first.' : 'Резюме не найдены. Сначала загрузите резюме.'));
           return;
         }
-        const cvId = cvs[0].id; // Use first/active CV
+        const activeCv = cvs.find(cv => cv.is_active);
+        if (!activeCv) {
+          showError(new Error(currentLanguage === 'en'
+            ? 'No active resume. Select one in the resume panel first.'
+            : 'Нет активного резюме. Сначала выберите его в разделе «Резюме».'));
+          return;
+        }
+        const cvId = activeCv.id;
+        const cvName = activeCv.original_filename;
         const resultDiv = document.querySelector('#fact-import-result');
         resultDiv.hidden = false;
-        resultDiv.textContent = currentLanguage === 'en' ? 'Extracting facts from resume...' : 'Извлечение фактов из резюме...';
+        resultDiv.textContent = currentLanguage === 'en'
+          ? `Extracting facts from “${cvName}”...`
+          : `Извлечение фактов из «${cvName}»...`;
         const resp = await fetch(`/v1/users/${userId}/facts/extract-from-resume`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json', ...headers(true)},
@@ -1458,6 +1469,7 @@
             </details>`;
         }
         resultDiv.innerHTML = `<strong>${lang ? 'Extraction complete:' : 'Извлечение завершено:'}</strong>
+          <div style="color:#aab9e8;font-size:12px;margin-top:4px">${lang ? 'Resume' : 'Резюме'}: ${_esc(cvName)}</div>
           <div class="stats">
             <span class="stat"><span class="num">${result.facts_created}</span> ${lang ? 'new' : 'новых'}</span>
             <span class="stat"><span class="num">${result.facts_merged}</span> ${lang ? 'merged' : 'объединено'}</span>
@@ -1470,7 +1482,9 @@
         document.querySelector('#profile-fact-verified-filter').checked = false;
         document.querySelector('#profile-fact-source-filter').value = 'resume';
         renderProfileFacts();
-        showStatus(currentLanguage === 'en' ? 'Facts extracted from resume.' : 'Факты извлечены из резюме.');
+        showStatus(currentLanguage === 'en'
+          ? `Facts extracted from “${cvName}”.`
+          : `Факты извлечены из «${cvName}».`);
       } catch (error) { showError(error); }
     });
 
@@ -2293,6 +2307,11 @@
 
     function renderResumeProfile(cvFile) {
       const draftBlock = document.querySelector('#draft-block');
+      const ragButton = document.querySelector('#send-resume-to-rag');
+      ragButton.disabled = !cvFile?.analyzed_at;
+      ragButton.title = cvFile?.analyzed_at
+        ? 'Отправить подтверждённое резюме в коллекцию RAG'
+        : 'Сначала проанализируйте и подтвердите резюме';
       if (!cvFile) {
         draftBlock.style.display = 'none';
         document.querySelector('#resume-state').textContent = 'Загрузите хотя бы одно резюме.';
@@ -2306,6 +2325,22 @@
       document.querySelector('#resume-state').textContent = cvFile.analyzed_at
         ? `Активно: ${cvFile.original_filename}. Анализ сохранён, навыков: ${cvFile.skills.length}.`
         : `${cvFile.original_filename}: анализ ещё не сохранён.`;
+      const ragLabels = currentLanguage === 'en'
+        ? {
+            not_configured: 'not configured', not_scheduled: 'not scheduled',
+            scheduled: 'scheduled', running: 'in progress', retry_scheduled: 'retry scheduled',
+            completed: 'synchronized', failed: 'failed'
+          }
+        : {
+            not_configured: 'не настроен', not_scheduled: 'не запланировано',
+            scheduled: 'запланировано', running: 'выполняется',
+            retry_scheduled: 'назначен повтор', completed: 'синхронизировано', failed: 'ошибка'
+          };
+      const ragState = ragLabels[cvFile.rag_sync_status] || cvFile.rag_sync_status;
+      const ragFailure = cvFile.rag_sync_failure_code
+        ? ` (${currentLanguage === 'en' ? 'code' : 'код'}: ${cvFile.rag_sync_failure_code})`
+        : '';
+      document.querySelector('#resume-state').textContent += ` RAG: ${ragState}${ragFailure}.`;
     }
 
     function renderCvFileSelectors(preferredCvFileId = null) {
@@ -2563,6 +2598,25 @@
         if (!response.ok) await asJson(response);
         await loadCvFiles();
         showStatus(currentLanguage === 'en' ? 'Resume deleted.' : 'Резюме удалено.');
+      } catch (error) { showError(error); }
+    });
+
+    document.querySelector('#send-resume-to-rag').addEventListener('click', async () => {
+      try {
+        const userId = userIdInput.value.trim();
+        const cvFileId = document.querySelector('#resume-selector').value;
+        const cvFile = cvFiles.find(item => item.id === cvFileId);
+        if (!userId || !cvFile) throw new Error('Выберите загруженное резюме');
+        if (!cvFile.analyzed_at) throw new Error('Сначала проанализируйте и подтвердите резюме');
+        showStatus(`Отправляем «${cvFile.original_filename}» в RAG…`);
+        const result = await asJson(await fetch(
+          `/v1/users/${userId}/cv-files/${cvFileId}/rag-sync`,
+          {method: 'POST', headers: headers(false)}
+        ));
+        showStatus(currentLanguage === 'en'
+          ? `RAG synchronization scheduled. Status: ${result.status}.`
+          : `Синхронизация с RAG запланирована. Статус: ${result.status}.`);
+        await loadCvFiles(cvFileId);
       } catch (error) { showError(error); }
     });
 
@@ -3927,8 +3981,8 @@
         const data = await response.json();
         if (data.model) {
           const label = currentLanguage === 'en'
-            ? `Reranker: ${data.model}${data.model_revision ? ' @ ' + data.model_revision : ''} — ${data.status}`
-            : `Реранжировщик: ${data.model}${data.model_revision ? ' @ ' + data.model_revision : ''} — ${data.status}`;
+            ? `Reranker used by search now: ${data.model}${data.model_revision ? ' @ ' + data.model_revision : ''} — ${data.status}`
+            : `Сейчас в поиске используется реранжировщик: ${data.model}${data.model_revision ? ' @ ' + data.model_revision : ''} — ${data.status}`;
           info.textContent = label;
         } else {
           info.textContent = currentLanguage === 'en'

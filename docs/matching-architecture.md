@@ -45,6 +45,17 @@ source-grounded inputs but never choose the final score.
 - `app/matching/rag_collections.py` defines the cross-service collection contract: `profiles` for
   reviewed facts, `resumes` for analysed CV content, and `vacancies` for vacancy context. These
   collections remain owner-scoped and must be provisioned and authorized in the RAG service.
+- RAG ingestion is an owner-scoped upsert: a new logical document uses `POST`; an existing document
+  is located within its authorized collection and updated with `PATCH` plus `lock_version`.
+  Resume deletion and an empty verified profile propagate through the same owner boundary.
+- Optimistic-lock conflicts are retried at most three times. Existing records can be synchronized
+  in repeatable batches with the owner-scoped `rag-backfill` CLI command and returned cursors.
+- User deletion snapshots the user's known resume and vacancy IDs before PostgreSQL deletion, then
+  attempts fail-open owner-scoped removal across all three RAG collections.
+- Synchronization and deletion publish content-free aggregate counters through `/metrics`.
+  Backfill results separate indexed, skipped, and failed records and return independent cursors.
+- `matching-backfill` scans one owner's applications in bounded ID-ordered pages and schedules only
+  stale, failed, or pre-source-v2 aggregates. Failure reports contain exception class codes only.
 - `app/matching/scoring.py` applies deterministic weights, blockers, eligibility, and score caps.
   Component scores include hard_skill, preferred_skill, role, seniority, experience, work_format,
   location, domain, and language. Aggregate quality signals include semantic_similarity (weighted
@@ -147,6 +158,12 @@ promoted, the deterministic final score can be synchronized to that compatibilit
 | contradicted | Explicit contradiction exists | 0.0 | 0.0 |
 | evaluation_error | Technical evaluator failure (timeout, invalid JSON, provider error) | 0.0 | 0.10 |
 | unknown | Legacy fallback (should be phased out) | 0.0 | 0.0 |
+
+Evaluator failures are stored as `evaluation_error` with sanitized failure codes in requirement
+match metadata. Provider response bodies are not copied into persisted explanations. These
+requirements put the application into review, but do not increase the missing-required count. A
+user can explicitly retry failed evaluations from the detailed result; execution remains bounded by
+the durable worker retry policy.
 
 ## Hard blocker classification
 

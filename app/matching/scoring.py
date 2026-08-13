@@ -160,6 +160,11 @@ class DeterministicMatchScorer:
             a for a in assessments
             if a.importance is RequirementImportance.REQUIRED and not a.is_hard_blocker
         ]
+        evaluation_error_assessments = [
+            a
+            for a in required_assessments
+            if effective_level_by_requirement[a.requirement_id] is MatchLevel.EVALUATION_ERROR
+        ]
         matched_required_count = sum(
             effective_level_by_requirement[a.requirement_id]
             not in {
@@ -168,7 +173,11 @@ class DeterministicMatchScorer:
             }
             for a in required_assessments
         )
-        missing_required_count = len(required_assessments) - matched_required_count
+        missing_required_count = sum(
+            effective_level_by_requirement[a.requirement_id]
+            in {MatchLevel.MISSING, MatchLevel.BLOCKER}
+            for a in required_assessments
+        )
 
         required_score = self._category_score(
             assessments, effective_level_by_requirement, RequirementImportance.REQUIRED
@@ -202,6 +211,11 @@ class DeterministicMatchScorer:
             explanation.append("Required work authorization is missing")
         if missing_required_count:
             explanation.append(f"{missing_required_count} required requirement(s) are missing")
+        if evaluation_error_assessments:
+            explanation.append(
+                f"{len(evaluation_error_assessments)} required requirement(s) could not be "
+                "evaluated due to a technical error"
+            )
 
         # Score caps — only CONFIRMED hard blockers zero the score
         if has_confirmed_hard_blockers:
@@ -221,7 +235,7 @@ class DeterministicMatchScorer:
             eligibility_status = EligibilityStatus.INELIGIBLE
         elif unresolved_hard_blockers:
             eligibility_status = EligibilityStatus.NEEDS_CONFIRMATION
-        elif blocker_assessments or missing_required_count:
+        elif blocker_assessments or missing_required_count or evaluation_error_assessments:
             eligibility_status = EligibilityStatus.REVIEW
         else:
             eligibility_status = EligibilityStatus.ELIGIBLE

@@ -81,8 +81,13 @@ verified beyond controlled fixtures.
   never becomes evidence by itself and cannot introduce a candidate claim.
 - JSA expects the RAG project to provide authorized `profiles`, `resumes`, and `vacancies`
   collections. It does not create them automatically. Confirmed resume profiles and confirmed
-  profile facts are synchronized, and **Direct to reranker** performs another refresh. Update and
-  deletion coverage, backfill, durable retry, and operator-visible status remain backlog work.
+  profile facts are synchronized, updates use the platform's optimistic-lock contract, and
+  **Direct to reranker** performs another refresh. Resume deletion and empty-profile cleanup are
+  propagated, and deleting a user attempts cleanup of all known owner-scoped RAG documents. A
+  bounded owner-scoped CLI backfill is available, but it is operator-triggered. Confirmed resume
+  synchronization uses the durable dispatcher with bounded retries, and its task state plus a
+  sanitized failure code are exposed per resume. Aggregate success, skipped, and failure counts are
+  exposed through `/metrics`.
 - Skill normalization resolves common aliases (Postgres→postgresql, K8s→kubernetes) during
   extraction. Unknown skills pass through unchanged. Custom aliases can be injected via
   `SkillNormalizer(aliases={...})`.

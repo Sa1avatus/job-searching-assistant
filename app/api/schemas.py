@@ -139,6 +139,19 @@ class CvFileResponse(BaseModel):
     years_of_experience: float | None
     analyzed_at: datetime | None
     is_active: bool = False
+    rag_sync_status: str = "not_scheduled"
+    rag_sync_attempts: int = 0
+    rag_sync_failure_code: str | None = None
+    rag_synced_at: datetime | None = None
+
+
+class ResumeRagSyncResponse(BaseModel):
+    task_id: str
+    status: str
+    attempt_number: int
+    failure_code: str | None = None
+    updated_at: datetime
+    synced_at: datetime | None = None
 
 
 class ActiveCvFileRequest(BaseModel):

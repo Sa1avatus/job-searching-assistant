@@ -104,9 +104,42 @@ JSA keeps different business objects in separate owner-scoped RAG collections:
 
 The collections must exist in the RAG project and be authorized for JSA's service API key before
 ingestion. A reviewed resume is synchronized after its analysed profile is confirmed, and reviewed
-profile facts are synchronized after confirmation. **Direct to reranker** also refreshes this
-context before matching. Update, deletion, backfill, and operator-visible synchronization status
-remain tracked in `backlog.json`.
+profile facts are synchronized after creation, editing, deletion, or batch confirmation. Existing
+documents are updated with optimistic locking. Fact imports also refresh the reviewed profile after
+persistence. Deleting a resume, the last verified profile fact, or the owning user removes the
+corresponding owner-scoped RAG documents. **Direct to reranker** performs another refresh before
+matching. Resume synchronization runs through the durable dispatcher with bounded retries. Its
+current state, attempt count, last safe failure code, and successful synchronization time are
+returned with each resume and shown in the resume panel.
+
+The resume panel also provides **Send to RAG** for an explicit durable retry of one confirmed
+resume. The action is rejected when the resume has not been confirmed or RAG is not configured,
+does not duplicate an active task, and never changes the authoritative local resume record on
+synchronization failure.
+
+Existing records can be synchronized in bounded owner-scoped batches:
+
+```powershell
+recruitment-assistant rag-backfill --user-id USER_ID --batch-size 50
+```
+
+While either `resumes_has_more` or `vacancies_has_more` is true, pass both returned cursors to
+`--after-resume-id` and `--after-vacancy-id` in the next invocation. The command is idempotent and
+prints counts, continuation flags, and cursors only; it never prints profile or resume content.
+Running it contacts the configured RAG service and should be an explicit operator action.
+Aggregate `rag_sync_*` and `rag_delete_*` counters are available on the existing `/metrics`
+endpoint. They contain counts only and no document content or identifiers.
+
+Legacy matching explanations can be scheduled for replacement in bounded owner-scoped pages:
+
+```powershell
+recruitment-assistant matching-backfill --user-id USER_ID --batch-size 50
+```
+
+Pass `next_application_cursor` as `--after-application-id` while `has_more` is true. Only stale,
+failed, or pre-source-v2 results are scheduled; current results and applications without an
+existing detailed result are skipped. The previous score and explanation remain readable until the
+replacement calculation succeeds.
 
 ## Local development
 

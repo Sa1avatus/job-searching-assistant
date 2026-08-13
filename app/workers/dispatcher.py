@@ -16,9 +16,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import Settings, get_settings
 from app.domain.models import TaskState
 from app.observability.logging import configure_logging
+from app.services.rag_sync import RagSyncService
 from app.storage.database import SessionFactory
 from app.storage.evidence_artifacts import EvidenceArtifactStorage
-from app.storage.tables import ApplicationRow, HumanActionCheckpointRow, WorkerHeartbeatRow
+from app.storage.tables import (
+    ApplicationRow,
+    CvFileRow,
+    HumanActionCheckpointRow,
+    WorkerHeartbeatRow,
+)
 from app.storage.task_repository import ClaimedTask, SqlTaskRepository
 from app.workers.coordination import RedisCoordinationClient, RedisCoordinator
 
@@ -58,6 +64,43 @@ class MatchingTaskHandler:
             TaskState.COMPLETED,
             "matching v2 calculation completed",
             (f"application:{claimed_task.application_id}",),
+        )
+
+
+class ResumeRagSyncTaskHandler:
+    def __init__(self, session_factory: sessionmaker[Session], settings: Settings) -> None:
+        self._session_factory = session_factory
+        self._settings = settings
+
+    async def handle(self, claimed_task: ClaimedTask) -> ExecutionOutcome:
+        cv_file_id = claimed_task.payload.get("cv_file_id")
+        if not isinstance(cv_file_id, str):
+            return ExecutionOutcome(
+                TaskState.FAILED,
+                "resume RAG synchronization payload is invalid",
+                ("failure_code:invalid_task_payload",),
+            )
+
+        with self._session_factory() as session:
+            cv_file = session.get(CvFileRow, cv_file_id)
+            if cv_file is None:
+                return ExecutionOutcome(
+                    TaskState.FAILED,
+                    "resume is unavailable for RAG synchronization",
+                    ("failure_code:resume_unavailable",),
+                )
+            result = await RagSyncService(session, self._settings).sync_resume(cv_file_id)
+
+        if result is None:
+            return ExecutionOutcome(
+                TaskState.RETRY_SCHEDULED,
+                "resume RAG synchronization failed and was scheduled for bounded retry",
+                (f"resume:{cv_file_id}", "failure_code:rag_sync_failed"),
+            )
+        return ExecutionOutcome(
+            TaskState.COMPLETED,
+            "resume RAG synchronization completed",
+            (f"resume:{cv_file_id}", f"rag_status:{result.status}"),
         )
 
 
@@ -236,6 +279,7 @@ async def run_worker() -> None:
         handlers={
             "application-review": ApplicationReviewCheckpointHandler(SessionFactory),
             "matching-v2": MatchingTaskHandler(MatchingRuntime(SessionFactory, settings)),
+            "rag-resume-sync": ResumeRagSyncTaskHandler(SessionFactory, settings),
         },
         worker_name="dispatcher-1",
         settings=settings,

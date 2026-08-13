@@ -15,3 +15,7 @@ def test_dashboard_exposes_editable_profile_facts_block() -> None:
     assert "method: 'POST'" in dashboard
     assert "method: 'PUT'" in dashboard
     assert "method: 'DELETE'" in dashboard
+    assert "const activeCv = cvs.find(cv => cv.is_active);" in dashboard
+    assert "const cvName = activeCv.original_filename;" in dashboard
+    assert "Извлечение фактов из «${cvName}»" in dashboard
+    assert "const cvId = cvs[0].id" not in dashboard

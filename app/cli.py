@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -10,8 +11,11 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.domain.models import ProfileFact, Vacancy
 from app.domain.policy import assess_vacancy
+from app.matching.backfill import MatchingBackfillService
+from app.services.rag_sync import RagSyncService
 from app.services.recruitment import RecruitmentService
 from app.storage.database import SessionFactory
 from app.storage.tables import WorkflowTaskRow
@@ -127,6 +131,39 @@ def _run_worker(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _rag_backfill(args: argparse.Namespace) -> int:
+    try:
+        with SessionFactory() as session:
+            result = asyncio.run(
+                RagSyncService(session, get_settings()).backfill_owner(
+                    args.user_id,
+                    batch_size=args.batch_size,
+                    after_resume_id=args.after_resume_id,
+                    after_vacancy_id=args.after_vacancy_id,
+                )
+            )
+    except ValueError as error:
+        print(json.dumps({"status": "invalid_request", "detail": str(error)}))
+        return 2
+    print(json.dumps(result.as_dict(), indent=2))
+    return 0
+
+
+def _matching_backfill(args: argparse.Namespace) -> int:
+    try:
+        with SessionFactory() as session:
+            result = MatchingBackfillService(session).schedule_stale_owner_results(
+                args.user_id,
+                batch_size=args.batch_size,
+                after_application_id=args.after_application_id,
+            )
+    except ValueError as error:
+        print(json.dumps({"status": "invalid_request", "detail": str(error)}))
+        return 2
+    print(json.dumps(result.as_dict(), indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="recruitment-assistant")
     commands = parser.add_subparsers(required=True)
@@ -159,6 +196,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     worker = commands.add_parser("run-worker", help="Run the durable Redis-coordinated dispatcher")
     worker.set_defaults(handler=_run_worker)
+
+    rag_backfill = commands.add_parser(
+        "rag-backfill",
+        help="Synchronize one owner's profile, resumes, and vacancies with RAG",
+    )
+    rag_backfill.add_argument("--user-id", required=True)
+    rag_backfill.add_argument("--batch-size", type=int, default=50, choices=range(1, 101))
+    rag_backfill.add_argument("--after-resume-id")
+    rag_backfill.add_argument("--after-vacancy-id")
+    rag_backfill.set_defaults(handler=_rag_backfill)
+
+    matching_backfill = commands.add_parser(
+        "matching-backfill",
+        help="Schedule stale matching explanations for one owner",
+    )
+    matching_backfill.add_argument("--user-id", required=True)
+    matching_backfill.add_argument("--batch-size", type=int, default=50, choices=range(1, 101))
+    matching_backfill.add_argument("--after-application-id")
+    matching_backfill.set_defaults(handler=_matching_backfill)
     return parser
 
 

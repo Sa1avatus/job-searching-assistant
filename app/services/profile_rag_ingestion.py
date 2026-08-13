@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.matching.rag_client import RagClient, RagDocumentResult
 from app.matching.rag_collections import PROFILE_COLLECTION, RESUME_COLLECTION
+from app.observability.metrics import metrics
 from app.storage.tables import CvFileRow, ProfileFactRow, UserRow
 
 logger = structlog.get_logger(__name__)
@@ -27,12 +28,33 @@ class ProfileRagIngestionService:
             logger.warning("rag_ingest_profile_not_found", user_id=user_id)
             return None
         content = self._build_content(user_id)
+        if not content.strip():
+            try:
+                metrics.increment("rag_delete_attempts_total")
+                removed = await self._rag.delete_document(
+                    owner_user_id=user_id,
+                    external_document_id=f"profile:{user_id}",
+                    collection=collection,
+                )
+                metrics.increment(
+                    "rag_delete_success_total" if removed else "rag_delete_skipped_total"
+                )
+            except Exception as error:
+                metrics.increment("rag_delete_failures_total")
+                logger.warning(
+                    "rag_empty_profile_delete_failed",
+                    user_id=user_id,
+                    error_type=type(error).__name__,
+                    error=str(error)[:200],
+                )
+            return None
         metadata = {
             "source_type": "profile",
             "source_id": user_id,
             "display_name": user.display_name,
         }
         try:
+            metrics.increment("rag_sync_attempts_total")
             result = await self._rag.ingest_document(
                 owner_user_id=user_id,
                 external_document_id=f"profile:{user_id}",
@@ -42,6 +64,10 @@ class ProfileRagIngestionService:
                 document_type="text",
                 metadata=metadata,
             )
+            if result.status == "skipped":
+                metrics.increment("rag_sync_skipped_total")
+                return result
+            metrics.increment("rag_sync_success_total")
             logger.info(
                 "rag_profile_ingested",
                 user_id=user_id,
@@ -50,6 +76,7 @@ class ProfileRagIngestionService:
             )
             return result
         except Exception as error:
+            metrics.increment("rag_sync_failures_total")
             logger.warning(
                 "rag_profile_ingest_failed",
                 user_id=user_id,
@@ -77,7 +104,24 @@ class ProfileRagIngestionService:
             content_parts.append(f"Keywords: {cv.search_keywords}")
         content = "\n".join(content_parts)
         if not content.strip():
-            logger.warning("rag_ingest_cv_empty", cv_file_id=cv_file_id)
+            try:
+                metrics.increment("rag_delete_attempts_total")
+                removed = await self._rag.delete_document(
+                    owner_user_id=cv.user_id,
+                    external_document_id=f"cv:{cv.id}",
+                    collection=collection,
+                )
+                metrics.increment(
+                    "rag_delete_success_total" if removed else "rag_delete_skipped_total"
+                )
+            except Exception as error:
+                metrics.increment("rag_delete_failures_total")
+                logger.warning(
+                    "rag_empty_cv_delete_failed",
+                    cv_file_id=cv_file_id,
+                    error_type=type(error).__name__,
+                    error=str(error)[:200],
+                )
             return None
         metadata = {
             "source_type": "cv",
@@ -87,6 +131,7 @@ class ProfileRagIngestionService:
             "years_of_experience": cv.years_of_experience,
         }
         try:
+            metrics.increment("rag_sync_attempts_total")
             result = await self._rag.ingest_document(
                 owner_user_id=cv.user_id,
                 external_document_id=f"cv:{cv.id}",
@@ -96,6 +141,10 @@ class ProfileRagIngestionService:
                 document_type="text",
                 metadata=metadata,
             )
+            if result.status == "skipped":
+                metrics.increment("rag_sync_skipped_total")
+                return result
+            metrics.increment("rag_sync_success_total")
             logger.info(
                 "rag_cv_ingested",
                 cv_id=cv.id,
@@ -104,6 +153,7 @@ class ProfileRagIngestionService:
             )
             return result
         except Exception as error:
+            metrics.increment("rag_sync_failures_total")
             logger.warning(
                 "rag_cv_ingest_failed",
                 cv_id=cv.id,

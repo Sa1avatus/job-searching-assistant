@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.main import app
+from app.config import Settings
 from app.storage.database import Base, session_scope
 from app.storage.tables import UserRow
 
@@ -20,8 +21,16 @@ def _session_factory() -> sessionmaker:
     return sessionmaker(engine, expire_on_commit=False)
 
 
-def test_profile_facts_can_be_listed_updated_and_deleted_per_user() -> None:
+def test_profile_facts_can_be_listed_updated_and_deleted_per_user(monkeypatch) -> None:
     session_factory = _session_factory()
+    synced_users: list[str] = []
+
+    async def sync_profile(_service, user_id: str):
+        synced_users.append(user_id)
+        return None
+
+    monkeypatch.setattr("app.api.main.get_settings", lambda: Settings(_env_file=None))
+    monkeypatch.setattr("app.api.main.RagSyncService.sync_profile", sync_profile)
 
     def test_session_scope() -> Iterator[Session]:
         with session_factory() as session:
@@ -82,3 +91,4 @@ def test_profile_facts_can_be_listed_updated_and_deleted_per_user() -> None:
     assert cross_user.status_code == 404
     assert deleted.status_code == 204
     assert empty.json() == []
+    assert synced_users == ["user-1", "user-1", "user-1"]

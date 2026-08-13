@@ -14,11 +14,41 @@ semantic versioning for new releases; older historical version numbers are prese
 - Confirming profile facts now refreshes the owner-scoped `profiles` collection. RAG remains
   fail-open and disabled by default, so authoritative PostgreSQL updates are not lost when the
   optional service is unavailable.
+- Creating, editing, or deleting a profile fact now refreshes the reviewed profile document.
+- Existing RAG documents are updated through the platform's optimistic-lock `PATCH` contract
+  instead of repeatedly submitting conflicting version 1 payloads.
+- Deleting a resume removes its owner-scoped RAG document; removing the last verified profile fact
+  removes the now-empty profile document.
+- Concurrent RAG updates retry optimistic-lock conflicts at most three times.
+- Added a bounded, resumable `rag-backfill` CLI command for one owner's existing profile, resumes,
+  and vacancies.
+- Pytest no longer loads the operator's local `.env`, keeping auth and encryption tests explicit and
+  reproducible.
+- File and resume fact-import flows now refresh the reviewed profile RAG document after persistence.
+- Deleting a user now attempts owner-scoped cleanup of their profile, resume, and vacancy RAG
+  documents; individual cleanup failures remain fail-open and do not stop the remaining deletions.
+- RAG synchronization and deletion expose aggregate attempt, success, skipped, and failure counters
+  through the existing Prometheus `/metrics` endpoint; backfill reports skipped and failed counts
+  separately.
+- Added an explicit **Send to RAG** action and owner-checked API endpoint for retrying synchronization
+  of one confirmed resume.
+- Fact extraction now uses the explicitly active resume instead of the newest uploaded file and
+  shows its filename before and after extraction.
+- Added a bounded owner-scoped `matching-backfill` CLI command for stale and pre-source-v2
+  explanations. It reports sanitized failure codes and preserves the previous result while the
+  replacement task is pending.
+- Evaluator failures now persist only sanitized exception-class codes, never provider response
+  bodies. Required requirements affected by a technical error remain reviewable and are no longer
+  counted or described as missing skills; the existing explicit retry action uses bounded worker
+  attempts.
+- Confirmed resumes now schedule idempotent RAG synchronization through the durable dispatcher.
+  Synchronization state, attempt count, completion time, and sanitized failure code are visible per
+  resume; manual retries receive a fresh bounded attempt budget without duplicating active work.
 
 ### Tests
 
-- Added collection-routing and synchronization assertions for profile, resume, and vacancy
-  ingestion.
+- Added collection-routing, update, deletion, and synchronization assertions for profile, resume,
+  and vacancy ingestion.
 
 ## [1.4.1] — 2026-08-13
 

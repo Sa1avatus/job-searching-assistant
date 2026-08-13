@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.matching.rag_client import RagClient, RagDocumentResult
 from app.matching.rag_collections import VACANCY_COLLECTION
+from app.observability.metrics import metrics
 from app.storage.tables import VacancyRow
 
 logger = structlog.get_logger(__name__)
@@ -37,6 +38,7 @@ class VacancyRagIngestionService:
             "adapter_name": vacancy.adapter_name,
         }
         try:
+            metrics.increment("rag_sync_attempts_total")
             result = await self._rag.ingest_document(
                 owner_user_id=owner_user_id,
                 external_document_id=f"vacancy:{vacancy.id}",
@@ -46,6 +48,10 @@ class VacancyRagIngestionService:
                 document_type="text",
                 metadata=metadata,
             )
+            if result.status == "skipped":
+                metrics.increment("rag_sync_skipped_total")
+                return result
+            metrics.increment("rag_sync_success_total")
             logger.info(
                 "rag_vacancy_ingested",
                 vacancy_id=vacancy.id,
@@ -54,6 +60,7 @@ class VacancyRagIngestionService:
             )
             return result
         except Exception as error:
+            metrics.increment("rag_sync_failures_total")
             logger.warning(
                 "rag_vacancy_ingest_failed",
                 vacancy_id=vacancy.id,

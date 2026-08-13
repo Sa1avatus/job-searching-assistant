@@ -15,6 +15,7 @@ from app.storage.tables import CvFileRow, ProfileFactRow, UserRow
 @dataclass
 class FakeRagClient:
     ingested: list[dict[str, object]] | None = None
+    deleted: list[dict[str, object]] | None = None
     should_fail: bool = False
 
     async def search(self, query, **kwargs):
@@ -35,6 +36,13 @@ class FakeRagClient:
 
     async def health(self):
         raise NotImplementedError
+
+    async def delete_document(self, **kwargs) -> bool:
+        if self.should_fail:
+            raise ConnectionError("RAG unavailable")
+        if self.deleted is not None:
+            self.deleted.append(kwargs)
+        return True
 
 
 @pytest.mark.asyncio
@@ -152,5 +160,72 @@ async def test_ingest_profile_returns_none_on_rag_failure() -> None:
             service = ProfileRagIngestionService(session, rag)
             result = await service.ingest_profile(user.id)
             assert result is None
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ingest_empty_profile_removes_stale_rag_document() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            user = UserRow(display_name="Empty")
+            session.add(user)
+            session.commit()
+            rag = FakeRagClient(ingested=[], deleted=[])
+
+            result = await ProfileRagIngestionService(session, rag).ingest_profile(user.id)
+
+            assert result is None
+            assert rag.ingested == []
+            assert rag.deleted == [
+                {
+                    "owner_user_id": user.id,
+                    "external_document_id": f"profile:{user.id}",
+                    "collection": "profiles",
+                }
+            ]
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_fallback_skip_is_not_reported_as_indexed() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            user = UserRow(display_name="Fallback")
+            session.add(user)
+            session.flush()
+            session.add(
+                ProfileFactRow(
+                    user_id=user.id,
+                    category="skill",
+                    name="Python",
+                    value="production",
+                    is_verified=True,
+                )
+            )
+            session.commit()
+
+            class SkippingRagClient(FakeRagClient):
+                async def ingest_document(self, **kwargs) -> RagDocumentResult:
+                    return RagDocumentResult(
+                        document_id="",
+                        external_document_id=str(kwargs["external_document_id"]),
+                        version=0,
+                        status="skipped",
+                        content_hash="",
+                    )
+
+            result = await ProfileRagIngestionService(
+                session,
+                SkippingRagClient(),
+            ).ingest_profile(user.id)
+
+            assert result is not None
+            assert result.status == "skipped"
     finally:
         engine.dispose()

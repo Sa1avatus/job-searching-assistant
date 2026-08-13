@@ -210,7 +210,7 @@ class RouterEvidenceEvaluator:
             return self._build_error_result(
                 claim_id, evidence_id, semantic_score, reranker_score,
                 error_type=error_type,
-                reason=f"Evaluator technical failure: {error_type}: {str(error)[:200]}",
+                reason=f"Evaluator technical failure ({error_type})",
             )
 
         # Parse relation — invalid LLM output → EVALUATION_ERROR, not UNKNOWN
@@ -220,7 +220,7 @@ class RouterEvidenceEvaluator:
             return self._build_error_result(
                 claim_id, evidence_id, semantic_score, reranker_score,
                 error_type="invalid_relation_value",
-                reason=f"LLM returned unrecognized relation: {raw_result.relation!r}",
+                reason="Evaluator returned an unsupported relation",
             )
 
         entailment_score = raw_result.entailment_score

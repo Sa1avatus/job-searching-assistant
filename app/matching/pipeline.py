@@ -337,6 +337,15 @@ class MatchingPipeline:
                         ):
                             best_entailment = cr.best_entailment
 
+                    evaluator_failure_codes = sorted(
+                        {
+                            cr.best_entailment.error_type
+                            for cr in req_result.claim_results
+                            if cr.best_entailment is not None
+                            and cr.best_entailment.error_type is not None
+                        }
+                    )
+
                     self._session.add(
                         RequirementMatchRow(
                             application_id=application.id,
@@ -356,6 +365,7 @@ class MatchingPipeline:
                             explanation=req_result.explanation,
                             retrieval_model_versions_json={
                                 "pipeline": "claim-based",
+                                "evaluator_failure_codes": evaluator_failure_codes,
                                 "decomposer": {
                                     "name": self._claim_decomposer.model_name,
                                     "version": self._claim_decomposer.model_version,
@@ -369,6 +379,9 @@ class MatchingPipeline:
                                     "revision": self._reranker.model_revision,
                                 },
                             },
+                            entailment_relation=req_result.overall_relation,
+                            evidence_strength=req_result.overall_strength,
+                            is_hard_blocker=req_result.is_hard_blocker,
                         )
                     )
                 metrics.increment("claim_pipeline_runs_total")

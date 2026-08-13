@@ -8,6 +8,7 @@ import httpx
 import structlog
 
 logger = structlog.get_logger(__name__)
+MAX_UPSERT_ATTEMPTS = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,14 @@ class RagClient(Protocol):
         version: int = 1,
         metadata: dict[str, Any] | None = None,
     ) -> RagDocumentResult: ...
+
+    async def delete_document(
+        self,
+        *,
+        owner_user_id: str,
+        external_document_id: str,
+        collection: str,
+    ) -> bool: ...
 
     async def health(self) -> RagHealthStatus: ...
 
@@ -183,15 +192,40 @@ class RagHttpClient:
             "version": version,
             "metadata": metadata or {},
         }
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "X-Owner-User-Id": owner_user_id,
+        }
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(
                 f"{self._base_url}/v1/documents",
                 json=payload,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "X-Owner-User-Id": owner_user_id,
-                },
+                headers=headers,
             )
+            if response.status_code == 409:
+                for _attempt in range(MAX_UPSERT_ATTEMPTS):
+                    document = await self._find_document(
+                        client,
+                        owner_user_id=owner_user_id,
+                        external_document_id=external_document_id,
+                        collection=collection,
+                    )
+                    if document is None:
+                        break
+                    response = await client.patch(
+                        f"{self._base_url}/v1/documents/{document['id']}",
+                        json={
+                            "expected_lock_version": document["lock_version"],
+                            "content": content,
+                            "title": title,
+                            "document_type": document_type,
+                            "language": language,
+                            "metadata": metadata or {},
+                        },
+                        headers=headers,
+                    )
+                    if response.status_code != 409:
+                        break
             response.raise_for_status()
         data = response.json()
         logger.info(
@@ -208,6 +242,79 @@ class RagHttpClient:
             status=str(data.get("status", "unknown")),
             content_hash=str(data.get("content_hash", "")),
         )
+
+    async def delete_document(
+        self,
+        *,
+        owner_user_id: str,
+        external_document_id: str,
+        collection: str,
+    ) -> bool:
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "X-Owner-User-Id": owner_user_id,
+        }
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            document = await self._find_document(
+                client,
+                owner_user_id=owner_user_id,
+                external_document_id=external_document_id,
+                collection=collection,
+            )
+            if document is None:
+                return False
+            document_id = str(document["id"])
+            delete_response = await client.delete(
+                f"{self._base_url}/v1/documents/{document_id}",
+                headers=headers,
+            )
+            if delete_response.status_code == 404:
+                return False
+            delete_response.raise_for_status()
+            logger.info(
+                "rag_document_deleted",
+                document_id=document_id,
+                external_document_id=external_document_id,
+                collection=collection,
+            )
+            return True
+
+    async def _find_document(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        owner_user_id: str,
+        external_document_id: str,
+        collection: str,
+    ) -> dict[str, Any] | None:
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "X-Owner-User-Id": owner_user_id,
+        }
+        offset = 0
+        limit = 200
+        while True:
+            response = await client.get(
+                f"{self._base_url}/v1/documents",
+                params={
+                    "project_id": self._project_id,
+                    "collection": collection,
+                    "limit": limit,
+                    "offset": offset,
+                },
+                headers=headers,
+            )
+            response.raise_for_status()
+            documents = response.json()
+            for document in documents:
+                if (
+                    str(document.get("external_document_id", "")) == external_document_id
+                    and document.get("id")
+                ):
+                    return dict(document)
+            if len(documents) < limit:
+                return None
+            offset += limit
 
     async def health(self) -> RagHealthStatus:
         try:
@@ -271,6 +378,16 @@ class RagFallbackClient:
             status="skipped",
             content_hash="",
         )
+
+    async def delete_document(
+        self,
+        *,
+        owner_user_id: str,
+        external_document_id: str,
+        collection: str,
+    ) -> bool:
+        del owner_user_id, external_document_id, collection
+        return False
 
     async def health(self) -> RagHealthStatus:
         return RagHealthStatus(

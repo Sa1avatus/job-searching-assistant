@@ -535,6 +535,7 @@ def test_dashboard_exposes_stateful_metadata_and_non_disruptive_rejection() -> N
     assert "Отклик отправлен" in html
     assert "isSubmissionConfirmed" in html
     assert 'id="delete-resume"' in html
+    assert 'id="send-resume-to-rag"' in html
     assert "generate-materials" in html
     assert "cover_letter_language_matches" in html
     assert "application_status !== item.application_status" in html

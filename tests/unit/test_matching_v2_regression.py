@@ -10,12 +10,13 @@ Tests that the specific failure cases from the diagnostic are handled correctly:
 """
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.llm.router import ModelRequest, ModelRouter, ModelTaskClass
 from app.matching.claim_pipeline import ClaimMatchPipeline
 from app.matching.claims import (
     AtomicClaim,
@@ -25,22 +26,23 @@ from app.matching.claims import (
     RequirementCriticality,
     RequirementDecomposition,
 )
-from app.matching.duration import evaluate_duration, ExperienceInterval
+from app.matching.duration import ExperienceInterval, evaluate_duration
 from app.matching.entailment import (
     EntailmentRelation,
     EntailmentResult,
     EvidenceStrengthCategory,
-    compute_evidence_strength,
 )
+from app.matching.extraction import RequirementImportance, RequirementType
 from app.matching.gap_analysis import GapType, analyze_gaps
+from app.matching.model_evaluators import RouterEvidenceEvaluator
 from app.matching.scoring import (
     DeterministicMatchScorer,
     EligibilityStatus,
     MatchLevel,
     RequirementAssessment,
 )
-from app.matching.extraction import RequirementImportance, RequirementType
 from app.matching.semantic import FakeReranker, RetrievalCandidate
+from app.prompts.registry import PromptDefinition, PromptRegistry
 from app.storage.database import Base
 from app.storage.tables import (
     ApplicationRow,
@@ -50,7 +52,6 @@ from app.storage.tables import (
     VacancyRequirementRow,
     VacancyRow,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────
 
@@ -473,6 +474,55 @@ def test_regression_7_evaluator_failure():
     # Should NOT be 0 — evaluation error gets some residual credit
     assert score.final_score > 0
     assert score.confidence < 0.5
+    assert score.missing_required_count == 0
+    assert score.eligibility_status is EligibilityStatus.REVIEW
+    assert any("technical error" in line for line in score.explanation)
+
+
+def test_evaluator_failure_diagnostics_do_not_persist_provider_body():
+    class FailingProvider:
+        name = "test-provider"
+
+        def supports(self, task_class: ModelTaskClass) -> bool:
+            return True
+
+        def estimate_cost_usd(self, request: ModelRequest) -> float:
+            return 0.01
+
+        async def complete(self, request: ModelRequest) -> dict[str, object]:
+            raise RuntimeError("secret provider response body")
+
+    registry = PromptRegistry(
+        (
+            PromptDefinition(
+                name="evaluate_evidence_entailment",
+                purpose="test",
+                version=1,
+                template="{claim_id} {claim_text} {claim_type} {evidence_id} {evidence_text}",
+                input_schema="test",
+                output_schema="test",
+                model_task_class="low_cost",
+                created_on=date(2026, 1, 1),
+                is_active=True,
+            ),
+        )
+    )
+    evaluator = RouterEvidenceEvaluator(ModelRouter((FailingProvider(),)), registry)
+
+    result = asyncio.run(
+        evaluator.evaluate(
+            claim_id="claim-1",
+            claim_text="Python",
+            claim_type="technology",
+            evidence_id="evidence-1",
+            evidence_text="Production Python",
+        )
+    )
+
+    assert result.relation is EntailmentRelation.EVALUATION_ERROR
+    assert result.error_type == "NoModelAvailableError"
+    assert result.reason == "Evaluator technical failure (NoModelAvailableError)"
+    assert "secret" not in result.model_dump_json()
 
 
 # ── Regression Test 8: Hard blocker confirmed ───────────────────

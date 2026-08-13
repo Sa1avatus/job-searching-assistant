@@ -92,6 +92,7 @@ from app.api.schemas import (
     ProfileFactDetailResponse,
     RequirementMatchDetailResponse,
     RerankerStatusResponse,
+    ResumeRagSyncResponse,
     ReviewDecisionRequest,
     ReviewItemResponse,
     SavedVacancyPageResponse,
@@ -195,6 +196,11 @@ from app.services.recruitment import (
 from app.services.rag_sync import RagSyncService
 from app.services.reranker_status import RerankerStatusProbe
 from app.services.resume_intake import ResumeIntakeService
+from app.services.resume_rag_jobs import (
+    ResumeRagJobNotReadyError,
+    ResumeRagJobService,
+    ResumeRagJobStatus,
+)
 from app.services.site_definition_archive import archive_site_definition
 from app.services.site_definition_update import (
     InvalidSiteDefinitionUpdate,
@@ -299,7 +305,15 @@ def response_employment_types(vacancy: VacancyRow) -> list[EmploymentTypeName]:
     ]
 
 
-def serialize_cv_file(cv_file: CvFileRow, *, active_cv_file_id: str | None) -> CvFileResponse:
+def serialize_cv_file(
+    cv_file: CvFileRow,
+    *,
+    active_cv_file_id: str | None,
+    rag_status: ResumeRagJobStatus | None = None,
+) -> CvFileResponse:
+    rag_status = rag_status or ResumeRagJobStatus(
+        None, "not_scheduled", 0, None, None, None
+    )
     return CvFileResponse(
         id=cv_file.id,
         user_id=cv_file.user_id,
@@ -313,7 +327,23 @@ def serialize_cv_file(cv_file: CvFileRow, *, active_cv_file_id: str | None) -> C
         years_of_experience=cv_file.years_of_experience,
         analyzed_at=cv_file.analyzed_at,
         is_active=cv_file.id == active_cv_file_id,
+        rag_sync_status=rag_status.status,
+        rag_sync_attempts=rag_status.attempt_number,
+        rag_sync_failure_code=rag_status.failure_code,
+        rag_synced_at=rag_status.synced_at,
     )
+
+
+def resume_rag_status(session: Session, cv_file_id: str) -> ResumeRagJobStatus:
+    settings = get_settings()
+    if not (
+        settings.rag_enabled
+        and settings.rag_service_url
+        and settings.rag_api_key
+        and settings.rag_project_id
+    ):
+        return ResumeRagJobStatus(None, "not_configured", 0, None, None, None)
+    return ResumeRagJobService(session).status(cv_file_id)
 
 
 def required_api_scope(method: str, path: str) -> str:
@@ -1695,7 +1725,7 @@ async def cancel_browser_authorization(
     response_model=ProfileFactResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def add_profile_fact(
+async def add_profile_fact(
     user_id: str,
     request: ProfileFactRequest,
     session: Annotated[Session, Depends(session_scope)],
@@ -1707,6 +1737,7 @@ def add_profile_fact(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    await RagSyncService(session, get_settings()).sync_profile(user_id)
     return ProfileFactResponse(
         id=fact.id,
         user_id=fact.user_id,
@@ -1736,7 +1767,7 @@ def list_profile_facts(
     "/v1/users/{user_id}/facts/{fact_id}",
     response_model=ProfileFactResponse,
 )
-def update_profile_fact(
+async def update_profile_fact(
     user_id: str,
     fact_id: str,
     request: ProfileFactRequest,
@@ -1752,6 +1783,7 @@ def update_profile_fact(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    await RagSyncService(session, get_settings()).sync_profile(user_id)
     return ProfileFactResponse.model_validate(fact, from_attributes=True)
 
 
@@ -1759,7 +1791,7 @@ def update_profile_fact(
     "/v1/users/{user_id}/facts/{fact_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def delete_profile_fact(
+async def delete_profile_fact(
     user_id: str,
     fact_id: str,
     session: Annotated[Session, Depends(session_scope)],
@@ -1768,6 +1800,7 @@ def delete_profile_fact(
         RecruitmentService(session).delete_profile_fact(user_id, fact_id)
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    await RagSyncService(session, get_settings()).sync_profile(user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1844,6 +1877,7 @@ async def import_facts_from_file(
             )
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+    await RagSyncService(session, settings).sync_profile(user_id)
     return FactImportResultResponse(
         batch_id=result.batch_id,
         source_type=result.source_type,
@@ -1901,6 +1935,7 @@ async def extract_facts_from_resume(
             )
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+    await RagSyncService(session, settings).sync_profile(user_id)
     return FactImportResultResponse(
         batch_id=result.batch_id,
         source_type=result.source_type,
@@ -2037,7 +2072,9 @@ async def upload_cv_file(
         saved_document.storage_path.unlink(missing_ok=True)
     user = session.get(UserRow, user_id)
     return serialize_cv_file(
-        cv_file, active_cv_file_id=user.active_cv_file_id if user is not None else None
+        cv_file,
+        active_cv_file_id=user.active_cv_file_id if user is not None else None,
+        rag_status=resume_rag_status(session, cv_file.id),
     )
 
 
@@ -2052,14 +2089,21 @@ def list_cv_files(
         raise HTTPException(status_code=404, detail=str(error)) from error
     user = session.get(UserRow, user_id)
     active_cv_file_id = user.active_cv_file_id if user is not None else None
-    return [serialize_cv_file(cv_file, active_cv_file_id=active_cv_file_id) for cv_file in cv_files]
+    return [
+        serialize_cv_file(
+            cv_file,
+            active_cv_file_id=active_cv_file_id,
+            rag_status=resume_rag_status(session, cv_file.id),
+        )
+        for cv_file in cv_files
+    ]
 
 
 @app.delete(
     "/v1/users/{user_id}/cv-files/{cv_file_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def delete_cv_file(
+async def delete_cv_file(
     user_id: str,
     cv_file_id: str,
     session: Annotated[Session, Depends(session_scope)],
@@ -2069,6 +2113,8 @@ def delete_cv_file(
         stored_path = RecruitmentService(session).delete_cv_file(user_id, cv_file_id)
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    ResumeRagJobService(session).delete_for_cv(cv_file_id)
+    await RagSyncService(session, get_settings()).delete_resume(user_id, cv_file_id)
     storage.delete(stored_path)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -2083,7 +2129,11 @@ def select_active_cv_file(
         cv_file = RecruitmentService(session).set_active_cv_file(user_id, request.cv_file_id)
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return serialize_cv_file(cv_file, active_cv_file_id=cv_file.id)
+    return serialize_cv_file(
+        cv_file,
+        active_cv_file_id=cv_file.id,
+        rag_status=resume_rag_status(session, cv_file.id),
+    )
 
 
 @app.post(
@@ -2158,8 +2208,65 @@ async def confirm_resume_profile(
         )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    await RagSyncService(session, get_settings()).sync_resume(cv_file.id)
-    return serialize_cv_file(cv_file, active_cv_file_id=cv_file.id)
+    settings = get_settings()
+    if (
+        settings.rag_enabled
+        and settings.rag_service_url
+        and settings.rag_api_key
+        and settings.rag_project_id
+    ):
+        ResumeRagJobService(session).schedule(cv_file.id)
+    return serialize_cv_file(
+        cv_file,
+        active_cv_file_id=cv_file.id,
+        rag_status=resume_rag_status(session, cv_file.id),
+    )
+
+
+@app.post(
+    "/v1/users/{user_id}/cv-files/{cv_file_id}/rag-sync",
+    response_model=ResumeRagSyncResponse,
+)
+async def sync_resume_to_rag(
+    user_id: str,
+    cv_file_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ResumeRagSyncResponse:
+    """Manually retry RAG indexing for one reviewed resume owned by the user."""
+    try:
+        cv_file = RecruitmentService(session).get_cv_file(user_id, cv_file_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    if cv_file.analyzed_at is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Confirm the resume profile before sending it to RAG",
+        )
+
+    settings = get_settings()
+    if not (
+        settings.rag_enabled
+        and settings.rag_service_url
+        and settings.rag_api_key
+        and settings.rag_project_id
+    ):
+        raise HTTPException(status_code=503, detail="RAG synchronization is not configured")
+
+    try:
+        task = ResumeRagJobService(session).schedule(cv_file.id, force=True)
+    except ResumeRagJobNotReadyError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    task_status = ResumeRagJobService(session).status(cv_file.id)
+    if task_status.task_id is None or task_status.updated_at is None:
+        raise HTTPException(status_code=500, detail="RAG synchronization task was not persisted")
+    return ResumeRagSyncResponse(
+        task_id=task.id,
+        status=task_status.status,
+        attempt_number=task_status.attempt_number,
+        failure_code=task_status.failure_code,
+        updated_at=task_status.updated_at,
+        synced_at=task_status.synced_at,
+    )
 
 
 @app.post(
@@ -3412,15 +3519,33 @@ def resume_human_action(
 
 
 @app.delete("/v1/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_user(
+async def delete_user(
     user_id: str,
     session: Annotated[Session, Depends(session_scope)],
     storage: Annotated[DocumentStorage, Depends(document_storage)],
     evidence_storage: Annotated[EvidenceArtifactStorage, Depends(evidence_artifact_storage)],
 ) -> Response:
     try:
+        cv_file_ids = tuple(
+            session.scalars(select(CvFileRow.id).where(CvFileRow.user_id == user_id)).all()
+        )
+        vacancy_ids = tuple(
+            session.scalars(
+                select(ApplicationRow.vacancy_id)
+                .where(ApplicationRow.user_id == user_id)
+                .distinct()
+            ).all()
+        )
         stored_paths, evidence_paths, browser_state_paths = RecruitmentService(session).delete_user(
             user_id
+        )
+        resume_rag_jobs = ResumeRagJobService(session)
+        for cv_file_id in cv_file_ids:
+            resume_rag_jobs.delete_for_cv(cv_file_id)
+        await RagSyncService(session, get_settings()).delete_owner_documents(
+            user_id,
+            cv_file_ids=cv_file_ids,
+            vacancy_ids=vacancy_ids,
         )
         for stored_path in stored_paths:
             storage.delete(stored_path)
