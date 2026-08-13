@@ -556,6 +556,7 @@ def dashboard_interface() -> FileResponse:
             ),
             "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
         },
     )
 
@@ -1848,7 +1849,14 @@ async def import_facts_from_file(
         facts_skipped=result.facts_skipped,
         facts_rejected=result.facts_rejected,
         candidates=[
-            {"name": c.name, "category": c.category, "duplicate_status": c.duplicate_status.value}
+            {
+                "name": c.name,
+                "category": c.category,
+                "value": c.value,
+                "confidence": c.confidence,
+                "source_text": c.source_text,
+                "duplicate_status": c.duplicate_status.value,
+            }
             for c in result.candidates[:50]
         ],
     )
@@ -1898,7 +1906,14 @@ async def extract_facts_from_resume(
         facts_skipped=result.facts_skipped,
         facts_rejected=result.facts_rejected,
         candidates=[
-            {"name": c.name, "category": c.category, "duplicate_status": c.duplicate_status.value}
+            {
+                "name": c.name,
+                "category": c.category,
+                "value": c.value,
+                "confidence": c.confidence,
+                "source_text": c.source_text,
+                "duplicate_status": c.duplicate_status.value,
+            }
             for c in result.candidates[:50]
         ],
     )
