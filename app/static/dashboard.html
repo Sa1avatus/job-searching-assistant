@@ -209,6 +209,23 @@
     .fact-status { width: max-content; display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border-radius: 999px; background: #0b2f2a; color: #6ee7b7; font-size: 12px; font-weight: 800; }
     .fact-status.unverified { background: #342a17; color: #facc15; }
     .fact-status__dot { width: 15px; height: 15px; display: grid; place-items: center; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; line-height: 1; }
+    /* Fact ingestion styles */
+    .fact-source-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 6px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+    .fact-source-badge[data-source="manual"] { background: #1b2650; color: #93a3d4; }
+    .fact-source-badge[data-source="resume"] { background: #1a3320; color: #6ee7b7; }
+    .fact-source-badge[data-source="file"] { background: #2d1b4e; color: #c4b5fd; }
+    .fact-source-badge[data-source="inferred"] { background: #342a17; color: #facc15; }
+    .fact-confidence { font-size: 10px; color: #7a8ab5; }
+    .facts-actions-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .facts-actions-row button { min-height: 36px; padding: 0 14px; font-size: 13px; }
+    .fact-import-result { margin: 12px 0; padding: 12px; border: 1px solid #3b4c7d; border-radius: 10px; background: #0d162d; font-size: 13px; }
+    .fact-import-result .stats { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0; }
+    .fact-import-result .stat { display: inline-flex; align-items: center; gap: 4px; }
+    .fact-import-result .stat .num { font-weight: 800; font-size: 16px; }
+    .batch-list { display: grid; gap: 8px; margin: 12px 0; }
+    .batch-card { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px 14px; border: 1px solid #30426d; border-radius: 10px; background: #111a34; font-size: 13px; }
+    .batch-card .batch-info { color: #c5cdef; }
+    .batch-card .batch-stats { display: flex; gap: 10px; color: #93a3d4; font-size: 12px; }
     .fact-menu-wrap { position: relative; justify-self: end; }
     .fact-menu-toggle { width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border-color: transparent; background: transparent; color: #aab5d6; font-size: 24px; line-height: 1; }
     .fact-menu-toggle:hover, .fact-menu-toggle[aria-expanded="true"] { background: #1d294d; border-color: #5065a8; color: #fff; }
@@ -387,6 +404,15 @@
           </button>
         </div>
 
+        <div class="facts-actions-row">
+          <button id="fact-import-file-btn" type="button" class="primary">📁 Импорт из файла</button>
+          <button id="fact-extract-resume-btn" type="button" class="primary">📄 Извлечь из резюме</button>
+          <button id="fact-batch-history-btn" type="button">📋 История импорта</button>
+          <input id="fact-import-file-input" type="file" accept=".txt,.md,.csv,.json,.pdf,.docx" hidden>
+        </div>
+        <div id="fact-import-result" class="fact-import-result" hidden></div>
+        <div id="fact-batch-history" class="batch-list" hidden></div>
+
         <form id="profile-fact-form" class="facts-add-form" hidden>
           <div class="facts-add-grid">
             <div><label for="profile-fact-category">Категория</label><input id="profile-fact-category" required maxlength="100" placeholder="skill"></div>
@@ -412,6 +438,16 @@
           <div class="facts-filter-field">
             <label for="profile-fact-value-filter">Значение</label>
             <input id="profile-fact-value-filter" type="search" placeholder="Поиск по значению">
+          </div>
+          <div class="facts-filter-field">
+            <label for="profile-fact-source-filter">Источник</label>
+            <select id="profile-fact-source-filter">
+              <option value="">Все источники</option>
+              <option value="manual">manual</option>
+              <option value="resume">resume</option>
+              <option value="file">file</option>
+              <option value="inferred">inferred</option>
+            </select>
           </div>
           <div class="facts-verified-filter">
             <span>Только подтверждённые</span>
@@ -998,11 +1034,13 @@
       const nameQuery = document.querySelector('#profile-fact-name-filter').value.trim().toLowerCase();
       const valueQuery = document.querySelector('#profile-fact-value-filter').value.trim().toLowerCase();
       const verifiedOnly = document.querySelector('#profile-fact-verified-filter').checked;
+      const sourceFilter = document.querySelector('#profile-fact-source-filter').value.trim().toLowerCase();
       return profileFactsCache.filter(fact => {
         if (category && String(fact.category || '').toLowerCase() !== category) return false;
         if (nameQuery && !String(fact.name || '').toLowerCase().includes(nameQuery)) return false;
         if (valueQuery && !String(fact.value || '').toLowerCase().includes(valueQuery)) return false;
         if (verifiedOnly && !fact.is_verified) return false;
+        if (sourceFilter && String(fact.source_type || 'manual').toLowerCase() !== sourceFilter) return false;
         return true;
       });
     }
@@ -1122,6 +1160,15 @@
         );
         status.append(statusDot, statusText);
 
+        // Source badge
+        const sourceType = fact.source_type || 'manual';
+        const sourceBadge = element('span', sourceType, 'fact-source-badge');
+        sourceBadge.dataset.source = sourceType;
+        if (fact.confidence !== undefined && fact.confidence !== null && fact.confidence < 1) {
+          const conf = element('span', `${Math.round(fact.confidence * 100)}%`, 'fact-confidence');
+          sourceBadge.append(conf);
+        }
+
         const menuWrap = element('div', undefined, 'fact-menu-wrap');
         const menuToggle = element('button', '⋮', 'fact-menu-toggle');
         menuToggle.type = 'button';
@@ -1143,7 +1190,7 @@
           menuWrap.append(menu);
         }
 
-        card.append(icon, category, name, value, status, menuWrap);
+        card.append(icon, category, name, value, sourceBadge, status, menuWrap);
         container.append(card);
       });
 
@@ -1168,8 +1215,9 @@
         renderProfileFacts();
         return [];
       }
+      // Use detailed endpoint to get source_type, confidence, status
       const facts = await asJson(await fetchWithTimeout(
-        `/v1/users/${userId}/facts`,
+        `/v1/users/${userId}/facts-detailed`,
         {headers: headers(false)}
       ));
       profileFactsCache = Array.isArray(facts) ? facts : [];
@@ -1196,7 +1244,7 @@
       setProfileFactAddFormOpen(false);
     });
 
-    document.querySelectorAll('#profile-fact-category-filter, #profile-fact-name-filter, #profile-fact-value-filter, #profile-fact-verified-filter')
+    document.querySelectorAll('#profile-fact-category-filter, #profile-fact-name-filter, #profile-fact-value-filter, #profile-fact-verified-filter, #profile-fact-source-filter')
       .forEach(control => control.addEventListener('input', () => {
         editingProfileFactId = null;
         openProfileFactMenuId = null;
@@ -1263,6 +1311,114 @@
         submitButton.disabled = false;
       }
     });
+
+    // ── Fact import from file ──
+    document.querySelector('#fact-import-file-btn').addEventListener('click', () => {
+      document.querySelector('#fact-import-file-input').click();
+    });
+
+    document.querySelector('#fact-import-file-input').addEventListener('change', async event => {
+      const file = event.target.files[0];
+      if (!file) return;
+      const userId = userIdInput.value.trim();
+      if (!userId) { showError(new Error('Set User ID first')); return; }
+      const resultDiv = document.querySelector('#fact-import-result');
+      resultDiv.hidden = false;
+      resultDiv.textContent = `Импорт ${file.name}...`;
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const resp = await fetch(`/v1/users/${userId}/facts/import-file?auto_accept=false`, {
+          method: 'POST', headers: headers(true), body: formData,
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const result = await resp.json();
+        resultDiv.innerHTML = `<strong>Импорт завершён:</strong>
+          <div class="stats">
+            <span class="stat"><span class="num">${result.facts_created}</span> новых</span>
+            <span class="stat"><span class="num">${result.facts_merged}</span> объединено</span>
+            <span class="stat"><span class="num">${result.facts_skipped}</span> пропущено</span>
+            <span class="stat"><span class="num">${result.facts_rejected}</span> отклонено</span>
+          </div>
+          <div>Batch ID: ${result.batch_id}</div>`;
+        await loadProfileFacts();
+        showStatus(`Импортировано из ${file.name}.`);
+      } catch (error) { showError(error); }
+      event.target.value = '';
+    });
+
+    // ── Fact extraction from resume ──
+    document.querySelector('#fact-extract-resume-btn').addEventListener('click', async () => {
+      const userId = userIdInput.value.trim();
+      if (!userId) { showError(new Error('Set User ID first')); return; }
+      // Get list of CVs to let user pick
+      try {
+        const cvs = await asJson(await fetchWithTimeout(`/v1/users/${userId}/cv-files`, {headers: headers(false)}));
+        if (!Array.isArray(cvs) || cvs.length === 0) {
+          showError(new Error(currentLanguage === 'en' ? 'No resumes found. Upload a resume first.' : 'Резюме не найдены. Сначала загрузите резюме.'));
+          return;
+        }
+        const cvId = cvs[0].id; // Use first/active CV
+        const resultDiv = document.querySelector('#fact-import-result');
+        resultDiv.hidden = false;
+        resultDiv.textContent = currentLanguage === 'en' ? 'Extracting facts from resume...' : 'Извлечение фактов из резюме...';
+        const resp = await fetch(`/v1/users/${userId}/facts/extract-from-resume`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json', ...headers(true)},
+          body: JSON.stringify({cv_file_id: cvId, force: false, auto_accept: false}),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const result = await resp.json();
+        resultDiv.innerHTML = `<strong>${currentLanguage === 'en' ? 'Extraction complete:' : 'Извлечение завершено:'}</strong>
+          <div class="stats">
+            <span class="stat"><span class="num">${result.facts_created}</span> ${currentLanguage === 'en' ? 'new' : 'новых'}</span>
+            <span class="stat"><span class="num">${result.facts_merged}</span> ${currentLanguage === 'en' ? 'merged' : 'объединено'}</span>
+            <span class="stat"><span class="num">${result.facts_skipped}</span> ${currentLanguage === 'en' ? 'skipped' : 'пропущено'}</span>
+          </div>
+          <div>Batch ID: ${result.batch_id}</div>`;
+        await loadProfileFacts();
+        showStatus(currentLanguage === 'en' ? 'Facts extracted from resume.' : 'Факты извлечены из резюме.');
+      } catch (error) { showError(error); }
+    });
+
+    // ── Batch history ──
+    document.querySelector('#fact-batch-history-btn').addEventListener('click', async () => {
+      const userId = userIdInput.value.trim();
+      if (!userId) { showError(new Error('Set User ID first')); return; }
+      const batchDiv = document.querySelector('#fact-batch-history');
+      if (!batchDiv.hidden) { batchDiv.hidden = true; return; }
+      try {
+        const batches = await asJson(await fetchWithTimeout(`/v1/users/${userId}/fact-import-batches`, {headers: headers(false)}));
+        if (!Array.isArray(batches) || batches.length === 0) {
+          batchDiv.innerHTML = '<div style="color:#7a8ab5">История импорта пуста.</div>';
+        } else {
+          batchDiv.innerHTML = batches.map(b => `
+            <div class="batch-card">
+              <div class="batch-info">${b.source_type} — ${b.source_filename || b.source_id || '—'} — ${new Date(b.created_at).toLocaleString()}</div>
+              <div class="batch-stats">
+                <span>+${b.facts_created} ~${b.facts_merged} -${b.facts_skipped}</span>
+                <span>${b.status}</span>
+              </div>
+              ${b.status === 'completed' ? `<button onclick="undoBatch('${b.id}')" style="font-size:12px;padding:4px 8px">Отменить</button>` : ''}
+            </div>
+          `).join('');
+        }
+        batchDiv.hidden = false;
+      } catch (error) { showError(error); }
+    });
+
+    async function undoBatch(batchId) {
+      const userId = userIdInput.value.trim();
+      if (!userId || !confirm('Отменить импорт? Факты, подтверждённые вручную, не будут удалены.')) return;
+      try {
+        await asJson(await fetchWithTimeout(`/v1/users/${userId}/fact-import-batches/${batchId}/undo`, {
+          method: 'POST', headers: headers(true),
+        }));
+        await loadProfileFacts();
+        document.querySelector('#fact-batch-history').hidden = true;
+        showStatus('Импорт отменён.');
+      } catch (error) { showError(error); }
+    }
 
     document.querySelector('#profile-facts-list').addEventListener('click', async event => {
       const actionButton = event.target.closest('[data-action]');
