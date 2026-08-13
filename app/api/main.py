@@ -1820,7 +1820,7 @@ async def import_facts_from_file(
     async with httpx.AsyncClient(timeout=60, follow_redirects=False, trust_env=False) as client:
         router = ModelRouter(build_model_providers(client, settings))
         prompt_registry = PromptRegistry.load(
-            Path(__file__).parents[1] / "prompts" / "registry.json"
+            Path(__file__).parents[2] / "prompts" / "registry.json"
         )
         service = FactIngestionService(session, router, prompt_registry)
         try:
@@ -1860,7 +1860,7 @@ async def extract_facts_from_resume(
     async with httpx.AsyncClient(timeout=120, follow_redirects=False, trust_env=False) as client:
         router = ModelRouter(build_model_providers(client, settings))
         prompt_registry = PromptRegistry.load(
-            Path(__file__).parents[1] / "prompts" / "registry.json"
+            Path(__file__).parents[2] / "prompts" / "registry.json"
         )
         service = FactIngestionService(session, router, prompt_registry)
         try:
@@ -1898,7 +1898,7 @@ def list_fact_import_batches(
     service = FactIngestionService(
         session,
         ModelRouter([]),  # No LLM needed for listing
-        PromptRegistry.load(Path(__file__).parents[1] / "prompts" / "registry.json"),
+        PromptRegistry.load(Path(__file__).parents[2] / "prompts" / "registry.json"),
     )
     batches = service.list_batches(user_id)
     return [
@@ -1928,7 +1928,7 @@ def undo_fact_import_batch(
     service = FactIngestionService(
         session,
         ModelRouter([]),
-        PromptRegistry.load(Path(__file__).parents[1] / "prompts" / "registry.json"),
+        PromptRegistry.load(Path(__file__).parents[2] / "prompts" / "registry.json"),
     )
     try:
         removed = service.undo_batch(user_id, batch_id)
