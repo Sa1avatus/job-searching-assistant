@@ -401,6 +401,56 @@ class ConfirmedProfileFactResponse(BaseModel):
     is_verified: bool
 
 
+class ProfileFactDetailResponse(BaseModel):
+    id: str
+    user_id: str
+    category: str
+    name: str
+    value: str
+    is_verified: bool
+    source_type: str = "manual"
+    source_id: str | None = None
+    source_text: str | None = None
+    extraction_method: str | None = None
+    batch_id: str | None = None
+    confidence: float = 1.0
+    experience_started_at: str | None = None
+    experience_ended_at: str | None = None
+    status: str = "active"
+    created_at: datetime | None = None
+
+
+class FactImportBatchResponse(BaseModel):
+    id: str
+    user_id: str
+    source_type: str
+    source_id: str | None = None
+    source_filename: str | None = None
+    extractor_version: str
+    facts_created: int
+    facts_merged: int
+    facts_skipped: int
+    facts_rejected: int
+    status: str
+    created_at: datetime | None = None
+
+
+class FactImportResultResponse(BaseModel):
+    batch_id: str
+    source_type: str
+    facts_created: int
+    facts_merged: int
+    facts_skipped: int
+    facts_rejected: int
+    candidates: list[dict[str, object]] = []
+
+
+class ExtractFromResumeRequest(BaseModel):
+    cv_file_id: str
+    force: bool = False
+    auto_accept: bool = False
+
+
 class LlmModelsRequest(BaseModel):
     provider: Literal["anthropic", "gemini", "openai_compatible"]
     api_key: SecretStr

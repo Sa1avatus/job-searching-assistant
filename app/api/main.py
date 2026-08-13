@@ -71,6 +71,9 @@ from app.api.schemas import (
     EmploymentTypeName,
     EvidenceArtifactResponse,
     ExtractedProfileResponse,
+    ExtractFromResumeRequest,
+    FactImportBatchResponse,
+    FactImportResultResponse,
     GreenhouseImportRequest,
     HeadHunterImportRequest,
     HealthResponse,
@@ -85,6 +88,7 @@ from app.api.schemas import (
     PrepareApplicationRequest,
     ProfileFactRequest,
     ProfileFactResponse,
+    ProfileFactDetailResponse,
     RequirementMatchDetailResponse,
     RerankerStatusResponse,
     ReviewDecisionRequest,
@@ -1759,6 +1763,176 @@ def delete_profile_fact(
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get(
+    "/v1/users/{user_id}/facts-detailed",
+    response_model=list[ProfileFactDetailResponse],
+)
+def list_profile_facts_detailed(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    source_type: str | None = None,
+    status_filter: str | None = None,
+) -> list[ProfileFactDetailResponse]:
+    """List facts with provenance details, optionally filtered."""
+    from sqlalchemy import select as sa_select
+
+    query = sa_select(ProfileFactRow).where(ProfileFactRow.user_id == user_id)
+    if source_type:
+        query = query.where(ProfileFactRow.source_type == source_type)
+    if status_filter:
+        query = query.where(ProfileFactRow.status == status_filter)
+    query = query.order_by(ProfileFactRow.category, ProfileFactRow.name)
+    facts = session.scalars(query).all()
+    return [
+        ProfileFactDetailResponse(
+            id=f.id, user_id=f.user_id, category=f.category, name=f.name,
+            value=f.value, is_verified=f.is_verified,
+            source_type=f.source_type, source_id=f.source_id,
+            source_text=f.source_text, extraction_method=f.extraction_method,
+            batch_id=f.batch_id, confidence=f.confidence,
+            experience_started_at=f.experience_started_at,
+            experience_ended_at=f.experience_ended_at,
+            status=f.status, created_at=f.created_at,
+        )
+        for f in facts
+    ]
+
+
+@app.post(
+    "/v1/users/{user_id}/facts/import-file",
+    response_model=FactImportResultResponse,
+)
+async def import_facts_from_file(
+    user_id: str,
+    file: UploadFile,
+    session: Annotated[Session, Depends(session_scope)],
+    auto_accept: bool = False,
+) -> FactImportResultResponse:
+    """Import facts from an uploaded file (TXT, MD, CSV, JSON, PDF, DOCX)."""
+    from app.services.fact_ingestion import FactIngestionService
+
+    content = await file.read()
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=60, follow_redirects=False, trust_env=False) as client:
+        router = ModelRouter(build_model_providers(client, settings))
+        prompt_registry = PromptRegistry.load(
+            Path(__file__).parents[1] / "prompts" / "registry.json"
+        )
+        service = FactIngestionService(session, router, prompt_registry)
+        try:
+            result = await service.import_from_file(
+                user_id, file.filename or "upload", content,
+                auto_accept=auto_accept,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+    return FactImportResultResponse(
+        batch_id=result.batch_id,
+        source_type=result.source_type,
+        facts_created=result.facts_created,
+        facts_merged=result.facts_merged,
+        facts_skipped=result.facts_skipped,
+        facts_rejected=result.facts_rejected,
+        candidates=[
+            {"name": c.name, "category": c.category, "duplicate_status": c.duplicate_status.value}
+            for c in result.candidates[:50]
+        ],
+    )
+
+
+@app.post(
+    "/v1/users/{user_id}/facts/extract-from-resume",
+    response_model=FactImportResultResponse,
+)
+async def extract_facts_from_resume(
+    user_id: str,
+    request: ExtractFromResumeRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> FactImportResultResponse:
+    """Extract facts from an existing resume using LLM."""
+    from app.services.fact_ingestion import FactIngestionService
+
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=120, follow_redirects=False, trust_env=False) as client:
+        router = ModelRouter(build_model_providers(client, settings))
+        prompt_registry = PromptRegistry.load(
+            Path(__file__).parents[1] / "prompts" / "registry.json"
+        )
+        service = FactIngestionService(session, router, prompt_registry)
+        try:
+            result = await service.extract_from_resume(
+                user_id, request.cv_file_id,
+                force=request.force, auto_accept=request.auto_accept,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+    return FactImportResultResponse(
+        batch_id=result.batch_id,
+        source_type=result.source_type,
+        facts_created=result.facts_created,
+        facts_merged=result.facts_merged,
+        facts_skipped=result.facts_skipped,
+        facts_rejected=result.facts_rejected,
+        candidates=[
+            {"name": c.name, "category": c.category, "duplicate_status": c.duplicate_status.value}
+            for c in result.candidates[:50]
+        ],
+    )
+
+
+@app.get(
+    "/v1/users/{user_id}/fact-import-batches",
+    response_model=list[FactImportBatchResponse],
+)
+def list_fact_import_batches(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[FactImportBatchResponse]:
+    """List fact import batches for a user."""
+    from app.services.fact_ingestion import FactIngestionService
+
+    service = FactIngestionService(
+        session,
+        ModelRouter([]),  # No LLM needed for listing
+        PromptRegistry.load(Path(__file__).parents[1] / "prompts" / "registry.json"),
+    )
+    batches = service.list_batches(user_id)
+    return [
+        FactImportBatchResponse(
+            id=b.id, user_id=b.user_id, source_type=b.source_type,
+            source_id=b.source_id, source_filename=b.source_filename,
+            extractor_version=b.extractor_version,
+            facts_created=b.facts_created, facts_merged=b.facts_merged,
+            facts_skipped=b.facts_skipped, facts_rejected=b.facts_rejected,
+            status=b.status, created_at=b.created_at,
+        )
+        for b in batches
+    ]
+
+
+@app.post(
+    "/v1/users/{user_id}/fact-import-batches/{batch_id}/undo",
+)
+def undo_fact_import_batch(
+    user_id: str,
+    batch_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> dict[str, object]:
+    """Undo a fact import batch."""
+    from app.services.fact_ingestion import FactIngestionService
+
+    service = FactIngestionService(
+        session,
+        ModelRouter([]),
+        PromptRegistry.load(Path(__file__).parents[1] / "prompts" / "registry.json"),
+    )
+    try:
+        removed = service.undo_batch(user_id, batch_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {"batch_id": batch_id, "facts_marked_superseded": removed}
 
 
 @app.post(

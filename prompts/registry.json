@@ -48,9 +48,31 @@
       "name": "evaluate_evidence_entailment",
       "purpose": "Evaluate whether evidence entails, partially supports, or is merely related to an atomic claim.",
       "version": 1,
-      "template": "Evaluate whether the following evidence CONFIRMS the specific claim. This is an entailment task, not a similarity task.\n\nClaim: {claim_text}\nClaim type: {claim_type}\nEvidence: {evidence_text}\n\nRules:\n- The evidence must explicitly or logically establish the claim.\n- Topical similarity is NOT sufficient for entailment.\n- Do not infer experience duration from technology lists alone.\n- Do not infer production usage from experimentation or model training.\n- Do not infer RAG from generic LLM integration.\n- Do not infer commercial experience unless the source explicitly establishes it.\n- Do not assume unstated technologies.\n- 'NLP classification pipelines using TensorFlow and PyTorch' does NOT entail 'production Python backend development'.\n- 'Designed LLM integrations' does NOT entail 'practical RAG experience'.\n- 'Built Python/FastAPI backend services deployed with Docker' DOES entail 'production Python development'.\n- 'Developed RAG service with embedding retrieval and reranking' DOES entail 'practical RAG'.\n\nReturn: relation (entailed, partial, related_but_insufficient, contradicted, unknown), confidence (0-1), reason, and entailment_score (0-1, how strongly the evidence supports the claim).",
+      "template": "Evaluate whether the following evidence CONFIRMS the specific claim. This is an entailment task, not a similarity task.\n\nClaim: {claim_text}\nClaim type: {claim_type}\nEvidence: {evidence_text}\n\nRules:\n- The evidence must explicitly or logically establish the claim.\n- Topical similarity is NOT sufficient for entailment.\n- Do not infer experience duration from technology lists alone.\n- Do not infer production usage from experimentation or model training.\n- Do not infer RAG from generic LLM integration.\n- Do not infer commercial experience unless the source explicitly establishes it.\n- Do not assume unstated technologies.\n\nReturn: relation (entailed, partial, related_but_insufficient, contradicted, unknown), confidence (0-1), reason, and entailment_score (0-1).",
       "input_schema": "EvaluateEntailmentInput",
       "output_schema": "EntailmentResult",
+      "model_task_class": "low_cost",
+      "created_on": "2026-08-13",
+      "is_active": true
+    },
+    {
+      "name": "extract_facts_from_text",
+      "purpose": "Extract structured facts from unstructured text (file import).",
+      "version": 1,
+      "template": "Extract structured facts from this document. Source type: {source_type}.\n\nRules:\n- Extract ONLY facts explicitly stated in the text.\n- Do NOT invent missing experience or skills.\n- Do NOT infer RAG from generic LLM work.\n- Do NOT infer production experience from technology mentions.\n- Do NOT infer years of experience from a list of skills.\n- Keep source evidence for every extracted fact.\n- Prefer action-oriented facts over isolated keywords.\n- Preserve distinctions: mentioned, used, implemented, designed, operated, deployed, evaluated.\n- If uncertain, lower confidence or omit the fact.\n- Each fact needs: category, name, value, skills list, experience_level, source_quote.\n- Categories include: skills, technologies, project_experience, work_experience, education, certifications, languages, domains.\n- Normalize skill aliases: Postgres→PostgreSQL, Fast API→FastAPI, HF→Hugging Face (if unambiguous).\n- Support both Russian and English text.\n\nText:\n{source_text}",
+      "input_schema": "ExtractFactsFromTextInput",
+      "output_schema": "FileExtractionResult",
+      "model_task_class": "low_cost",
+      "created_on": "2026-08-13",
+      "is_active": true
+    },
+    {
+      "name": "extract_facts_from_resume",
+      "purpose": "Extract structured facts and experience intervals from a resume.",
+      "version": 1,
+      "template": "Extract structured facts and experience intervals from this resume. Resume ID: {resume_id}.\n\nRules:\n- Extract ONLY facts explicitly stated in the resume.\n- Do NOT invent missing experience.\n- Do NOT infer RAG from generic LLM integration.\n- Do NOT infer production experience from experimentation/model training.\n- Do NOT infer years of experience from technology lists.\n- Preserve distinctions: mentioned, used, practical_experience, production_experience, designed, implemented, operated, evaluated.\n- Each fact needs: category, name, value, skills list, experience_level, source_section, source_quote, confidence.\n- Extract experience intervals with: role, company, started_at (YYYY-MM), ended_at (YYYY-MM or null if current), domains, skills.\n- Dates must come from the resume. If dates are missing, set them to null.\n- Support both Russian and English.\n- Categories: skills, technologies, programming_languages, frameworks, databases, ml_models, ml_frameworks, llm_experience, rag_experience, retrieval, embeddings, vector_databases, reranking, self_hosted_inference, quantization, deployment, cloud, devops, backend, async_development, api_development, monitoring, evaluation, domains, work_experience, project_experience, education, certifications, languages.\n\nResume text:\n{resume_text}",
+      "input_schema": "ExtractFactsFromResumeInput",
+      "output_schema": "ResumeExtractionResult",
       "model_task_class": "low_cost",
       "created_on": "2026-08-13",
       "is_active": true

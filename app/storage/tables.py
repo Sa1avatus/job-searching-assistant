@@ -121,6 +121,16 @@ class ProfileFactRow(Base):
     value: Mapped[str] = mapped_column(Text)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Provenance columns for fact ingestion
+    source_type: Mapped[str] = mapped_column(String(50), default="manual")
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_method: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    experience_started_at: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    experience_ended_at: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="active")
 
 
 class AutofillValueRow(Base):
@@ -771,3 +781,22 @@ class WorkerHeartbeatRow(Base):
     worker_name: Mapped[str] = mapped_column(String(200), primary_key=True)
     status: Mapped[str] = mapped_column(String(50))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class FactImportBatchRow(Base):
+    __tablename__ = "fact_import_batches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(50))
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    extractor_version: Mapped[str] = mapped_column(String(50), default="1")
+    facts_created: Mapped[int] = mapped_column(Integer, default=0)
+    facts_merged: Mapped[int] = mapped_column(Integer, default=0)
+    facts_skipped: Mapped[int] = mapped_column(Integer, default=0)
+    facts_rejected: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(30), default="completed")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
