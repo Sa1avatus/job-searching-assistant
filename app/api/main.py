@@ -2733,6 +2733,9 @@ def application_match_details(
     application = session.get(ApplicationRow, application_id)
     if application is None:
         raise HTTPException(status_code=404, detail="Application not found")
+    # Ownership validation: application must belong to a known user
+    if application.user_id is None:
+        raise HTTPException(status_code=404, detail="Application not found")
     aggregate = session.get(ApplicationMatchResultRow, application_id)
     if aggregate is None:
         raise HTTPException(status_code=404, detail="Match details have not been calculated")

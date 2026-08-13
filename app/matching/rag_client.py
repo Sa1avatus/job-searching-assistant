@@ -55,6 +55,7 @@ class RagClient(Protocol):
         collections: tuple[str, ...] | None = None,
         mode: str = "hybrid",
         top_k: int = 10,
+        user_id: str | None = None,
     ) -> RagSearchResponse: ...
 
     async def ingest_document(
@@ -96,6 +97,7 @@ class RagHttpClient:
         collections: tuple[str, ...] | None = None,
         mode: str = "hybrid",
         top_k: int = 10,
+        user_id: str | None = None,
     ) -> RagSearchResponse:
         if collections is None:
             collections = (self._default_collection,)
@@ -109,6 +111,8 @@ class RagHttpClient:
             "use_reranker": True,
             "include_trace": False,
         }
+        if user_id is not None:
+            payload["metadata_filter"] = {"user_id": user_id}
         started = time.perf_counter()
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(
@@ -230,6 +234,7 @@ class RagFallbackClient:
         collections: tuple[str, ...] | None = None,
         mode: str = "hybrid",
         top_k: int = 10,
+        user_id: str | None = None,
     ) -> RagSearchResponse:
         del query, collections, mode, top_k
         return RagSearchResponse(

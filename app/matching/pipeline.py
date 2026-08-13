@@ -843,6 +843,7 @@ class MatchingPipeline:
                 query,
                 collections=("vacancies", "profiles"),
                 top_k=3,
+                user_id=application.user_id,
             )
             return {
                 "request_id": response.request_id,
