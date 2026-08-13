@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.matching.rag_client import RagDocumentResult
+from app.matching.rag_collections import VACANCY_COLLECTION
 from app.services.vacancy_rag_ingestion import VacancyRagIngestionService
 from app.storage.database import Base
 from app.storage.tables import VacancyRow
@@ -64,7 +65,7 @@ async def test_ingest_vacancy_sends_content_and_metadata() -> None:
             payload = rag.ingested[0]
             assert payload["owner_user_id"] == "owner-1"
             assert payload["external_document_id"] == f"vacancy:{vacancy.id}"
-            assert payload["collection"] == "vacancies"
+            assert payload["collection"] == VACANCY_COLLECTION
             assert "Python Engineer" in str(payload["content"])
             assert "Example Corp" in str(payload["content"])
     finally:

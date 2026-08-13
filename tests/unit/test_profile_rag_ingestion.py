@@ -81,6 +81,7 @@ async def test_ingest_profile_sends_facts_as_content() -> None:
             payload = rag.ingested[0]
             assert payload["owner_user_id"] == user.id
             assert payload["external_document_id"] == f"profile:{user.id}"
+            assert payload["collection"] == "profiles"
             assert "python" in str(payload["content"])
             assert "5 years production" in str(payload["content"])
             assert "unverified-secret-skill" not in str(payload["content"])
@@ -118,6 +119,7 @@ async def test_ingest_cv_sends_skills_and_summary() -> None:
             payload = rag.ingested[0]
             assert payload["owner_user_id"] == user.id
             assert payload["external_document_id"] == f"cv:{cv.id}"
+            assert payload["collection"] == "resumes"
             assert "Built production APIs" in str(payload["content"])
     finally:
         engine.dispose()

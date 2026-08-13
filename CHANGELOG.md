@@ -3,6 +3,23 @@
 All notable changes to Job Searching Assistant are documented in this file. The project follows
 semantic versioning for new releases; older historical version numbers are preserved as released.
 
+## [Unreleased]
+
+### Changed
+
+- Defined one canonical RAG collection contract: reviewed facts use `profiles`, analysed resumes
+  use `resumes`, and vacancies use `vacancies`.
+- Resume ingestion no longer writes CV-derived content into the profile-facts collection.
+- Confirming an analysed resume now synchronizes it with the owner-scoped `resumes` collection.
+- Confirming profile facts now refreshes the owner-scoped `profiles` collection. RAG remains
+  fail-open and disabled by default, so authoritative PostgreSQL updates are not lost when the
+  optional service is unavailable.
+
+### Tests
+
+- Added collection-routing and synchronization assertions for profile, resume, and vacancy
+  ingestion.
+
 ## [1.4.1] — 2026-08-13
 
 ### Fixed

@@ -192,6 +192,7 @@ from app.services.recruitment import (
     EntityNotFoundError,
     RecruitmentService,
 )
+from app.services.rag_sync import RagSyncService
 from app.services.reranker_status import RerankerStatusProbe
 from app.services.resume_intake import ResumeIntakeService
 from app.services.site_definition_archive import archive_site_definition
@@ -2139,7 +2140,7 @@ async def extract_profile_from_cv(
     "/v1/users/{user_id}/cv-files/{cv_file_id}/profile",
     response_model=CvFileResponse,
 )
-def confirm_resume_profile(
+async def confirm_resume_profile(
     user_id: str,
     cv_file_id: str,
     request: ConfirmResumeProfileRequest,
@@ -2157,6 +2158,7 @@ def confirm_resume_profile(
         )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    await RagSyncService(session, get_settings()).sync_resume(cv_file.id)
     return serialize_cv_file(cv_file, active_cv_file_id=cv_file.id)
 
 
@@ -2164,7 +2166,7 @@ def confirm_resume_profile(
     "/v1/users/{user_id}/confirm-profile-facts",
     response_model=list[ConfirmedProfileFactResponse],
 )
-def confirm_profile_facts(
+async def confirm_profile_facts(
     user_id: str,
     request: ConfirmProfileFactsRequest,
     session: Annotated[Session, Depends(session_scope)],
@@ -2196,6 +2198,7 @@ def confirm_profile_facts(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError:
         pass  # re-confirming an already-saved fact is a harmless no-op, not an error
+    await RagSyncService(session, get_settings()).sync_profile(user_id)
     return saved
 
 

@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.matching.rag_client import RagClient, RagDocumentResult
+from app.matching.rag_collections import PROFILE_COLLECTION, RESUME_COLLECTION
 from app.storage.tables import CvFileRow, ProfileFactRow, UserRow
 
 logger = structlog.get_logger(__name__)
@@ -19,7 +20,7 @@ class ProfileRagIngestionService:
         self,
         user_id: str,
         *,
-        collection: str = "profiles",
+        collection: str = PROFILE_COLLECTION,
     ) -> RagDocumentResult | None:
         user = self._session.get(UserRow, user_id)
         if user is None:
@@ -61,7 +62,7 @@ class ProfileRagIngestionService:
         self,
         cv_file_id: str,
         *,
-        collection: str = "profiles",
+        collection: str = RESUME_COLLECTION,
     ) -> RagDocumentResult | None:
         cv = self._session.get(CvFileRow, cv_file_id)
         if cv is None:

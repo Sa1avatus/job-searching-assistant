@@ -79,6 +79,10 @@ verified beyond controlled fixtures.
   pipeline uses local data only and records the fallback in the explanation. When enabled, RAG may
   refine the ordering of locally verified candidate evidence before reranking; retrieved RAG text
   never becomes evidence by itself and cannot introduce a candidate claim.
+- JSA expects the RAG project to provide authorized `profiles`, `resumes`, and `vacancies`
+  collections. It does not create them automatically. Confirmed resume profiles and confirmed
+  profile facts are synchronized, and **Direct to reranker** performs another refresh. Update and
+  deletion coverage, backfill, durable retry, and operator-visible status remain backlog work.
 - Skill normalization resolves common aliases (Postgres→postgresql, K8s→kubernetes) during
   extraction. Unknown skills pass through unchanged. Custom aliases can be injected via
   `SkillNormalizer(aliases={...})`.

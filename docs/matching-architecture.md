@@ -42,6 +42,9 @@ source-grounded inputs but never choose the final score.
 - `app/matching/rag_client.py` provides an optional RAG integration layer. Every retrieval and
   ingestion request carries the application's owning user in `X-Owner-User-Id`; document metadata
   is not treated as an authorization boundary.
+- `app/matching/rag_collections.py` defines the cross-service collection contract: `profiles` for
+  reviewed facts, `resumes` for analysed CV content, and `vacancies` for vacancy context. These
+  collections remain owner-scoped and must be provisioned and authorized in the RAG service.
 - `app/matching/scoring.py` applies deterministic weights, blockers, eligibility, and score caps.
   Component scores include hard_skill, preferred_skill, role, seniority, experience, work_format,
   location, domain, and language. Aggregate quality signals include semantic_similarity (weighted

@@ -429,6 +429,108 @@
         "Rollback criteria are documented"
       ],
       "status": "planned"
+    },
+    {
+      "id": "RAG-COLLECTIONS-001",
+      "title": "Provision and authorize the JSA RAG collections",
+      "description": "Create and authorize the profiles, resumes, and vacancies collections in the selected RAG project, then verify owner-scoped access with the JSA service key.",
+      "category": "rag",
+      "priority": 0,
+      "expected_impact": "Makes the collection contract usable by the running application and exposes resume documents in RAG administration.",
+      "complexity": "small",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "All three collections exist in the configured RAG project",
+        "The JSA service key can ingest and search each collection",
+        "Cross-owner reads are rejected",
+        "No private document content is written to logs"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "RAG-RESUME-SYNC-001",
+      "title": "Synchronize analysed resumes with RAG",
+      "description": "Ingest the selected resume into the resumes collection after successful analysis and refresh it when the analysed fields change.",
+      "category": "rag",
+      "priority": 0,
+      "expected_impact": "Resume documents appear without requiring a Direct to reranker search first.",
+      "complexity": "medium",
+      "dependencies": ["RAG-COLLECTIONS-001"],
+      "acceptance_criteria": [
+        "Successful resume analysis schedules owner-scoped ingestion",
+        "Retries are bounded and idempotent",
+        "RAG failure does not lose the authoritative resume record",
+        "Synchronization status is visible to the operator"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "RAG-PROFILE-SYNC-001",
+      "title": "Synchronize reviewed profile facts with RAG",
+      "description": "Refresh the profiles collection after confirmed fact creation, update, import, or deletion while excluding unverified facts.",
+      "category": "rag",
+      "priority": 0,
+      "expected_impact": "RAG profile context stays aligned with facts approved by the user.",
+      "complexity": "medium",
+      "dependencies": ["RAG-COLLECTIONS-001"],
+      "acceptance_criteria": [
+        "Only verified facts are ingested",
+        "Every supported fact mutation triggers an idempotent refresh",
+        "Deleted facts disappear after synchronization",
+        "RAG failure does not block the authoritative profile update"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "RAG-BACKFILL-001",
+      "title": "Backfill existing profiles, resumes, and vacancies into RAG",
+      "description": "Provide a bounded owner-scoped operation that populates the canonical collections from existing PostgreSQL records.",
+      "category": "rag",
+      "priority": 1,
+      "expected_impact": "Existing users receive complete RAG coverage without manually re-uploading data.",
+      "complexity": "medium",
+      "dependencies": ["RAG-RESUME-SYNC-001", "RAG-PROFILE-SYNC-001"],
+      "acceptance_criteria": [
+        "Backfill is owner-scoped and resumable",
+        "Progress, skipped records, and sanitized failures are reported",
+        "Repeated runs do not create duplicate logical documents",
+        "Batch size and retry count are bounded"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "RAG-DELETE-001",
+      "title": "Propagate resume and profile deletion to RAG",
+      "description": "Add explicit owner-scoped deletion support so removed source records do not leave stale RAG documents.",
+      "category": "rag",
+      "priority": 1,
+      "expected_impact": "Reduces stale search context and supports expected personal-data lifecycle behavior.",
+      "complexity": "medium",
+      "dependencies": ["RAG-COLLECTIONS-001"],
+      "acceptance_criteria": [
+        "Deleting a resume removes its logical RAG document",
+        "Deleting the last profile fact refreshes or removes the profile document",
+        "Deletion retries are idempotent and owner-scoped",
+        "Failures are visible without exposing document content"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "RAG-E2E-001",
+      "title": "Add a real RAG integration smoke test",
+      "description": "Exercise collection discovery, owner-scoped ingestion, indexing, search, and cleanup against the configured local RAG service.",
+      "category": "quality",
+      "priority": 1,
+      "expected_impact": "Confirms that unit-tested contracts work across the actual service boundary.",
+      "complexity": "medium",
+      "dependencies": ["RAG-COLLECTIONS-001", "RAG-DELETE-001"],
+      "acceptance_criteria": [
+        "Smoke test uses synthetic content only",
+        "Profile, resume, and vacancy round trips pass",
+        "Cross-owner isolation is verified",
+        "Synthetic documents are cleaned up"
+      ],
+      "status": "planned"
     }
   ]
 }

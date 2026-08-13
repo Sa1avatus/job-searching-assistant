@@ -4,6 +4,7 @@ import structlog
 from sqlalchemy.orm import Session
 
 from app.matching.rag_client import RagClient, RagDocumentResult
+from app.matching.rag_collections import VACANCY_COLLECTION
 from app.storage.tables import VacancyRow
 
 logger = structlog.get_logger(__name__)
@@ -19,7 +20,7 @@ class VacancyRagIngestionService:
         vacancy_id: str,
         *,
         owner_user_id: str,
-        collection: str = "vacancies",
+        collection: str = VACANCY_COLLECTION,
     ) -> RagDocumentResult | None:
         vacancy = self._session.get(VacancyRow, vacancy_id)
         if vacancy is None:

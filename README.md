@@ -94,6 +94,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Ena
 Matching v2 remains in shadow mode by default. PostgreSQL keeps authoritative records; OpenSearch
 can be rebuilt.
 
+### RAG collections
+
+JSA keeps different business objects in separate owner-scoped RAG collections:
+
+- `profiles` — reviewed profile facts;
+- `resumes` — analysed resume summaries, skills, and search keywords;
+- `vacancies` — vacancy descriptions and attributes.
+
+The collections must exist in the RAG project and be authorized for JSA's service API key before
+ingestion. A reviewed resume is synchronized after its analysed profile is confirmed, and reviewed
+profile facts are synchronized after confirmation. **Direct to reranker** also refreshes this
+context before matching. Update, deletion, backfill, and operator-visible synchronization status
+remain tracked in `backlog.json`.
+
 ## Local development
 
 Python 3.12 or newer is required:
