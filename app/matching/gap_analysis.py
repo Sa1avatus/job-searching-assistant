@@ -16,6 +16,7 @@ class GapType(StrEnum):
     EVIDENCE_GAP = "evidence_gap"
     DURATION_GAP = "duration_gap"
     METADATA_GAP = "metadata_gap"
+    EVALUATION_ERROR = "evaluation_error"
 
 
 class StrictGapModel(BaseModel):
@@ -42,6 +43,7 @@ class GapAnalysisResult(StrictGapModel):
     evidence_gaps: int = Field(ge=0)
     duration_gaps: int = Field(ge=0)
     metadata_gaps: int = Field(ge=0)
+    evaluation_errors: int = Field(ge=0, default=0)
 
 
 def analyze_gaps(
@@ -69,8 +71,7 @@ def analyze_gaps(
         evidence_strength = float(eval_data.get("evidence_strength", 0))
         duration_result = eval_data.get("duration_result")
 
-        # Skip matched or non-required claims
-        if relation in ("entailed",):
+        if relation == "entailed":
             continue
 
         if relation == "contradicted":
@@ -82,6 +83,23 @@ def analyze_gaps(
                     description=f"Contradicting evidence found for: {claim_subject}",
                     suggested_action="Remove or correct contradicting evidence in profile",
                     confidence=0.9,
+                )
+            )
+            continue
+
+        # Evaluation error — technical failure, not a skill gap
+        if relation == "evaluation_error":
+            gaps.append(
+                ProfileGap(
+                    gap_type=GapType.EVALUATION_ERROR,
+                    claim_id=claim_id,
+                    claim_subject=claim_subject,
+                    description=(
+                        f"Could not evaluate {claim_subject} due to a technical error. "
+                        "This does not mean the skill is missing."
+                    ),
+                    suggested_action="Retry later. Check evaluator config if persists.",
+                    confidence=0.0,
                 )
             )
             continue
@@ -109,7 +127,8 @@ def analyze_gaps(
                     )
                 )
                 continue
-            if actual == 0 and not has_evidence:
+            if actual == 0:
+                # No dated evidence — evidence gap, not skill gap
                 gaps.append(
                     ProfileGap(
                         gap_type=GapType.EVIDENCE_GAP,
@@ -127,11 +146,28 @@ def analyze_gaps(
                 )
                 continue
 
-        # Evidence gap: related evidence exists but isn't strong enough
-        if has_evidence and relation in (
-            "partial",
-            "related_but_insufficient",
-        ):
+        # Insufficient evidence — data is unclear, not necessarily missing
+        if relation == "insufficient_evidence":
+            gaps.append(
+                ProfileGap(
+                    gap_type=GapType.EVIDENCE_GAP,
+                    claim_id=claim_id,
+                    claim_subject=claim_subject,
+                    description=(
+                        f"Insufficient data to verify {claim_subject}. "
+                        "The skill may exist but is not documented clearly enough."
+                    ),
+                    suggested_action=(
+                        f"Add explicit experience entries demonstrating {claim_subject} "
+                        "with concrete project descriptions and dates"
+                    ),
+                    confidence=0.5,
+                )
+            )
+            continue
+
+        # Related but insufficient — evidence exists but doesn't confirm the claim
+        if has_evidence and relation in ("partial", "related_but_insufficient"):
             gaps.append(
                 ProfileGap(
                     gap_type=GapType.EVIDENCE_GAP,
@@ -151,7 +187,7 @@ def analyze_gaps(
             )
             continue
 
-        # Metadata gap: evidence exists but lacks dates/structure
+        # Metadata gap
         if has_evidence and evidence_strength > 0.3:
             gaps.append(
                 ProfileGap(
@@ -171,8 +207,8 @@ def analyze_gaps(
             )
             continue
 
-        # Real skill gap: no evidence at all
-        if not has_evidence or relation in ("unknown", "contradicted"):
+        # True skill gap: no evidence at all
+        if not has_evidence or relation in ("unknown", "missing"):
             gaps.append(
                 ProfileGap(
                     gap_type=GapType.SKILL_GAP,
@@ -191,6 +227,7 @@ def analyze_gaps(
     evidence_gaps = sum(1 for g in gaps if g.gap_type == GapType.EVIDENCE_GAP)
     duration_gaps = sum(1 for g in gaps if g.gap_type == GapType.DURATION_GAP)
     metadata_gaps = sum(1 for g in gaps if g.gap_type == GapType.METADATA_GAP)
+    evaluation_errors = sum(1 for g in gaps if g.gap_type == GapType.EVALUATION_ERROR)
 
     return GapAnalysisResult(
         gaps=gaps,
@@ -199,4 +236,5 @@ def analyze_gaps(
         evidence_gaps=evidence_gaps,
         duration_gaps=duration_gaps,
         metadata_gaps=metadata_gaps,
+        evaluation_errors=evaluation_errors,
     )

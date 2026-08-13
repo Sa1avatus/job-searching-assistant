@@ -13,12 +13,24 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class EntailmentRelation(StrEnum):
-    """Whether evidence entails the claim."""
+    """Whether evidence entails the claim.
+
+    ENTAILED: evidence explicitly/logically establishes the claim
+    PARTIAL: evidence establishes part of the claim
+    RELATED_BUT_INSUFFICIENT: evidence is topically related but does not establish the claim
+    INSUFFICIENT_EVIDENCE: available data is insufficient to make a determination
+        (e.g. dates missing for duration claim, no evidence retrieved)
+    CONTRADICTED: explicit contradiction exists
+    EVALUATION_ERROR: evaluator technical failure (timeout, invalid output, provider error)
+    UNKNOWN: legacy fallback (should be phased out)
+    """
 
     ENTAILED = "entailed"
     PARTIAL = "partial"
     RELATED_BUT_INSUFFICIENT = "related_but_insufficient"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     CONTRADICTED = "contradicted"
+    EVALUATION_ERROR = "evaluation_error"
     UNKNOWN = "unknown"
 
 
@@ -49,6 +61,11 @@ class EntailmentResult(StrictEntailmentModel):
     evidence_strength_category: EvidenceStrengthCategory = EvidenceStrengthCategory.NONE
     supporting_evidence_ids: list[str] = Field(default_factory=list)
     provenance: dict[str, object] = Field(default_factory=dict)
+    # New: structured error info for technical failures
+    error_type: str | None = Field(default=None, max_length=100)
+    provider: str | None = Field(default=None, max_length=100)
+    model: str | None = Field(default=None, max_length=100)
+    retry_count: int = Field(default=0, ge=0)
 
 
 class EntailmentEvaluation(StrictEntailmentModel):
@@ -72,7 +89,9 @@ _RELATION_STRENGTH_CAPS = {
     EntailmentRelation.ENTAILED: 1.0,
     EntailmentRelation.PARTIAL: 0.74,
     EntailmentRelation.RELATED_BUT_INSUFFICIENT: 0.49,
+    EntailmentRelation.INSUFFICIENT_EVIDENCE: 0.0,
     EntailmentRelation.CONTRADICTED: 0.0,
+    EntailmentRelation.EVALUATION_ERROR: 0.0,
     EntailmentRelation.UNKNOWN: 0.0,
 }
 
@@ -132,4 +151,8 @@ class EvidenceEvaluator(Protocol):
         evidence_text: str,
         semantic_score: float | None = None,
         reranker_score: float | None = None,
+        # New: structured claim context for better evaluation
+        claim_subject: str | None = None,
+        claim_criticality: str | None = None,
+        source_requirement: str | None = None,
     ) -> EntailmentResult: ...

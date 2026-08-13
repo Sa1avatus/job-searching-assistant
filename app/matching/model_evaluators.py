@@ -23,8 +23,19 @@ from app.matching.extraction import StrictExtractionModel
 from app.matching.normalization import SkillNormalizer
 from app.prompts.registry import PromptRegistry
 
-_PROMPT_VERSION_DECOMPOSE = "1"
-_PROMPT_VERSION_ENTAIL = "1"
+_PROMPT_VERSION_DECOMPOSE = "2"
+_PROMPT_VERSION_ENTAIL = "2"
+
+# Base entailment scores when LLM doesn't provide one
+_RELATION_BASE_SCORE = {
+    EntailmentRelation.ENTAILED: 0.95,
+    EntailmentRelation.PARTIAL: 0.6,
+    EntailmentRelation.RELATED_BUT_INSUFFICIENT: 0.3,
+    EntailmentRelation.INSUFFICIENT_EVIDENCE: 0.0,
+    EntailmentRelation.CONTRADICTED: 0.0,
+    EntailmentRelation.EVALUATION_ERROR: 0.0,
+    EntailmentRelation.UNKNOWN: 0.0,
+}
 
 
 class RouterRequirementDecomposer:
@@ -32,7 +43,7 @@ class RouterRequirementDecomposer:
 
     model_name = "model-router"
     model_version = "provider-selected"
-    schema_version = "1"
+    schema_version = "2"
 
     def __init__(
         self,
@@ -56,7 +67,6 @@ class RouterRequirementDecomposer:
         importance: str,
         is_blocker: bool,
     ) -> RequirementDecomposition:
-        # Check cache
         if self._cache is not None:
             cache_key = build_decomposition_cache_key(
                 vacancy_id=requirement_id,
@@ -96,7 +106,6 @@ class RouterRequirementDecomposer:
             )
         result = result.model_copy(update={"claims": normalized_claims})
 
-        # Store in cache
         if self._cache is not None:
             cache_key = build_decomposition_cache_key(
                 vacancy_id=requirement_id,
@@ -110,7 +119,11 @@ class RouterRequirementDecomposer:
 
 
 class RouterEvidenceEvaluator:
-    """Evaluates evidence entailment against claims via LLM."""
+    """Evaluates evidence entailment against claims via LLM.
+
+    Key design: technical failures (timeout, invalid JSON, provider error)
+    are reported as EVALUATION_ERROR, never as UNKNOWN or MISSING.
+    """
 
     model_name = "model-router"
     model_version = "provider-selected"
@@ -136,8 +149,10 @@ class RouterEvidenceEvaluator:
         evidence_text: str,
         semantic_score: float | None = None,
         reranker_score: float | None = None,
+        claim_subject: str | None = None,
+        claim_criticality: str | None = None,
+        source_requirement: str | None = None,
     ) -> EntailmentResult:
-        # Check cache
         if self._cache is not None:
             cache_key = build_entailment_cache_key(
                 claim_text=claim_text,
@@ -148,7 +163,6 @@ class RouterEvidenceEvaluator:
             )
             cached = self._cache.get_entailment(cache_key)
             if cached is not None and isinstance(cached, EntailmentResult):
-                # Update scores from current retrieval
                 return cached.model_copy(
                     update={
                         "claim_id": claim_id,
@@ -158,41 +172,59 @@ class RouterEvidenceEvaluator:
                     }
                 )
 
+        # Build structured claim context for the evaluator
+        claim_context_parts = [f"Claim: {claim_text}", f"Type: {claim_type}"]
+        if claim_subject:
+            claim_context_parts.append(f"Subject: {claim_subject}")
+        if claim_criticality:
+            claim_context_parts.append(f"Criticality: {claim_criticality}")
+        if source_requirement:
+            claim_context_parts.append(f"Source requirement: {source_requirement}")
+        claim_context = "\n".join(claim_context_parts)
+
         prompt = self._prompt_registry.render(
             "evaluate_evidence_entailment",
             {
                 "claim_id": claim_id,
-                "claim_text": claim_text,
+                "claim_text": claim_context,
                 "claim_type": claim_type,
                 "evidence_id": evidence_id,
                 "evidence_text": evidence_text,
             },
         )
-        raw_result = await self._router.route(
-            ModelRequest(
-                task_name="evaluate_evidence_entailment",
-                task_class=ModelTaskClass.LOW_COST,
-                prompt=prompt,
-                max_cost_usd=0.03,
-                timeout_seconds=60,
-            ),
-            _RawEntailmentResult,
-        )
 
+        # Technical failures → EVALUATION_ERROR, never UNKNOWN
+        try:
+            raw_result = await self._router.route(
+                ModelRequest(
+                    task_name="evaluate_evidence_entailment",
+                    task_class=ModelTaskClass.LOW_COST,
+                    prompt=prompt,
+                    max_cost_usd=0.03,
+                    timeout_seconds=60,
+                ),
+                _RawEntailmentResult,
+            )
+        except Exception as error:
+            error_type = type(error).__name__
+            return self._build_error_result(
+                claim_id, evidence_id, semantic_score, reranker_score,
+                error_type=error_type,
+                reason=f"Evaluator technical failure: {error_type}: {str(error)[:200]}",
+            )
+
+        # Parse relation — invalid LLM output → EVALUATION_ERROR, not UNKNOWN
         try:
             relation = EntailmentRelation(raw_result.relation)
         except ValueError:
-            relation = EntailmentRelation.UNKNOWN
+            return self._build_error_result(
+                claim_id, evidence_id, semantic_score, reranker_score,
+                error_type="invalid_relation_value",
+                reason=f"LLM returned unrecognized relation: {raw_result.relation!r}",
+            )
 
         entailment_score = raw_result.entailment_score
         if entailment_score == 0.0:
-            _RELATION_BASE_SCORE = {
-                EntailmentRelation.ENTAILED: 0.95,
-                EntailmentRelation.PARTIAL: 0.6,
-                EntailmentRelation.RELATED_BUT_INSUFFICIENT: 0.3,
-                EntailmentRelation.CONTRADICTED: 0.0,
-                EntailmentRelation.UNKNOWN: 0.0,
-            }
             entailment_score = _RELATION_BASE_SCORE.get(relation, 0.0)
 
         strength, category = compute_evidence_strength(
@@ -212,7 +244,6 @@ class RouterEvidenceEvaluator:
             evidence_strength_category=category,
         )
 
-        # Store in cache (without claim/evidence IDs since those are request-specific)
         if self._cache is not None:
             cache_key = build_entailment_cache_key(
                 claim_text=claim_text,
@@ -224,6 +255,37 @@ class RouterEvidenceEvaluator:
             self._cache.set_entailment(cache_key, result)
 
         return result
+
+    @staticmethod
+    def _build_error_result(
+        claim_id: str,
+        evidence_id: str,
+        semantic_score: float | None,
+        reranker_score: float | None,
+        *,
+        error_type: str,
+        reason: str,
+    ) -> EntailmentResult:
+        """Build an EntailmentResult for a technical evaluation failure."""
+        strength, category = compute_evidence_strength(
+            EntailmentRelation.EVALUATION_ERROR,
+            semantic_score,
+            reranker_score,
+            0.0,
+        )
+        return EntailmentResult(
+            claim_id=claim_id,
+            evidence_id=evidence_id,
+            relation=EntailmentRelation.EVALUATION_ERROR,
+            confidence=0.0,
+            reason=reason,
+            semantic_score=semantic_score,
+            reranker_score=reranker_score,
+            entailment_score=0.0,
+            evidence_strength=strength,
+            evidence_strength_category=category,
+            error_type=error_type,
+        )
 
 
 class _RawEntailmentResult(StrictExtractionModel):

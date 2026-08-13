@@ -759,7 +759,11 @@ class MatchingPipeline:
             matched_ids = [
                 a.requirement_id
                 for a in assessments
-                if a.match_level not in {MatchLevel.MISSING, MatchLevel.BLOCKER}
+                if a.match_level not in {
+                    MatchLevel.MISSING, MatchLevel.BLOCKER,
+                    MatchLevel.INSUFFICIENT_EVIDENCE, MatchLevel.EVALUATION_ERROR,
+                    MatchLevel.UNRESOLVED_BLOCKER,
+                }
             ]
             missing_ids = [
                 a.requirement_id for a in assessments if a.match_level is MatchLevel.MISSING
@@ -769,12 +773,26 @@ class MatchingPipeline:
                 for a in assessments
                 if a.is_blocker and a.match_level in {MatchLevel.MISSING, MatchLevel.BLOCKER}
             ]
+            insufficient_ids = [
+                a.requirement_id
+                for a in assessments
+                if a.match_level is MatchLevel.INSUFFICIENT_EVIDENCE
+            ]
+            error_ids = [
+                a.requirement_id
+                for a in assessments
+                if a.match_level is MatchLevel.EVALUATION_ERROR
+            ]
             if matched_ids:
                 explanation["matched_requirement_ids"] = matched_ids
             if missing_ids:
                 explanation["missing_requirement_ids"] = missing_ids
             if blocker_ids:
                 explanation["blocker_requirement_ids"] = blocker_ids
+            if insufficient_ids:
+                explanation["insufficient_evidence_requirement_ids"] = insufficient_ids
+            if error_ids:
+                explanation["evaluation_error_requirement_ids"] = error_ids
         if rag_context:
             explanation["rag_context"] = rag_context
         if gap_analysis:
@@ -784,6 +802,7 @@ class MatchingPipeline:
         explanation["preferred_score"] = score.preferred_score
         explanation["bonus_score"] = score.bonus_score
         explanation["hard_blockers"] = list(score.hard_blockers)
+        explanation["hard_blockers_unresolved"] = list(score.hard_blockers_unresolved)
         explanation["confidence"] = score.confidence
         aggregate.explanation_json = explanation
         aggregate.calculated_at = datetime.now(UTC)

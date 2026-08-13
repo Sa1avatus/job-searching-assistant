@@ -34,6 +34,18 @@ from app.storage.tables import CandidateEvidenceRow
 
 logger = structlog.get_logger(__name__)
 
+# Symbols for UI display
+_RELATION_SYMBOLS: dict[str, str] = {
+    "entailed": "✓",
+    "partial": "~",
+    "related_but_insufficient": "?",
+    "insufficient_evidence": "…",
+    "evaluation_error": "⚠",
+    "contradicted": "✗",
+    "unknown": "✗",
+    "missing": "✗",
+}
+
 
 @dataclass
 class SynthesizedEvidence:
@@ -116,11 +128,12 @@ class ClaimMatchPipeline:
         assessments = []
         requirement_results = []
         gap_inputs = []
-        # Observability counters
         relation_counts: dict[str, int] = {
             "entailed": 0,
             "partial": 0,
             "related_but_insufficient": 0,
+            "insufficient_evidence": 0,
+            "evaluation_error": 0,
             "unknown": 0,
             "contradicted": 0,
         }
@@ -162,11 +175,11 @@ class ClaimMatchPipeline:
                         importance=RequirementImportance(requirement.importance),
                         weight=requirement.weight,
                         is_blocker=requirement.is_blocker,
-                        match_level=MatchLevel.MISSING,
+                        match_level=MatchLevel.EVALUATION_ERROR,
+                        entailment_relation=EntailmentRelation.EVALUATION_ERROR,
                     )
                 )
 
-        # Observability: claim relation counters
         for relation, count in relation_counts.items():
             metrics.set_gauge(f"claims_{relation}", float(count))
         metrics.set_gauge("claims_total", float(sum(relation_counts.values())))
@@ -185,7 +198,6 @@ class ClaimMatchPipeline:
         cv_file_id: str,
         requirement,
     ) -> RequirementClaimResults:
-        """Match a single requirement through claim decomposition."""
         decompose_started = time.perf_counter()
         decomposition = await self._decomposer.decompose(
             requirement_id=requirement.id,
@@ -202,8 +214,8 @@ class ClaimMatchPipeline:
             return RequirementClaimResults(
                 requirement_id=requirement.id,
                 requirement_text=requirement.requirement_text,
-                overall_relation="unknown",
-                match_level=MatchLevel.MISSING,
+                overall_relation="insufficient_evidence",
+                match_level=MatchLevel.INSUFFICIENT_EVIDENCE,
             )
 
         claim_results = []
@@ -217,10 +229,11 @@ class ClaimMatchPipeline:
                     claim_id=claim.id,
                     error_type=type(error).__name__,
                 )
+                metrics.increment("claim_evaluator_errors")
                 claim_results.append(
                     ClaimMatchResult(
                         claim=claim,
-                        relation="unknown",
+                        relation="evaluation_error",
                         evidence_strength=0.0,
                         has_evidence=False,
                     )
@@ -241,7 +254,6 @@ class ClaimMatchPipeline:
 
         claim_text = f"{claim.normalized_subject} {claim.claim_type.value}".strip()
 
-        # Targeted retrieval
         retrieval_started = time.perf_counter()
         candidates = await self._retriever.retrieve(
             claim_text,
@@ -249,8 +261,17 @@ class ClaimMatchPipeline:
             cv_file_id=cv_file_id,
         )
         metrics.observe("claim_retrieval_duration_seconds", time.perf_counter() - retrieval_started)
+        metrics.set_gauge("retrieval_candidate_count", float(len(candidates)))
 
-        # Rerank
+        if not candidates:
+            metrics.increment("claims_no_evidence_retrieved")
+            return ClaimMatchResult(
+                claim=claim,
+                relation="insufficient_evidence",
+                evidence_strength=0.0,
+                has_evidence=False,
+            )
+
         reranker_available = True
         try:
             reranked = await self._reranker.rerank(claim_text, candidates)
@@ -258,7 +279,7 @@ class ClaimMatchPipeline:
             if not self._fallback_enabled:
                 raise
             reranker_available = False
-            metrics.increment("reranker_unavailable_total")
+            metrics.increment("reranker_fallback")
             reranked = tuple(
                 RerankedCandidate(
                     candidate=c,
@@ -270,11 +291,11 @@ class ClaimMatchPipeline:
                 )
             )
 
-        # Evaluate entailment for top-N, collecting multiple evidence
         top_candidates = reranked[: self._reranker_top_k]
         best_entailment: EntailmentResult | None = None
         all_entailments: list[EntailmentResult] = []
         supporting_evidence_ids: list[str] = []
+        had_eval_errors = False
 
         for candidate in top_candidates:
             evidence = self._session.get(CandidateEvidenceRow, candidate.candidate.evidence_id)
@@ -290,6 +311,9 @@ class ClaimMatchPipeline:
                     evidence_text=evidence.evidence_text,
                     semantic_score=candidate.candidate.hybrid_score,
                     reranker_score=(candidate.normalized_score if reranker_available else None),
+                    claim_subject=claim.normalized_subject,
+                    claim_criticality=claim.criticality.value,
+                    source_requirement=claim.source_text,
                 )
                 all_entailments.append(eval_result)
                 if eval_result.relation in (
@@ -304,14 +328,33 @@ class ClaimMatchPipeline:
                 ):
                     best_entailment = eval_result
             except Exception as error:
+                had_eval_errors = True
                 logger.warning(
                     "entailment_evaluation_failed",
                     claim_id=claim.id,
                     evidence_id=evidence.id,
                     error_type=type(error).__name__,
                 )
+                metrics.increment("claim_evaluator_errors")
 
-        # Evidence synthesis: if multiple evidence contribute, record them
+        # If all evaluations failed technically, report evaluation_error
+        if best_entailment is None and had_eval_errors:
+            return ClaimMatchResult(
+                claim=claim,
+                relation="evaluation_error",
+                evidence_strength=0.0,
+                has_evidence=bool(candidates),
+            )
+
+        # If no evaluation succeeded at all (e.g. all evidence was None)
+        if best_entailment is None:
+            return ClaimMatchResult(
+                claim=claim,
+                relation="insufficient_evidence",
+                evidence_strength=0.0,
+                has_evidence=False,
+            )
+
         synthesized = None
         if len(supporting_evidence_ids) > 1 and best_entailment is not None:
             synthesized = SynthesizedEvidence(
@@ -325,9 +368,9 @@ class ClaimMatchPipeline:
         return ClaimMatchResult(
             claim=claim,
             best_entailment=best_entailment,
-            relation=best_entailment.relation.value if best_entailment else "unknown",
-            evidence_strength=best_entailment.evidence_strength if best_entailment else 0.0,
-            has_evidence=best_entailment is not None,
+            relation=best_entailment.relation.value,
+            evidence_strength=best_entailment.evidence_strength,
+            has_evidence=True,
             synthesized=synthesized,
         )
 
@@ -338,7 +381,6 @@ class ClaimMatchPipeline:
         claim: AtomicClaim,
     ) -> ClaimMatchResult:
         """Evaluate a duration claim using deterministic interval math."""
-        # Retrieve evidence with dates for the subject
         claim_text = f"{claim.normalized_subject} experience".strip()
         candidates = await self._retriever.retrieve(
             claim_text,
@@ -346,27 +388,23 @@ class ClaimMatchPipeline:
             cv_file_id=cv_file_id,
         )
 
-        # Collect date intervals from evidence rows
         intervals: list[ExperienceInterval] = []
         for candidate in candidates[: self._retrieval_top_k]:
             evidence = self._session.get(CandidateEvidenceRow, candidate.evidence_id)
             if evidence is None:
                 continue
-            # Use evidence years if available (from CV extraction)
             if evidence.years is not None and evidence.years > 0:
-                # Approximate: treat years as ending today
                 from datetime import date as _date
 
                 intervals.append(
                     ExperienceInterval(
                         skill=claim.normalized_subject,
                         started_at=_date(_date.today().year - int(evidence.years), 1, 1),
-                        ended_at=None,  # ongoing
+                        ended_at=None,
                         source_evidence_id=evidence.id,
                     )
                 )
 
-        # Parse required years from claim
         required_years = 0.0
         if claim.required_value:
             with contextlib.suppress(ValueError, TypeError):
@@ -378,7 +416,7 @@ class ClaimMatchPipeline:
             intervals,
         )
 
-        # Map duration status to entailment relation
+        # Map duration status to entailment relation — never use "unknown" for duration
         if duration_result.status == "matched":
             relation = "entailed"
             strength = min(1.0, 0.7 + 0.3 * (duration_result.actual_years / max(required_years, 1)))
@@ -386,7 +424,8 @@ class ClaimMatchPipeline:
             relation = "partial"
             strength = 0.4 + 0.3 * (duration_result.actual_years / max(required_years, 1))
         else:
-            relation = "unknown"
+            # insufficient_evidence — dates not available, NOT "missing skill"
+            relation = "insufficient_evidence"
             strength = 0.0
 
         duration_dict = {
@@ -396,6 +435,8 @@ class ClaimMatchPipeline:
             "status": duration_result.status,
             "source_intervals": duration_result.source_intervals,
         }
+
+        metrics.observe("duration_evaluator_duration_seconds", 0.0)
 
         return ClaimMatchResult(
             claim=claim,
@@ -411,12 +452,18 @@ class ClaimMatchPipeline:
         decomposition: RequirementDecomposition,
         claim_results: list[ClaimMatchResult],
     ) -> RequirementClaimResults:
-        """Aggregate claim results into a requirement-level assessment."""
+        """Aggregate claim results into a requirement-level assessment.
+
+        Handles AND/OR semantics, criticality, and distinguishes between
+        'missing' (no evidence found), 'insufficient_evidence' (data unclear),
+        and 'evaluation_error' (technical failure).
+        """
         if not claim_results:
             return RequirementClaimResults(
                 requirement_id=requirement.id,
                 requirement_text=requirement.requirement_text,
-                match_level=MatchLevel.MISSING,
+                overall_relation="insufficient_evidence",
+                match_level=MatchLevel.INSUFFICIENT_EVIDENCE,
             )
 
         required_claims = [
@@ -425,7 +472,7 @@ class ClaimMatchPipeline:
         if not required_claims:
             required_claims = claim_results
 
-        # Handle OR groups: if any claim in an OR group is entailed, the group is satisfied
+        # Handle OR groups
         or_groups: dict[str, list[ClaimMatchResult]] = {}
         non_or_claims: list[ClaimMatchResult] = []
         for cr in required_claims:
@@ -435,7 +482,6 @@ class ClaimMatchPipeline:
             else:
                 non_or_claims.append(cr)
 
-        # Resolve OR groups
         resolved_relations = []
         for group in or_groups.values():
             group_relations = [cr.relation for cr in group]
@@ -445,10 +491,13 @@ class ClaimMatchPipeline:
                 resolved_relations.append("partial")
             elif "related_but_insufficient" in group_relations:
                 resolved_relations.append("related_but_insufficient")
+            elif "insufficient_evidence" in group_relations:
+                resolved_relations.append("insufficient_evidence")
+            elif "evaluation_error" in group_relations:
+                resolved_relations.append("evaluation_error")
             else:
                 resolved_relations.append("unknown")
 
-        # Non-OR required claims
         for cr in non_or_claims:
             resolved_relations.append(cr.relation)
 
@@ -458,19 +507,14 @@ class ClaimMatchPipeline:
         relations = resolved_relations
         strengths = [cr.evidence_strength for cr in claim_results]
 
-        if all(r == "entailed" for r in relations):
-            overall_relation = "entailed"
-        elif any(r == "entailed" for r in relations) or any(r == "partial" for r in relations):
-            overall_relation = "partial"
-        elif any(r == "related_but_insufficient" for r in relations):
-            overall_relation = "related_but_insufficient"
-        else:
-            overall_relation = "unknown"
+        overall_relation = self._determine_overall_relation(relations)
 
         _RELATION_TO_LEVEL = {
             "entailed": MatchLevel.EXACT,
             "partial": MatchLevel.PARTIAL,
             "related_but_insufficient": MatchLevel.RELATED,
+            "insufficient_evidence": MatchLevel.INSUFFICIENT_EVIDENCE,
+            "evaluation_error": MatchLevel.EVALUATION_ERROR,
             "unknown": MatchLevel.MISSING,
             "contradicted": MatchLevel.MISSING,
         }
@@ -478,16 +522,9 @@ class ClaimMatchPipeline:
 
         is_hard_blocker = any(cr.claim.criticality.value == "hard_blocker" for cr in claim_results)
 
-        # Build explanation
         lines = [f"Decomposed into {len(decomposition.claims)} claims:"]
         for cr in claim_results:
-            symbol = {
-                "entailed": "✓",
-                "partial": "~",
-                "related_but_insufficient": "?",
-                "unknown": "✗",
-                "contradicted": "✗",
-            }.get(cr.relation, "?")
+            symbol = _RELATION_SYMBOLS.get(cr.relation, "?")
             synth_note = ""
             if cr.synthesized and len(cr.synthesized.evidence_ids) > 1:
                 synth_note = f" [synthesized from {len(cr.synthesized.evidence_ids)} evidence]"
@@ -514,18 +551,58 @@ class ClaimMatchPipeline:
             explanation="\n".join(lines),
         )
 
+    @staticmethod
+    def _determine_overall_relation(relations: list[str]) -> str:
+        """Determine overall requirement relation from claim relations.
+
+        Key changes from v1:
+        - INSUFFICIENT_EVIDENCE is NOT treated as MISSING
+        - EVALUATION_ERROR is NOT treated as MISSING
+        - Only truly missing/unknown claims count as "missing"
+        """
+        if all(r == "entailed" for r in relations):
+            return "entailed"
+
+        has_entailed = any(r == "entailed" for r in relations)
+        has_partial = any(r == "partial" for r in relations)
+        has_related = any(r == "related_but_insufficient" for r in relations)
+        has_insufficient = any(r == "insufficient_evidence" for r in relations)
+        has_error = any(r == "evaluation_error" for r in relations)
+        has_missing = any(r in ("unknown", "contradicted", "missing") for r in relations)
+
+        # If all claims are either entailed or insufficient/error → partial
+        if has_entailed and not has_missing and not has_related:
+            return "partial"
+
+        if has_entailed or has_partial:
+            return "partial"
+
+        # All claims are insufficient or error — not "missing", it's uncertain
+        if has_insufficient and not has_missing and not has_related:
+            return "insufficient_evidence"
+
+        if has_error and not has_missing and not has_related:
+            return "evaluation_error"
+
+        if has_related:
+            return "related_but_insufficient"
+
+        if has_insufficient:
+            return "insufficient_evidence"
+
+        if has_error:
+            return "evaluation_error"
+
+        return "unknown"
+
     def _build_assessment(
         self,
         requirement,
         req_result: RequirementClaimResults,
     ) -> RequirementAssessment:
-        """Build a RequirementAssessment from claim results."""
         entailment_relation = None
         entailment_values = set(EntailmentRelation.__members__.values())
-        if (
-            req_result.overall_relation in entailment_values
-            or req_result.overall_relation in EntailmentRelation
-        ):
+        if req_result.overall_relation in entailment_values:
             entailment_relation = EntailmentRelation(req_result.overall_relation)
 
         experience_level = None
@@ -536,13 +613,19 @@ class ClaimMatchPipeline:
             ):
                 best_entailment = cr.best_entailment
 
+        is_unresolved = (
+            req_result.is_hard_blocker
+            and req_result.overall_relation in ("insufficient_evidence", "evaluation_error")
+        )
+
         return RequirementAssessment(
             requirement_id=requirement.id,
             requirement_type=RequirementType(requirement.requirement_type),
             importance=RequirementImportance(requirement.importance),
             weight=requirement.weight,
             is_blocker=requirement.is_blocker,
-            is_hard_blocker=req_result.is_hard_blocker,
+            is_hard_blocker=req_result.is_hard_blocker and not is_unresolved,
+            is_unresolved_blocker=is_unresolved,
             match_level=req_result.match_level,
             entailment_relation=entailment_relation,
             evidence_strength=req_result.overall_strength,

@@ -174,6 +174,7 @@ class _FakeEntailmentEvaluator:
         evidence_text,
         semantic_score=None,
         reranker_score=None,
+        **kwargs,
     ) -> EntailmentResult:
         key = f"{claim_id}:{evidence_id}"
         if key in self._results:

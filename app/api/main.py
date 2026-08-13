@@ -1814,11 +1814,21 @@ async def import_facts_from_file(
 ) -> FactImportResultResponse:
     """Import facts from an uploaded file (TXT, MD, CSV, JSON, PDF, DOCX)."""
     from app.services.fact_ingestion import FactIngestionService
+    from app.llm.preferences import InvalidLlmPreference
 
     content = await file.read()
     settings = get_settings()
     async with httpx.AsyncClient(timeout=60, follow_redirects=False, trust_env=False) as client:
-        router = ModelRouter(build_model_providers(client, settings))
+        try:
+            providers = build_user_model_providers(client, session, user_id, settings)
+        except InvalidLlmPreference as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        if not providers:
+            raise HTTPException(
+                status_code=503,
+                detail="No LLM provider configured. Set one in the Model tab or via APP_GEMINI_API_KEY / APP_ANTHROPIC_API_KEY.",
+            )
+        router = ModelRouter(providers)
         prompt_registry = PromptRegistry.load(
             Path(__file__).parents[2] / "prompts" / "registry.json"
         )
@@ -1855,10 +1865,20 @@ async def extract_facts_from_resume(
 ) -> FactImportResultResponse:
     """Extract facts from an existing resume using LLM."""
     from app.services.fact_ingestion import FactIngestionService
+    from app.llm.preferences import InvalidLlmPreference
 
     settings = get_settings()
     async with httpx.AsyncClient(timeout=120, follow_redirects=False, trust_env=False) as client:
-        router = ModelRouter(build_model_providers(client, settings))
+        try:
+            providers = build_user_model_providers(client, session, user_id, settings)
+        except InvalidLlmPreference as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        if not providers:
+            raise HTTPException(
+                status_code=503,
+                detail="No LLM provider configured. Set one in the Model tab or via APP_GEMINI_API_KEY / APP_ANTHROPIC_API_KEY.",
+            )
+        router = ModelRouter(providers)
         prompt_registry = PromptRegistry.load(
             Path(__file__).parents[2] / "prompts" / "registry.json"
         )
