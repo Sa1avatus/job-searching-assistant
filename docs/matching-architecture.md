@@ -87,18 +87,24 @@ Extraction IDs bind source content, model, model version, and schema version. Wo
 the application, selected resume, and vacancy content so retries replace logical results rather than
 creating duplicates.
 
-## Scoring invariants
+## Scoring invariants (matching-v2.3)
 
 - Required requirements outweigh preferred and optional requirements.
-- A hard blocker (work authorization, mandatory location, etc.) sets score to 0.
+- Only **confirmed** hard blockers (work authorization, mandatory license, mandatory location) set
+  score to 0. Python, RAG, ML experience, Docker — even when required — are NOT hard blockers.
+- Unresolved blockers (insufficient evidence for a blocker requirement) produce
+  NEEDS_CONFIRMATION eligibility, not INELIGIBLE.
 - Regular required requirements use proportional penalty: missing N out of M caps score at
   max(20, 80 * (1 - N/M)), NOT a fixed 49.
 - Entailment relation overrides legacy match level when available.
 - Semantic similarity alone is never sufficient evidence for a match.
 - Related_but_insufficient evidence is capped at strength 0.49.
-- The final score includes separate required_score, preferred_score, bonus_score, confidence, and
-  hard_blockers list.
+- evaluation_error and insufficient_evidence get residual credit (0.10 and 0.15 match factor),
+  not 0.0 like missing.
+- The final score includes separate required_score, preferred_score, bonus_score, confidence,
+  hard_blockers, and hard_blockers_unresolved.
 - RAG context enrichment is informational only — it never changes the deterministic score.
+- Confidence is penalized for each evaluation_error or unknown claim (up to -0.30).
 
 ## Failure behavior
 
@@ -108,7 +114,9 @@ creating duplicates.
 - OpenSearch failure falls back to a bounded PostgreSQL lexical scan without mutating business data.
 - Reranker failure uses normalized hybrid scores with a conservative cap.
 - Claim decomposition failure falls back to legacy whole-requirement matching.
-- Entailment evaluation failure marks the claim as unknown (not entailed).
+- Entailment evaluation failure marks the claim as `evaluation_error` (not unknown/missing).
+  This prevents technical failures from being interpreted as missing skills.
+- Duration claims with missing dates produce `insufficient_evidence`, not `missing`.
 - Missing independent reranker configuration performs no network call and follows the same
   conservative hybrid-score fallback.
 - RAG unavailability is logged and recorded in the explanation as an error dict; the pipeline
@@ -116,5 +124,48 @@ creating duplicates.
 
 `applications.match_score` retains its legacy meaning in shadow mode. When v2 is deliberately
 promoted, the deterministic final score can be synchronized to that compatibility field.
+
+## Entailment relation model (v2.3)
+
+| Relation | Meaning | Strength cap | Match factor |
+|---|---|---|---|
+| entailed | Evidence explicitly/logically establishes the claim | 1.0 | 1.0 |
+| partial | Evidence establishes part of the claim | 0.74 | 0.65 |
+| related_but_insufficient | Evidence is topically related but does not prove the claim | 0.49 | 0.15 |
+| insufficient_evidence | Available data is insufficient to determine (e.g. missing dates) | 0.0 | 0.15 |
+| contradicted | Explicit contradiction exists | 0.0 | 0.0 |
+| evaluation_error | Technical evaluator failure (timeout, invalid JSON, provider error) | 0.0 | 0.10 |
+| unknown | Legacy fallback (should be phased out) | 0.0 | 0.0 |
+
+## Hard blocker classification
+
+Hard blockers are reserved for truly binary eligibility conditions:
+- Mandatory work authorization
+- Mandatory citizenship
+- Mandatory security clearance
+- Mandatory professional license
+- Strict mandatory language level
+- Explicit mandatory location constraint
+
+Technical skills (Python, RAG, ML, Docker, FastAPI, LLM) are NEVER hard blockers, even when
+marked as required. The decomposition prompt explicitly guides the LLM on this distinction.
+
+## Claim evaluator routing
+
+Duration claims (`experience_duration` type) are routed to the deterministic `DurationEvaluator`
+which uses union intervals — overlapping experience periods are merged, not summed. The LLM
+evaluator is only used for skill, practical_experience, production_experience, technology, and
+domain claims.
+
+## Fact ingestion integration
+
+Matching v2 uses the Facts DB as its primary evidence source. Facts can be:
+- Manually entered (verified=true, trust=1.0)
+- Extracted from resume via LLM (verified=false, trust=0.85)
+- Imported from files (verified=false, trust varies)
+- Inferred (trust ≤ 0.5)
+
+Resume-extracted facts are automatically available as evidence for claim evaluation after
+extraction. Matching results are invalidated when facts change.
 
 See `matching-data-model.md` for persistence and `matching-local-development.md` for local checks.

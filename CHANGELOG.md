@@ -1,5 +1,78 @@
 # Changelog
 
+## 1.4.0 — 2026-08-13
+
+### Matching v2 claim pipeline (v2.2 → v2.3)
+
+- Decompose vacancy requirements into atomic claims with AND/OR semantics, criticality levels
+  (required, preferred, bonus, hard_blocker), and structured claim types.
+- Per-claim retrieval instead of whole-requirement text, enabling targeted evidence search.
+- Evidence entailment evaluation with seven relation levels: entailed, partial,
+  related_but_insufficient, insufficient_evidence, contradicted, evaluation_error, unknown.
+- Evaluator prompt now provides structured claim context (subject, criticality, source requirement)
+  and explicit anti-hallucination rules (no RAG from LLM integration, no production from ML training).
+- Technical evaluator failures (timeout, invalid JSON, provider error) return `evaluation_error`
+  instead of `unknown`, preventing false zero scores.
+- Deterministic duration evaluator with union intervals — overlapping experience is merged, not
+  summed. Missing dates produce `insufficient_evidence`, not `missing`.
+- Fixed UNKNOWN → MISSING cascade: `unknown` and `evaluation_error` no longer map to MatchLevel.MISSING.
+- Only confirmed hard blockers (work authorization, mandatory license) zero the score. Python, RAG,
+  ML experience are classified as `required`, not `hard_blocker`.
+- Unresolved blockers (insufficient evidence for a blocker requirement) produce
+  `NEEDS_CONFIRMATION` eligibility instead of `INELIGIBLE`.
+- New scoring fields: required_score, preferred_score, bonus_score, hard_blockers,
+  hard_blockers_unresolved, confidence.
+- Scoring version bumped to matching-v2.3.
+- Cache for decomposition and entailment results with content-based invalidation.
+- Configurable retrieval_top_k and reranker_top_k via APP_MATCHING_RETRIEVAL_TOP_K /
+  APP_MATCHING_RERANKER_TOP_K.
+- Added DB migration 0031 for is_unresolved_blocker column on requirement_matches.
+
+### Fact ingestion from files and resume extraction
+
+- Upload facts from TXT, MD, CSV, JSON, PDF, DOCX files via POST /v1/users/{user_id}/facts/import.
+- Extract facts from existing resume via POST /v1/users/{user_id}/facts/extract-from-resume.
+- LLM fact extractor with strict extractive rules (no invented experience, no RAG from LLM work).
+- Deduplication engine: exact match, near-duplicate detection (name token overlap), merge candidate.
+- Fact import batches with undo support (POST /v1/users/{user_id}/facts/batches/{id}/undo).
+- Experience interval extraction from resume dates for deterministic duration calculation.
+- Facts DB extended with source_type, source_id, source_text, extraction_method, confidence,
+  experience_started_at, experience_ended_at, status, batch_id columns.
+- DB migration 0030 for fact ingestion columns and fact_import_batches table.
+
+### User isolation
+
+- Added ownership guard module (app/security/ownership.py) with reusable validation helpers.
+- Added get_current_user FastAPI dependency (app/security/dependencies.py).
+- RAG search now passes user_id for server-side document scoping.
+- 12 cross-user isolation tests covering CV files, facts, applications, matching, and evidence.
+
+### UI
+
+- Application card buttons redesigned: 3 equal-width main buttons (Почему подходит, Материалы и
+  решение, Открыть вакансию) plus ⋯ overflow menu (Рассчитать подробно, Отклонить, Компания в
+  чёрный список) using the same card-actions grid as search cards.
+- Matching details panel: separate sections for confirmed, partial, insufficient evidence,
+  evaluation errors, unresolved blockers, and true missing.
+- Fact import/extract buttons in Facts section with source_type filter and batch history.
+- Cache-Control: no-cache headers for dashboard endpoint.
+
+### Prompt refactoring
+
+- Extracted materials and resume prompts from Python to external markdown files under prompts/.
+- Added claim decomposition (v2) and entailment evaluation (v2) prompts to registry.json.
+- Decomposition prompt now includes hard_blocker classification guidance.
+- Entailment prompt includes concrete examples of what does/doesn't constitute evidence.
+
+### Tests
+
+- 13 new regression tests for matching v2.3 (NLP≠production Python, LLM≠RAG, FastAPI=production,
+  duration union, insufficient evidence, evaluation error, hard blocker, unresolved blocker).
+- 21 new tests for fact ingestion (file parsing, dedup, resume extraction schemas).
+- 12 new tests for user isolation (cross-user access prevention).
+- Full suite: 922 passing.
+
+
 ## 1.2.0 (in progress) — 2026-08-01
 
 - Reorganized contributor and agent guidance around a concise `AGENTS.md` plus task-specific
