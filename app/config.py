@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     matching_v2_shadow_mode: bool = True
     matching_v2_fallback_enabled: bool = True
     matching_model_service_url: str = "http://localhost:8090"
+    matching_retrieval_top_k: int = Field(default=20, ge=1, le=200)
+    matching_reranker_top_k: int = Field(default=5, ge=1, le=50)
     embedding_service_url: str | None = None
     matching_model_timeout_seconds: float = Field(default=120, ge=1, le=600)
     reranker_service_url: str | None = None

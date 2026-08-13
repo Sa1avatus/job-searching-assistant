@@ -2,30 +2,29 @@
 
 Uses the existing ModelRouter to perform structured LLM calls
 for requirement decomposition and evidence entailment evaluation.
+Results are cached with content-based keys.
 """
 
 from __future__ import annotations
 
 from app.llm.router import ModelRequest, ModelRouter, ModelTaskClass
-from app.matching.claims import (
-    Criticality,
-    RequirementDecomposition,
+from app.matching.cache import (
+    MatchingCache,
+    build_decomposition_cache_key,
+    build_entailment_cache_key,
 )
+from app.matching.claims import RequirementDecomposition
 from app.matching.entailment import (
     EntailmentRelation,
     EntailmentResult,
     compute_evidence_strength,
 )
-from app.matching.extraction import RequirementImportance, StrictExtractionModel
+from app.matching.extraction import StrictExtractionModel
 from app.matching.normalization import SkillNormalizer
 from app.prompts.registry import PromptRegistry
 
-_IMPORTANCE_TO_CRITICALITY = {
-    RequirementImportance.REQUIRED.value: Criticality.REQUIRED,
-    RequirementImportance.PREFERRED.value: Criticality.PREFERRED,
-    RequirementImportance.OPTIONAL.value: Criticality.BONUS,
-    RequirementImportance.UNKNOWN.value: Criticality.PREFERRED,
-}
+_PROMPT_VERSION_DECOMPOSE = "1"
+_PROMPT_VERSION_ENTAIL = "1"
 
 
 class RouterRequirementDecomposer:
@@ -41,10 +40,12 @@ class RouterRequirementDecomposer:
         prompt_registry: PromptRegistry,
         *,
         skill_normalizer: SkillNormalizer | None = None,
+        cache: MatchingCache | None = None,
     ) -> None:
         self._router = router
         self._prompt_registry = prompt_registry
         self._skill_normalizer = skill_normalizer or SkillNormalizer()
+        self._cache = cache
 
     async def decompose(
         self,
@@ -55,6 +56,18 @@ class RouterRequirementDecomposer:
         importance: str,
         is_blocker: bool,
     ) -> RequirementDecomposition:
+        # Check cache
+        if self._cache is not None:
+            cache_key = build_decomposition_cache_key(
+                vacancy_id=requirement_id,
+                requirement_text=requirement_text,
+                model_name=self.model_name,
+                prompt_version=_PROMPT_VERSION_DECOMPOSE,
+            )
+            cached = self._cache.get_decomposition(cache_key)
+            if cached is not None and isinstance(cached, RequirementDecomposition):
+                return cached
+
         prompt = self._prompt_registry.render(
             "decompose_requirement",
             {
@@ -75,7 +88,6 @@ class RouterRequirementDecomposer:
             ),
             RequirementDecomposition,
         )
-        # Normalize subjects
         normalized_claims = []
         for claim in result.claims:
             normalized = self._skill_normalizer.normalize(claim.subject)
@@ -83,6 +95,17 @@ class RouterRequirementDecomposer:
                 claim.model_copy(update={"normalized_subject": normalized.canonical})
             )
         result = result.model_copy(update={"claims": normalized_claims})
+
+        # Store in cache
+        if self._cache is not None:
+            cache_key = build_decomposition_cache_key(
+                vacancy_id=requirement_id,
+                requirement_text=requirement_text,
+                model_name=self.model_name,
+                prompt_version=_PROMPT_VERSION_DECOMPOSE,
+            )
+            self._cache.set_decomposition(cache_key, result)
+
         return result
 
 
@@ -96,9 +119,12 @@ class RouterEvidenceEvaluator:
         self,
         router: ModelRouter,
         prompt_registry: PromptRegistry,
+        *,
+        cache: MatchingCache | None = None,
     ) -> None:
         self._router = router
         self._prompt_registry = prompt_registry
+        self._cache = cache
 
     async def evaluate(
         self,
@@ -111,6 +137,27 @@ class RouterEvidenceEvaluator:
         semantic_score: float | None = None,
         reranker_score: float | None = None,
     ) -> EntailmentResult:
+        # Check cache
+        if self._cache is not None:
+            cache_key = build_entailment_cache_key(
+                claim_text=claim_text,
+                evidence_text=evidence_text,
+                claim_type=claim_type,
+                model_name=self.model_name,
+                prompt_version=_PROMPT_VERSION_ENTAIL,
+            )
+            cached = self._cache.get_entailment(cache_key)
+            if cached is not None and isinstance(cached, EntailmentResult):
+                # Update scores from current retrieval
+                return cached.model_copy(
+                    update={
+                        "claim_id": claim_id,
+                        "evidence_id": evidence_id,
+                        "semantic_score": semantic_score,
+                        "reranker_score": reranker_score,
+                    }
+                )
+
         prompt = self._prompt_registry.render(
             "evaluate_evidence_entailment",
             {
@@ -132,16 +179,13 @@ class RouterEvidenceEvaluator:
             _RawEntailmentResult,
         )
 
-        # Convert raw result to typed EntailmentRelation
         try:
             relation = EntailmentRelation(raw_result.relation)
         except ValueError:
             relation = EntailmentRelation.UNKNOWN
 
-        # Compute evidence strength
         entailment_score = raw_result.entailment_score
         if entailment_score == 0.0:
-            # Derive from relation
             _RELATION_BASE_SCORE = {
                 EntailmentRelation.ENTAILED: 0.95,
                 EntailmentRelation.PARTIAL: 0.6,
@@ -155,7 +199,7 @@ class RouterEvidenceEvaluator:
             relation, semantic_score, reranker_score, entailment_score
         )
 
-        return EntailmentResult(
+        result = EntailmentResult(
             claim_id=claim_id,
             evidence_id=evidence_id,
             relation=relation,
@@ -167,6 +211,19 @@ class RouterEvidenceEvaluator:
             evidence_strength=strength,
             evidence_strength_category=category,
         )
+
+        # Store in cache (without claim/evidence IDs since those are request-specific)
+        if self._cache is not None:
+            cache_key = build_entailment_cache_key(
+                claim_text=claim_text,
+                evidence_text=evidence_text,
+                claim_type=claim_type,
+                model_name=self.model_name,
+                prompt_version=_PROMPT_VERSION_ENTAIL,
+            )
+            self._cache.set_entailment(cache_key, result)
+
+        return result
 
 
 class _RawEntailmentResult(StrictExtractionModel):

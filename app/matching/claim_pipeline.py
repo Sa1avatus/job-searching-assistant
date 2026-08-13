@@ -6,6 +6,7 @@ reranking → entailment evaluation → deterministic aggregation.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass, field
 
@@ -14,9 +15,11 @@ from sqlalchemy.orm import Session
 
 from app.matching.claims import (
     AtomicClaim,
+    ClaimType,
     RequirementDecomposer,
     RequirementDecomposition,
 )
+from app.matching.duration import ExperienceInterval, evaluate_duration
 from app.matching.entailment import (
     EntailmentRelation,
     EntailmentResult,
@@ -33,6 +36,16 @@ logger = structlog.get_logger(__name__)
 
 
 @dataclass
+class SynthesizedEvidence:
+    """Aggregated evidence from multiple sources for one claim."""
+
+    evidence_ids: list[str] = field(default_factory=list)
+    combined_text: str = ""
+    best_entailment: EntailmentResult | None = None
+    contributing_entailments: list[EntailmentResult] = field(default_factory=list)
+
+
+@dataclass
 class ClaimMatchResult:
     """Result of evaluating a single claim against evidence."""
 
@@ -42,6 +55,7 @@ class ClaimMatchResult:
     evidence_strength: float = 0.0
     has_evidence: bool = False
     duration_result: dict[str, object] | None = None
+    synthesized: SynthesizedEvidence | None = None
 
 
 @dataclass
@@ -75,7 +89,7 @@ class ClaimMatchPipeline:
         session: Session,
         decomposer: RequirementDecomposer,
         evaluator: EvidenceEvaluator,
-        retriever: object,  # RequirementRetriever protocol
+        retriever: object,
         reranker: Reranker,
         *,
         retrieval_top_k: int = 20,
@@ -102,6 +116,14 @@ class ClaimMatchPipeline:
         assessments = []
         requirement_results = []
         gap_inputs = []
+        # Observability counters
+        relation_counts: dict[str, int] = {
+            "entailed": 0,
+            "partial": 0,
+            "related_but_insufficient": 0,
+            "unknown": 0,
+            "contradicted": 0,
+        }
 
         for requirement in requirements:
             try:
@@ -111,7 +133,6 @@ class ClaimMatchPipeline:
                 assessment = self._build_assessment(requirement, req_result)
                 assessments.append(assessment)
 
-                # Collect gap analysis inputs
                 for cr in req_result.claim_results:
                     gap_inputs.append(
                         {
@@ -124,6 +145,8 @@ class ClaimMatchPipeline:
                             "duration_result": cr.duration_result,
                         }
                     )
+                    if cr.relation in relation_counts:
+                        relation_counts[cr.relation] += 1
 
             except Exception as error:
                 logger.warning(
@@ -143,7 +166,11 @@ class ClaimMatchPipeline:
                     )
                 )
 
-        # Run gap analysis
+        # Observability: claim relation counters
+        for relation, count in relation_counts.items():
+            metrics.set_gauge(f"claims_{relation}", float(count))
+        metrics.set_gauge("claims_total", float(sum(relation_counts.values())))
+
         gap_analysis = analyze_gaps(gap_inputs) if gap_inputs else None
 
         return ClaimPipelineResult(
@@ -179,7 +206,6 @@ class ClaimMatchPipeline:
                 match_level=MatchLevel.MISSING,
             )
 
-        # Evaluate each claim
         claim_results = []
         for claim in decomposition.claims:
             try:
@@ -200,7 +226,6 @@ class ClaimMatchPipeline:
                     )
                 )
 
-        # Aggregate claim results
         return self._aggregate_claims(requirement, decomposition, claim_results)
 
     async def _evaluate_single_claim(
@@ -210,6 +235,10 @@ class ClaimMatchPipeline:
         claim: AtomicClaim,
     ) -> ClaimMatchResult:
         """Retrieve evidence and evaluate entailment for one claim."""
+        # Duration claims use deterministic evaluation
+        if claim.claim_type is ClaimType.EXPERIENCE_DURATION:
+            return await self._evaluate_duration_claim(user_id, cv_file_id, claim)
+
         claim_text = f"{claim.normalized_subject} {claim.claim_type.value}".strip()
 
         # Targeted retrieval
@@ -241,9 +270,11 @@ class ClaimMatchPipeline:
                 )
             )
 
-        # Evaluate entailment for top-N
+        # Evaluate entailment for top-N, collecting multiple evidence
         top_candidates = reranked[: self._reranker_top_k]
         best_entailment: EntailmentResult | None = None
+        all_entailments: list[EntailmentResult] = []
+        supporting_evidence_ids: list[str] = []
 
         for candidate in top_candidates:
             evidence = self._session.get(CandidateEvidenceRow, candidate.candidate.evidence_id)
@@ -260,6 +291,13 @@ class ClaimMatchPipeline:
                     semantic_score=candidate.candidate.hybrid_score,
                     reranker_score=(candidate.normalized_score if reranker_available else None),
                 )
+                all_entailments.append(eval_result)
+                if eval_result.relation in (
+                    EntailmentRelation.ENTAILED,
+                    EntailmentRelation.PARTIAL,
+                ):
+                    supporting_evidence_ids.append(evidence.id)
+
                 if (
                     best_entailment is None
                     or eval_result.evidence_strength > best_entailment.evidence_strength
@@ -273,12 +311,98 @@ class ClaimMatchPipeline:
                     error_type=type(error).__name__,
                 )
 
+        # Evidence synthesis: if multiple evidence contribute, record them
+        synthesized = None
+        if len(supporting_evidence_ids) > 1 and best_entailment is not None:
+            synthesized = SynthesizedEvidence(
+                evidence_ids=supporting_evidence_ids,
+                best_entailment=best_entailment,
+                contributing_entailments=[
+                    e for e in all_entailments if e.evidence_id in supporting_evidence_ids
+                ],
+            )
+
         return ClaimMatchResult(
             claim=claim,
             best_entailment=best_entailment,
             relation=best_entailment.relation.value if best_entailment else "unknown",
             evidence_strength=best_entailment.evidence_strength if best_entailment else 0.0,
             has_evidence=best_entailment is not None,
+            synthesized=synthesized,
+        )
+
+    async def _evaluate_duration_claim(
+        self,
+        user_id: str,
+        cv_file_id: str,
+        claim: AtomicClaim,
+    ) -> ClaimMatchResult:
+        """Evaluate a duration claim using deterministic interval math."""
+        # Retrieve evidence with dates for the subject
+        claim_text = f"{claim.normalized_subject} experience".strip()
+        candidates = await self._retriever.retrieve(
+            claim_text,
+            user_id=user_id,
+            cv_file_id=cv_file_id,
+        )
+
+        # Collect date intervals from evidence rows
+        intervals: list[ExperienceInterval] = []
+        for candidate in candidates[: self._retrieval_top_k]:
+            evidence = self._session.get(CandidateEvidenceRow, candidate.evidence_id)
+            if evidence is None:
+                continue
+            # Use evidence years if available (from CV extraction)
+            if evidence.years is not None and evidence.years > 0:
+                # Approximate: treat years as ending today
+                from datetime import date as _date
+
+                intervals.append(
+                    ExperienceInterval(
+                        skill=claim.normalized_subject,
+                        started_at=_date(_date.today().year - int(evidence.years), 1, 1),
+                        ended_at=None,  # ongoing
+                        source_evidence_id=evidence.id,
+                    )
+                )
+
+        # Parse required years from claim
+        required_years = 0.0
+        if claim.required_value:
+            with contextlib.suppress(ValueError, TypeError):
+                required_years = float(claim.required_value)
+
+        duration_result = evaluate_duration(
+            claim.id,
+            required_years,
+            intervals,
+        )
+
+        # Map duration status to entailment relation
+        if duration_result.status == "matched":
+            relation = "entailed"
+            strength = min(1.0, 0.7 + 0.3 * (duration_result.actual_years / max(required_years, 1)))
+        elif duration_result.status == "partial":
+            relation = "partial"
+            strength = 0.4 + 0.3 * (duration_result.actual_years / max(required_years, 1))
+        else:
+            relation = "unknown"
+            strength = 0.0
+
+        duration_dict = {
+            "claim": f"{claim.subject} >= {required_years} years",
+            "required_years": required_years,
+            "actual_years": duration_result.actual_years,
+            "status": duration_result.status,
+            "source_intervals": duration_result.source_intervals,
+        }
+
+        return ClaimMatchResult(
+            claim=claim,
+            relation=relation,
+            evidence_strength=round(strength, 4),
+            has_evidence=bool(intervals),
+            duration_result=duration_dict,
         )
 
     def _aggregate_claims(
@@ -295,14 +419,43 @@ class ClaimMatchPipeline:
                 match_level=MatchLevel.MISSING,
             )
 
-        # Determine overall relation based on AND semantics
         required_claims = [
             cr for cr in claim_results if cr.claim.criticality.value in ("required", "hard_blocker")
         ]
         if not required_claims:
             required_claims = claim_results
 
-        relations = [cr.relation for cr in required_claims]
+        # Handle OR groups: if any claim in an OR group is entailed, the group is satisfied
+        or_groups: dict[str, list[ClaimMatchResult]] = {}
+        non_or_claims: list[ClaimMatchResult] = []
+        for cr in required_claims:
+            if cr.claim.logical_group.value == "or":
+                group_key = cr.claim.requirement_id + "_or"
+                or_groups.setdefault(group_key, []).append(cr)
+            else:
+                non_or_claims.append(cr)
+
+        # Resolve OR groups
+        resolved_relations = []
+        for group in or_groups.values():
+            group_relations = [cr.relation for cr in group]
+            if "entailed" in group_relations:
+                resolved_relations.append("entailed")
+            elif "partial" in group_relations:
+                resolved_relations.append("partial")
+            elif "related_but_insufficient" in group_relations:
+                resolved_relations.append("related_but_insufficient")
+            else:
+                resolved_relations.append("unknown")
+
+        # Non-OR required claims
+        for cr in non_or_claims:
+            resolved_relations.append(cr.relation)
+
+        if not resolved_relations:
+            resolved_relations = [cr.relation for cr in claim_results]
+
+        relations = resolved_relations
         strengths = [cr.evidence_strength for cr in claim_results]
 
         if all(r == "entailed" for r in relations):
@@ -314,7 +467,6 @@ class ClaimMatchPipeline:
         else:
             overall_relation = "unknown"
 
-        # Map to match level
         _RELATION_TO_LEVEL = {
             "entailed": MatchLevel.EXACT,
             "partial": MatchLevel.PARTIAL,
@@ -336,9 +488,19 @@ class ClaimMatchPipeline:
                 "unknown": "✗",
                 "contradicted": "✗",
             }.get(cr.relation, "?")
+            synth_note = ""
+            if cr.synthesized and len(cr.synthesized.evidence_ids) > 1:
+                synth_note = f" [synthesized from {len(cr.synthesized.evidence_ids)} evidence]"
+            duration_note = ""
+            if cr.duration_result:
+                dr = cr.duration_result
+                duration_note = (
+                    f" [duration: {dr.get('actual_years', 0):.1f}/"
+                    f"{dr.get('required_years', 0):.1f} years]"
+                )
             lines.append(
                 f"  {symbol} {cr.claim.subject}: {cr.relation} "
-                f"(strength={cr.evidence_strength:.2f})"
+                f"(strength={cr.evidence_strength:.2f}){synth_note}{duration_note}"
             )
 
         return RequirementClaimResults(

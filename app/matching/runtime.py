@@ -12,6 +12,7 @@ from app.llm.preferences import LlmPreferenceService
 from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
 from app.llm.router import ModelProvider, ModelRouter
+from app.matching.cache import MatchingCache
 from app.matching.http_models import HttpEmbeddingClient, HttpReranker, UnavailableReranker
 from app.matching.indexing import EvidenceReindexService
 from app.matching.model_evaluators import RouterEvidenceEvaluator, RouterRequirementDecomposer
@@ -120,8 +121,13 @@ class MatchingRuntime:
                 )
                 await search_index.ensure_index()
                 # Create claim decomposer and evidence evaluator
-                claim_decomposer = RouterRequirementDecomposer(router, prompt_registry)
-                evidence_evaluator = RouterEvidenceEvaluator(router, prompt_registry)
+                matching_cache = MatchingCache()
+                claim_decomposer = RouterRequirementDecomposer(
+                    router, prompt_registry, cache=matching_cache
+                )
+                evidence_evaluator = RouterEvidenceEvaluator(
+                    router, prompt_registry, cache=matching_cache
+                )
                 pipeline = MatchingPipeline(
                     session,
                     RouterVacancyRequirementExtractor(router, prompt_registry),
@@ -140,6 +146,8 @@ class MatchingRuntime:
                     ),
                     claim_decomposer=claim_decomposer,
                     evidence_evaluator=evidence_evaluator,
+                    retrieval_top_k=self._settings.matching_retrieval_top_k,
+                    reranker_top_k=self._settings.matching_reranker_top_k,
                     shadow_mode=self._settings.matching_v2_shadow_mode,
                     fallback_enabled=self._settings.matching_v2_fallback_enabled,
                 )
