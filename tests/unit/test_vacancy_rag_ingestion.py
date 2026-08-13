@@ -56,12 +56,13 @@ async def test_ingest_vacancy_sends_content_and_metadata() -> None:
             session.commit()
             rag = FakeRagClient(ingested=[])
             service = VacancyRagIngestionService(session, rag)
-            result = await service.ingest_vacancy(vacancy.id)
+            result = await service.ingest_vacancy(vacancy.id, owner_user_id="owner-1")
             assert result is not None
             assert result.document_id == "rag-doc-1"
             assert result.status == "indexed"
             assert len(rag.ingested) == 1
             payload = rag.ingested[0]
+            assert payload["owner_user_id"] == "owner-1"
             assert payload["external_document_id"] == f"vacancy:{vacancy.id}"
             assert payload["collection"] == "vacancies"
             assert "Python Engineer" in str(payload["content"])
@@ -78,7 +79,7 @@ async def test_ingest_vacancy_returns_none_for_missing() -> None:
         with Session(engine) as session:
             rag = FakeRagClient(ingested=[])
             service = VacancyRagIngestionService(session, rag)
-            result = await service.ingest_vacancy("nonexistent")
+            result = await service.ingest_vacancy("nonexistent", owner_user_id="owner-1")
             assert result is None
             assert rag.ingested == []
     finally:
@@ -100,7 +101,7 @@ async def test_ingest_vacancy_returns_none_on_rag_failure() -> None:
             session.commit()
             rag = FakeRagClient(should_fail=True)
             service = VacancyRagIngestionService(session, rag)
-            result = await service.ingest_vacancy(vacancy.id)
+            result = await service.ingest_vacancy(vacancy.id, owner_user_id="owner-1")
             assert result is None
     finally:
         engine.dispose()

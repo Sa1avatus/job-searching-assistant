@@ -18,6 +18,7 @@ class VacancyRagIngestionService:
         self,
         vacancy_id: str,
         *,
+        owner_user_id: str,
         collection: str = "vacancies",
     ) -> RagDocumentResult | None:
         vacancy = self._session.get(VacancyRow, vacancy_id)
@@ -36,6 +37,7 @@ class VacancyRagIngestionService:
         }
         try:
             result = await self._rag.ingest_document(
+                owner_user_id=owner_user_id,
                 external_document_id=f"vacancy:{vacancy.id}",
                 content=content,
                 collection=collection,

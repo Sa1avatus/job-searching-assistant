@@ -4,9 +4,12 @@ import json
 from pathlib import Path
 
 from app.domain.models import ProfileFact
+from app.matching.normalization import SkillNormalizer
+from app.services.vacancy_metadata import extract_key_skills
 from app.storage.tables import VacancyRow
 
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
+_SKILL_NORMALIZER = SkillNormalizer()
 
 
 def _load_prompt(name: str) -> str:
@@ -28,6 +31,28 @@ def build_application_materials_prompt(
     response_language: str,
 ) -> str:
     vacancy_description = (vacancy.description_text or "").strip()[:6000]
+    extracted_key_skills = extract_key_skills(
+        vacancy.description_text or "",
+        vacancy.required_skills or (),
+    )
+    key_skills: list[str] = []
+    seen_skill_keys: set[str] = set()
+    for skill in extracted_key_skills:
+        skill_key = _SKILL_NORMALIZER.normalize(skill).canonical.casefold()
+        if skill_key in seen_skill_keys:
+            continue
+        seen_skill_keys.add(skill_key)
+        key_skills.append(skill)
+    candidate_skill_keys = {
+        _SKILL_NORMALIZER.normalize(str(fact.name)).canonical.casefold()
+        for fact in facts
+        if str(fact.category).casefold() in {"skill", "skills"}
+    }
+    confirmed_key_skills = [
+        skill
+        for skill in key_skills
+        if _SKILL_NORMALIZER.normalize(skill).canonical.casefold() in candidate_skill_keys
+    ]
 
     facts_payload = [
         {
@@ -50,6 +75,10 @@ def build_application_materials_prompt(
         "title": vacancy.title or "",
         "company": vacancy.company or "",
         "description": vacancy_description,
+        "required_skills": list(vacancy.required_skills or ()),
+        "preferred_skills": list(vacancy.preferred_skills or ()),
+        "key_skills": list(key_skills),
+        "confirmed_candidate_key_skills": confirmed_key_skills,
     }
 
     output_shape = {

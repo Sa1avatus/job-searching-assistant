@@ -75,9 +75,10 @@ verified beyond controlled fixtures.
 - Matching v2 requires separately configured embedding and reranker services. The independent
   reranker has not been claimed as live-compatible until its bearer-authenticated Docker smoke test
   is explicitly run; when it is absent or unavailable, matching uses conservative hybrid scores.
-- RAG enrichment is optional and informational only. When `APP_RAG_ENABLED=false` (default) or
-  the RAG service is unavailable, the pipeline uses local data only and records the fallback in
-  the explanation. RAG never changes the deterministic score.
+- RAG is optional. When `APP_RAG_ENABLED=false` (default) or the service is unavailable, the
+  pipeline uses local data only and records the fallback in the explanation. When enabled, RAG may
+  refine the ordering of locally verified candidate evidence before reranking; retrieved RAG text
+  never becomes evidence by itself and cannot introduce a candidate claim.
 - Skill normalization resolves common aliases (Postgres→postgresql, K8s→kubernetes) during
   extraction. Unknown skills pass through unchanged. Custom aliases can be injected via
   `SkillNormalizer(aliases={...})`.

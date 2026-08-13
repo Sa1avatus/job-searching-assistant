@@ -299,6 +299,136 @@
         "LinkedIn not yet integrated into this UI"
       ],
       "status": "completed"
+    },
+    {
+      "id": "MATCH-SKILLS-001",
+      "title": "Use structured vacancy skills in Matching v2",
+      "description": "Build a versioned matching source from description, required skills, and preferred skills, with alias-aware deduplication.",
+      "category": "matching",
+      "priority": 0,
+      "expected_impact": "Matching explanations and scores cover the same key skills shown in the UI",
+      "complexity": "medium",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Every structured skill has a requirement",
+        "Changing structured skills changes the matching content version",
+        "Aliases do not create duplicate requirements"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "MATCH-COVERAGE-001",
+      "title": "Expose explicit key-skill evaluation coverage",
+      "description": "Record whether every vacancy key skill was evaluated and distinguish match, insufficient evidence, evaluation error, missing, and not evaluated states.",
+      "category": "matching",
+      "priority": 0,
+      "expected_impact": "Explanations cannot silently omit key skills",
+      "complexity": "medium",
+      "dependencies": ["MATCH-SKILLS-001"],
+      "acceptance_criteria": [
+        "Coverage is persisted in explanation JSON",
+        "Dashboard renders every key skill and state",
+        "Regression test rejects silent omissions"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "DIRECT-RERANK-001",
+      "title": "Make Direct to reranker a server-side search mode",
+      "description": "When selected, ingest owner-scoped RAG context, schedule detailed matching with a forced refresh, wait for completion, and emit results ordered by the calculated score.",
+      "category": "matching",
+      "priority": 0,
+      "expected_impact": "Search results are shown after available RAG and reranker processing rather than reranked by a later UI click",
+      "complexity": "large",
+      "dependencies": ["MATCH-SKILLS-001"],
+      "acceptance_criteria": [
+        "Flag is sent to the server",
+        "RAG ingestion precedes matching scheduling",
+        "External reranker is used when configured",
+        "Unavailable external services preserve local fallback results"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "MATCH-ERROR-001",
+      "title": "Add safe diagnostics and retry for evaluation errors",
+      "description": "Persist non-sensitive evaluator failure codes and expose a bounded user-triggered retry without treating technical errors as missing skills.",
+      "category": "matching",
+      "priority": 0,
+      "expected_impact": "Users can distinguish and recover from technical evaluation failures",
+      "complexity": "medium",
+      "dependencies": ["MATCH-COVERAGE-001"],
+      "acceptance_criteria": [
+        "Failure codes contain no provider response bodies",
+        "Retry is bounded and explicit",
+        "Technical failures do not become missing skills"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "MATCH-BACKFILL-001",
+      "title": "Backfill stale matching explanations",
+      "description": "Provide a bounded owner-scoped operation to recalculate existing results created before the versioned structured-skill source.",
+      "category": "matching",
+      "priority": 0,
+      "expected_impact": "Existing saved vacancies receive current explanations without manual per-card work",
+      "complexity": "medium",
+      "dependencies": ["MATCH-SKILLS-001"],
+      "acceptance_criteria": [
+        "Only owner-scoped applications are scheduled",
+        "Progress and failures are visible",
+        "Previous results remain available until replacement succeeds"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "SEC-AUDIT-001",
+      "title": "Complete cross-user endpoint audit",
+      "description": "Verify ownership enforcement and negative tests for every user-owned API, artifact, browser, matching, email, and RAG path.",
+      "category": "security",
+      "priority": 0,
+      "expected_impact": "Closes remaining tenant-isolation uncertainty",
+      "complexity": "large",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Every user-owned endpoint has a negative cross-user test",
+        "Artifacts and background jobs enforce ownership",
+        "Audit results update SEC-001 status"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "QUALITY-BASELINE-001",
+      "title": "Restore green static quality gates",
+      "description": "Separate mechanical formatting from behavioral fixes, then resolve Ruff and mypy failures without weakening checks.",
+      "category": "quality",
+      "priority": 0,
+      "expected_impact": "New regressions are visible instead of hidden by existing failures",
+      "complexity": "large",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Ruff check passes",
+        "Ruff format check passes",
+        "Mypy passes",
+        "Full pytest remains green"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "MATCH-EVAL-001",
+      "title": "Calibrate Matching v2 on reviewed evaluation data",
+      "description": "Measure required-skill coverage, ranking quality, confidence calibration, and error slices before promoting matching beyond shadow mode.",
+      "category": "matching",
+      "priority": 1,
+      "expected_impact": "Evidence-based score and rollout decisions",
+      "complexity": "large",
+      "dependencies": ["MATCH-COVERAGE-001", "MATCH-ERROR-001"],
+      "acceptance_criteria": [
+        "Human-reviewed production-like fixtures exist",
+        "Quality thresholds and slices are reported",
+        "Rollback criteria are documented"
+      ],
+      "status": "planned"
     }
   ]
 }

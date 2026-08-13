@@ -66,6 +66,9 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
+      APP_ENVIRONMENT: "production"
+      APP_API_KEY: "${APP_API_KEY:-}"
+      APP_API_CLIENTS_JSON: "${APP_API_CLIENTS_JSON:-}"
       APP_DATABASE_URL: "postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment"
       APP_REDIS_URL: "redis://redis:6379/0"
       APP_OPENSEARCH_URL: "http://opensearch:9200"
@@ -96,7 +99,7 @@ services:
       DISPLAY: ":99"
     command: ["/bin/bash", "scripts/start_api_with_browser_desktop.sh"]
     ports:
-      - "127.0.0.1:${APP_HTTP_PORT:-8000}:8000"
+      - "0.0.0.0:${APP_HTTP_PORT:-8000}:8000"
       - "127.0.0.1:7900:7900"
     depends_on:
       postgres:

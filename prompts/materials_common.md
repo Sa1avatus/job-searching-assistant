@@ -34,18 +34,23 @@ STRICT FACTUALITY RULES:
 
 COVER-LETTER CONTENT RULES:
 
-1. Select three or four candidate facts that are most relevant to the actual
+1. Start from `confirmed_candidate_key_skills` in VACANCY DATA. When that list
+   is non-empty, naturally use up to three of those skills in the letter and
+   connect each one to its supporting candidate fact. These are deterministic
+   intersections, not permission to invent experience.
+
+2. Select three or four candidate facts that are most relevant to the actual
    responsibilities in the vacancy.
 
-2. For every selected fact, explain:
+3. For every selected fact, explain:
    - what the candidate actually did;
    - which confirmed technology or method was involved;
    - which vacancy responsibility this experience is relevant to.
 
-3. Do not infer that knowledge of a technology proves experience with a
+4. Do not infer that knowledge of a technology proves experience with a
    vacancy responsibility.
 
-4. For example:
+5. For example:
    - knowledge of SQL does not prove experience importing files;
    - knowledge of REST API does not prove experience developing modules for
      subholdings;
@@ -54,9 +59,9 @@ COVER-LETTER CONTENT RULES:
    - knowledge of RabbitMQ does not prove experience designing reliable
      messaging systems.
 
-5. Do not convert a list of technologies into achievements or responsibilities.
+6. Do not convert a list of technologies into achievements or responsibilities.
 
-6. Do not use self-evaluations such as:
+7. Do not use self-evaluations such as:
    "rich experience",
    "strong candidate",
    "excellent candidate",
@@ -64,24 +69,27 @@ COVER-LETTER CONTENT RULES:
    "quickly adapt",
    "effectively solve tasks".
 
-7. Do not repeat the vacancy description.
+8. Do not repeat the vacancy description.
 
-8. Do not reproduce the candidate-facts list verbatim.
+9. Do not reproduce the candidate-facts list verbatim.
 
-9. Do not mention a technology merely because it appears in the vacancy.
+10. Do not mention a technology merely because it appears in the vacancy.
    Mention it only when it is explicitly present in the candidate facts.
 
-10. Do not claim experience with every vacancy requirement. It is preferable
+11. Skills in `key_skills` but not in `confirmed_candidate_key_skills` are
+    unconfirmed requirements. Do not attribute them to the candidate.
+
+12. Do not claim experience with every vacancy requirement. It is preferable
     to honestly cover three relevant requirements rather than pretend that
     every requirement is satisfied.
 
-11. Do not include placeholders, template markers, square-bracketed text or
+13. Do not include placeholders, template markers, square-bracketed text or
     missing-value labels.
 
-12. Do not include the candidate's name because it was not provided.
+14. Do not include the candidate's name because it was not provided.
 
-13. Return a finished letter that can be sent without replacing any variables.
+15. Return a finished letter that can be sent without replacing any variables.
 
-14. Before producing the JSON, silently verify every factual statement in the
+16. Before producing the JSON, silently verify every factual statement in the
     cover letter against the candidate facts. Remove any statement that cannot
     be directly supported.

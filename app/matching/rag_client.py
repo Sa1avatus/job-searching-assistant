@@ -52,15 +52,16 @@ class RagClient(Protocol):
         self,
         query: str,
         *,
+        owner_user_id: str,
         collections: tuple[str, ...] | None = None,
         mode: str = "hybrid",
         top_k: int = 10,
-        user_id: str | None = None,
     ) -> RagSearchResponse: ...
 
     async def ingest_document(
         self,
         *,
+        owner_user_id: str,
         external_document_id: str,
         content: str,
         collection: str,
@@ -94,10 +95,10 @@ class RagHttpClient:
         self,
         query: str,
         *,
+        owner_user_id: str,
         collections: tuple[str, ...] | None = None,
         mode: str = "hybrid",
         top_k: int = 10,
-        user_id: str | None = None,
     ) -> RagSearchResponse:
         if collections is None:
             collections = (self._default_collection,)
@@ -111,14 +112,15 @@ class RagHttpClient:
             "use_reranker": True,
             "include_trace": False,
         }
-        if user_id is not None:
-            payload["metadata_filter"] = {"user_id": user_id}
         started = time.perf_counter()
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(
                 f"{self._base_url}/v1/retrieval/search",
                 json=payload,
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "X-Owner-User-Id": owner_user_id,
+                },
             )
             response.raise_for_status()
         duration = time.perf_counter() - started
@@ -160,6 +162,7 @@ class RagHttpClient:
     async def ingest_document(
         self,
         *,
+        owner_user_id: str,
         external_document_id: str,
         content: str,
         collection: str,
@@ -184,7 +187,10 @@ class RagHttpClient:
             response = await client.post(
                 f"{self._base_url}/v1/documents",
                 json=payload,
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "X-Owner-User-Id": owner_user_id,
+                },
             )
             response.raise_for_status()
         data = response.json()
@@ -231,12 +237,12 @@ class RagFallbackClient:
         self,
         query: str,
         *,
+        owner_user_id: str,
         collections: tuple[str, ...] | None = None,
         mode: str = "hybrid",
         top_k: int = 10,
-        user_id: str | None = None,
     ) -> RagSearchResponse:
-        del query, collections, mode, top_k
+        del query, owner_user_id, collections, mode, top_k
         return RagSearchResponse(
             request_id="fallback",
             results=(),
@@ -247,6 +253,7 @@ class RagFallbackClient:
     async def ingest_document(
         self,
         *,
+        owner_user_id: str,
         external_document_id: str,
         content: str,
         collection: str,
@@ -256,7 +263,7 @@ class RagFallbackClient:
         version: int = 1,
         metadata: dict[str, Any] | None = None,
     ) -> RagDocumentResult:
-        del content, collection, title, document_type, language, version, metadata
+        del owner_user_id, content, collection, title, document_type, language, version, metadata
         return RagDocumentResult(
             document_id="",
             external_document_id=external_document_id,

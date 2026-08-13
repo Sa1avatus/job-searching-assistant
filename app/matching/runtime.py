@@ -22,9 +22,15 @@ from app.matching.model_extractors import (
 )
 from app.matching.opensearch_index import OpenSearchEvidenceIndex
 from app.matching.pipeline import MatchingPipeline
-from app.matching.retrieval import HybridRetriever, SqlEvidenceRepository
+from app.matching.rag_client import create_rag_client
+from app.matching.retrieval import (
+    HybridRetriever,
+    RagAugmentedRetriever,
+    SqlEvidenceRepository,
+)
 from app.matching.scoring import DeterministicMatchScorer
 from app.matching.semantic import Reranker
+from app.matching.vacancy_source import build_vacancy_matching_source
 from app.prompts.registry import PromptRegistry
 from app.storage.tables import ApplicationRow, CvFileRow, VacancyRow
 
@@ -128,15 +134,38 @@ class MatchingRuntime:
                 evidence_evaluator = RouterEvidenceEvaluator(
                     router, prompt_registry, cache=matching_cache
                 )
+                rag_client = create_rag_client(
+                    service_url=self._settings.rag_service_url,
+                    api_key=(
+                        self._settings.rag_api_key.get_secret_value()
+                        if self._settings.rag_api_key is not None
+                        else None
+                    ),
+                    project_id=self._settings.rag_project_id,
+                    collection="vacancies",
+                    timeout_seconds=self._settings.rag_timeout_seconds,
+                    enabled=self._settings.rag_enabled,
+                )
+                local_retriever = HybridRetriever(
+                    search_index,
+                    embedding_client,
+                    SqlEvidenceRepository(session),
+                    retrieval_limit=self._settings.matching_retrieval_top_k,
+                )
+                retriever = (
+                    RagAugmentedRetriever(
+                        local_retriever,
+                        rag_client,
+                        retrieval_limit=self._settings.matching_retrieval_top_k,
+                    )
+                    if self._settings.rag_enabled
+                    else local_retriever
+                )
                 pipeline = MatchingPipeline(
                     session,
                     RouterVacancyRequirementExtractor(router, prompt_registry),
                     RouterCandidateEvidenceExtractor(router, prompt_registry),
-                    HybridRetriever(
-                        search_index,
-                        embedding_client,
-                        SqlEvidenceRepository(session),
-                    ),
+                    retriever,
                     reranker,
                     DeterministicMatchScorer(),
                     evidence_indexer=EvidenceReindexService(
@@ -144,6 +173,7 @@ class MatchingRuntime:
                         embedding_client,
                         search_index,
                     ),
+                    rag_client=rag_client,
                     claim_decomposer=claim_decomposer,
                     evidence_evaluator=evidence_evaluator,
                     retrieval_top_k=self._settings.matching_retrieval_top_k,
@@ -153,7 +183,7 @@ class MatchingRuntime:
                 )
                 await pipeline.match(
                     application.id,
-                    vacancy_source_text=vacancy.description_text,
+                    vacancy_source_text=build_vacancy_matching_source(vacancy),
                     cv_source_text=cv_source_text,
                 )
 

@@ -7,7 +7,23 @@ vacancies, analyses resumes, calculates explainable matches, drafts application 
 prepares supported browser forms for human review. Real HeadHunter and LinkedIn submission is
 disabled by default and requires explicit configuration and user confirmation.
 
-Current version: **1.1.300**.
+Current version: **1.4.1**.
+
+## Current release
+
+- Matching v2.3 decomposes vacancy requirements into claims and distinguishes confirmed,
+  partial, insufficient, failed, and missing evidence.
+- Application materials receive the same vacancy key skills shown on the vacancy card. A skill is
+  emphasized only when it is also present in verified candidate facts; vacancy requirements are
+  never turned into candidate claims automatically.
+- Optional RAG search and profile, resume, and vacancy ingestion are scoped by the owning user.
+- **Direct to reranker** waits for owner-scoped RAG ingestion and detailed matching before showing
+  search results. Available external RAG and reranker services refine evidence ordering; unavailable
+  services fall back to local hybrid matching without discarding the discovered vacancy.
+- Profile facts can be imported from supported files or extracted from a selected resume and
+  reviewed before they affect matching or generated text.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the complete version history.
 
 ## What is included
 
@@ -20,8 +36,12 @@ Current version: **1.1.300**.
 - encrypted browser state, LLM keys, and sensitive autofill values;
 - controlled fixtures for browser and end-to-end verification.
 
-The dashboard is available at `http://127.0.0.1:8000/dashboard`; the detailed review queue is at
-`http://127.0.0.1:8000/review`.
+The dashboard is available locally at `http://127.0.0.1:8000/dashboard` and on the trusted LAN at
+`http://192.168.1.93:8000/dashboard`; the corresponding review pages use `/review`. Compose exposes
+only port `8000` to the LAN. PostgreSQL, Redis, OpenSearch, the browser desktop, browser worker, and
+matching-model ports remain bound to loopback. LAN access runs the API in production mode and
+requires `APP_API_KEY` or `APP_API_CLIENTS_JSON`; `scripts/setup.ps1` generates `APP_API_KEY` in the
+ignored local `.env` when it is missing.
 
 ## Quick start on Windows
 

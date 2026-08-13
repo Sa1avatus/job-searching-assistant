@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import httpx
 from fastapi.testclient import TestClient
@@ -16,7 +17,7 @@ from app.api.main import (
 from app.config import Settings, get_settings
 from app.services.job_discovery import DiscoveryOutcome, JobDiscoveryService
 from app.storage.database import Base
-from app.storage.tables import UserRow
+from app.storage.tables import ApplicationMatchResultRow, ApplicationRow, UserRow, VacancyRow
 
 client = TestClient(app)
 
@@ -87,6 +88,8 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert "candidate.application_id !== item.application_id" in response.text
     assert "insertProgressiveSearchResult" in response.text
     assert "discover-vacancies-stream" in response.text
+    assert "direct_rerank: Boolean" in response.text
+    assert "document.querySelector('#rerank-all').click()" not in response.text
     assert "response.body.getReader()" in response.text
     assert "event.event === 'vacancy'" in response.text
     assert "event.event === 'materials_ready'" in response.text
@@ -114,11 +117,11 @@ def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
     assert "autoconnect" in response.text
 
 
-def test_openapi_reports_development_version() -> None:
+def test_openapi_reports_current_version() -> None:
     response = client.get("/openapi.json")
 
     assert response.status_code == 200
-    assert response.json()["info"]["version"] == "1.1.100"
+    assert response.json()["info"]["version"] == "1.4.1"
 
 
 def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:
@@ -179,14 +182,15 @@ def test_discovery_stream_emits_vacancy_before_completion(monkeypatch) -> None:
         work_format="remote",
     )
 
-    async def discover_greenhouse(*_args, on_outcome=None, **_kwargs):
+    observed_limits: list[int] = []
+
+    async def discover_greenhouse(*_args, on_outcome=None, **kwargs):
         assert on_outcome is not None
+        observed_limits.append(kwargs["limit"])
         await on_outcome(outcome)
         return [outcome]
 
-    monkeypatch.setattr(
-        JobDiscoveryService, "discover_greenhouse_vacancies", discover_greenhouse
-    )
+    monkeypatch.setattr(JobDiscoveryService, "discover_greenhouse_vacancies", discover_greenhouse)
 
     with client.stream(
         "POST",
@@ -208,6 +212,156 @@ def test_discovery_stream_emits_vacancy_before_completion(monkeypatch) -> None:
     assert {"materials_ready", "materials_error"} & set(event_names)
     assert event_names.index("vacancy") < event_names.index("source_complete")
     assert events[0]["item"]["title"] == "Streaming Engineer"
+    assert observed_limits == [15]
+
+
+def test_direct_rerank_stream_enriches_before_emitting_sorted_vacancies(monkeypatch) -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr("app.api.main.SessionFactory", session_factory)
+    monkeypatch.setattr(
+        "app.api.main.get_settings",
+        lambda: Settings(
+            _env_file=None,
+            matching_v2_enabled=True,
+            rag_enabled=True,
+            rag_service_url="http://rag.test",
+            rag_api_key="rag-key",
+            rag_project_id="project-1",
+        ),
+    )
+    user_id = "direct-rerank-user"
+    with session_factory() as session:
+        session.add(UserRow(id=user_id, display_name="Direct Candidate"))
+        for suffix, score in (("low", 40), ("high", 90)):
+            session.add(
+                VacancyRow(
+                    id=f"vacancy-{suffix}",
+                    source_url=f"https://boards.greenhouse.io/example/jobs/{suffix}",
+                    title=f"{suffix.title()} score",
+                    company="Example",
+                )
+            )
+            session.add(
+                ApplicationRow(
+                    id=f"direct-{suffix}",
+                    user_id=user_id,
+                    vacancy_id=f"vacancy-{suffix}",
+                    status="awaiting_review",
+                    match_score=score,
+                )
+            )
+        session.commit()
+    outcomes = [
+        DiscoveryOutcome(
+            application_id="direct-low",
+            vacancy_id="vacancy-low",
+            title="Lower score",
+            company="Example",
+            source_url="https://boards.greenhouse.io/example/jobs/low",
+            location="Remote",
+            match_score=40,
+            status="created",
+            application_status="awaiting_review",
+            vacancy_summary="Lower.",
+            work_format="remote",
+        ),
+        DiscoveryOutcome(
+            application_id="direct-high",
+            vacancy_id="vacancy-high",
+            title="Higher score",
+            company="Example",
+            source_url="https://boards.greenhouse.io/example/jobs/high",
+            location="Remote",
+            match_score=90,
+            status="created",
+            application_status="awaiting_review",
+            vacancy_summary="Higher.",
+            work_format="remote",
+        ),
+    ]
+    operation_order: list[str] = []
+
+    async def ingest_profile(_service, _user_id):
+        operation_order.append("profile")
+        return SimpleNamespace(document_id="profile-doc", status="indexed")
+
+    async def ingest_vacancy(_service, _vacancy_id, **_kwargs):
+        operation_order.append("vacancy")
+        return SimpleNamespace(document_id="vacancy-doc", status="indexed")
+
+    def schedule_matching(service, application_id, *, force=False):
+        assert force is True
+        operation_order.append("matching")
+        application = service._session.get(ApplicationRow, application_id)
+        assert application is not None
+        service._session.merge(
+            ApplicationMatchResultRow(
+                application_id=application_id,
+                status="scored",
+                final_score=application.match_score,
+            )
+        )
+        service._session.commit()
+        return SimpleNamespace(id=f"task-{application_id}")
+
+    monkeypatch.setattr(
+        "app.matching.rag_client.create_rag_client",
+        lambda **_kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "app.services.profile_rag_ingestion.ProfileRagIngestionService.ingest_profile",
+        ingest_profile,
+    )
+    monkeypatch.setattr(
+        "app.services.vacancy_rag_ingestion.VacancyRagIngestionService.ingest_vacancy",
+        ingest_vacancy,
+    )
+    monkeypatch.setattr("app.api.main.MatchingJobService.schedule", schedule_matching)
+
+    direct_limits: list[int] = []
+
+    async def discover_greenhouse(*_args, on_outcome=None, **kwargs):
+        assert on_outcome is not None
+        direct_limits.append(kwargs["limit"])
+        for outcome in outcomes:
+            await on_outcome(outcome)
+        return outcomes
+
+    monkeypatch.setattr(JobDiscoveryService, "discover_greenhouse_vacancies", discover_greenhouse)
+
+    with client.stream(
+        "POST",
+        f"/v1/users/{user_id}/discover-vacancies-stream",
+        json={
+            "sources": ["greenhouse"],
+            "board_urls": ["https://boards.greenhouse.io/example"],
+            "direct_rerank": True,
+        },
+    ) as response:
+        events = [json.loads(line) for line in response.iter_lines() if line]
+
+    vacancy_events = [event for event in events if event["event"] == "vacancy"]
+    assert [event["item"]["title"] for event in vacancy_events] == [
+        "Higher score",
+        "Lower score",
+    ]
+    assert all(event["item"]["matching_status"] == "scored" for event in vacancy_events)
+    assert "enrichment_started" not in [event["event"] for event in events]
+    assert direct_limits == [45]
+    assert operation_order == [
+        "profile",
+        "vacancy",
+        "matching",
+        "profile",
+        "vacancy",
+        "matching",
+    ]
 
 
 def test_assessment_returns_grounded_gap() -> None:

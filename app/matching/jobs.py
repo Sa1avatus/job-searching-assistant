@@ -6,6 +6,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.domain.models import TaskState
+from app.matching.vacancy_source import build_vacancy_matching_source
 from app.storage.tables import (
     ApplicationMatchResultRow,
     ApplicationRow,
@@ -41,10 +42,11 @@ class MatchingJobService:
         if vacancy is None:
             raise LookupError("Vacancy not found")
 
+        vacancy_source = build_vacancy_matching_source(vacancy)
         content_version = hashlib.sha256(
             "\n".join(
                 (
-                    vacancy.description_text,
+                    vacancy_source,
                     cv_file.sha256,
                     cv_file.analyzed_at.isoformat() if cv_file.analyzed_at else "not-analyzed",
                 )
@@ -58,11 +60,6 @@ class MatchingJobService:
             self._session.execute(
                 delete(RequirementMatchRow).where(
                     RequirementMatchRow.application_id == application.id
-                )
-            )
-            self._session.execute(
-                delete(ApplicationMatchResultRow).where(
-                    ApplicationMatchResultRow.application_id == application.id
                 )
             )
             existing = self._session.scalar(

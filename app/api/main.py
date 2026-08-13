@@ -25,6 +25,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 import httpx
+import structlog
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import SecretStr
@@ -240,7 +241,8 @@ from app.services.http_adapters import HttpHeadHunterAdapter, HttpLinkedInAdapte
 from app.workers.browser_worker import create_session_store
 
 configure_logging()
-app = FastAPI(title="Job Searching Assistant", version="1.1.100")
+logger = structlog.get_logger(__name__)
+app = FastAPI(title="Job Searching Assistant", version="1.4.1")
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
 BROWSER_AUTHORIZATION_MANAGER = BrowserAuthorizationManager()
@@ -2358,52 +2360,93 @@ async def discover_vacancies_stream(
 
     settings = get_settings()
     requested_sources = tuple(dict.fromkeys(request.sources))
+    discovery_limit = min(50, request.limit * 3) if request.direct_rerank else request.limit
     queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
-    enrichment_semaphore = asyncio.Semaphore(1)
+    enrichment_semaphore = asyncio.Semaphore(3 if request.direct_rerank else 1)
 
-    async def publish_outcome(source: str, outcome: DiscoveryOutcome) -> None:
+    async def publish_outcome(
+        source: str,
+        outcome: DiscoveryOutcome,
+        enrichment: dict[str, object] | None = None,
+    ) -> None:
+        item = serialize_discovery_outcome(outcome)
+        if enrichment:
+            item.update(enrichment)
         await queue.put(
             {
                 "event": "vacancy",
                 "source": source,
-                "item": serialize_discovery_outcome(outcome),
+                "item": item,
             }
         )
 
-    async def enrich_outcome(source: str, application_id: str) -> None:
+    async def enrich_outcome(
+        source: str,
+        application_id: str,
+        *,
+        emit_events: bool = True,
+    ) -> dict[str, object]:
+        enrichment: dict[str, object] = {
+            "matching_status": "processing",
+            "materials_status": "processing",
+        }
+
+        async def emit(event: dict[str, object]) -> None:
+            if emit_events:
+                await queue.put(event)
+
+        matching_was_scheduled = False
+
+        async def schedule_matching(*, force: bool) -> None:
+            nonlocal matching_was_scheduled
+            if not settings.matching_v2_enabled:
+                return
+            try:
+                with SessionFactory() as matching_session:
+                    MatchingJobService(matching_session).schedule(
+                        application_id,
+                        force=force,
+                    )
+                matching_was_scheduled = True
+            except Exception as error:  # noqa: BLE001 - legacy score remains available
+                enrichment.update(
+                    matching_status="error",
+                    matching_error=str(error),
+                )
+                await emit(
+                    {
+                        "event": "matching_error",
+                        "source": source,
+                        "application_id": application_id,
+                        "error": str(error),
+                    }
+                )
+
         async with enrichment_semaphore:
-            await queue.put(
+            await emit(
                 {
                     "event": "enrichment_started",
                     "source": source,
                     "application_id": application_id,
                 }
             )
-            matching_was_scheduled = False
-            if settings.matching_v2_enabled:
-                try:
-                    with SessionFactory() as matching_session:
-                        MatchingJobService(matching_session).schedule(application_id)
-                    matching_was_scheduled = True
-                except Exception as error:  # noqa: BLE001 - legacy score remains available
-                    await queue.put(
-                        {
-                            "event": "matching_error",
-                            "source": source,
-                            "application_id": application_id,
-                            "error": str(error),
-                        }
-                    )
+            if not request.direct_rerank:
+                await schedule_matching(force=False)
 
-            # Ingest vacancy into RAG service
+            # Direct mode requires RAG ingestion to finish before matching is scheduled.
             if settings.rag_enabled:
                 try:
                     from app.matching.rag_client import create_rag_client
+                    from app.services.profile_rag_ingestion import ProfileRagIngestionService
                     from app.services.vacancy_rag_ingestion import VacancyRagIngestionService
 
                     rag = create_rag_client(
                         service_url=settings.rag_service_url,
-                        api_key=settings.rag_api_key.get_secret_value() if settings.rag_api_key else None,
+                        api_key=(
+                            settings.rag_api_key.get_secret_value()
+                            if settings.rag_api_key
+                            else None
+                        ),
                         project_id=settings.rag_project_id,
                         collection="vacancies",
                         timeout_seconds=settings.rag_timeout_seconds,
@@ -2412,15 +2455,41 @@ async def discover_vacancies_stream(
                     with SessionFactory() as rag_session:
                         app_row = rag_session.get(ApplicationRow, application_id)
                         if app_row is not None:
-                            result = await VacancyRagIngestionService(rag_session, rag).ingest_vacancy(
+                            if request.direct_rerank:
+                                profile_ingestion = ProfileRagIngestionService(rag_session, rag)
+                                await profile_ingestion.ingest_profile(app_row.user_id)
+                                if app_row.selected_cv_file_id is not None:
+                                    await profile_ingestion.ingest_cv(
+                                        app_row.selected_cv_file_id
+                                    )
+                            result = await VacancyRagIngestionService(
+                                rag_session, rag
+                            ).ingest_vacancy(
                                 app_row.vacancy_id,
+                                owner_user_id=app_row.user_id,
                             )
                             if result:
-                                logger.info("rag_vacancy_ingested", application_id=application_id, document_id=result.document_id, status=result.status)
+                                logger.info(
+                                    "rag_vacancy_ingested",
+                                    application_id=application_id,
+                                    document_id=result.document_id,
+                                    status=result.status,
+                                )
                             else:
-                                logger.warning("rag_vacancy_ingest_skipped", application_id=application_id)
-                except Exception as rag_error:  # noqa: BLE001 - RAG ingestion failure must not block search
-                    logger.warning("rag_ingestion_failed", application_id=application_id, error=str(rag_error)[:200])
+                                logger.warning(
+                                    "rag_vacancy_ingest_skipped",
+                                    application_id=application_id,
+                                )
+                # RAG ingestion failure must not block vacancy discovery.
+                except Exception as rag_error:  # noqa: BLE001
+                    logger.warning(
+                        "rag_ingestion_failed",
+                        application_id=application_id,
+                        error=str(rag_error)[:200],
+                    )
+
+            if request.direct_rerank:
+                await schedule_matching(force=True)
 
             try:
                 async with httpx.AsyncClient(
@@ -2446,7 +2515,11 @@ async def discover_vacancies_stream(
                             cover_letter_text = (
                                 application.cover_letter_text if application is not None else ""
                             )
-                await queue.put(
+                enrichment.update(
+                    materials_status="ready",
+                    cover_letter_text=cover_letter_text,
+                )
+                await emit(
                     {
                         "event": "materials_ready",
                         "source": source,
@@ -2455,7 +2528,11 @@ async def discover_vacancies_stream(
                     }
                 )
             except Exception as error:  # noqa: BLE001 - matching and search must continue
-                await queue.put(
+                enrichment.update(
+                    materials_status="error",
+                    materials_error=str(error),
+                )
+                await emit(
                     {
                         "event": "materials_error",
                         "source": source,
@@ -2478,7 +2555,11 @@ async def discover_vacancies_stream(
                                 if aggregate.status == "scored"
                                 else application.match_score if application is not None else 0
                             )
-                            await queue.put(
+                            enrichment.update(
+                                matching_status=aggregate.status,
+                                match_score=score,
+                            )
+                            await emit(
                                 {
                                     "event": "matching_ready",
                                     "source": source,
@@ -2490,7 +2571,11 @@ async def discover_vacancies_stream(
                             break
                     await asyncio.sleep(1)
                 else:
-                    await queue.put(
+                    enrichment.update(
+                        matching_status="error",
+                        matching_error="Detailed matching is still queued",
+                    )
+                    await emit(
                         {
                             "event": "matching_error",
                             "source": source,
@@ -2502,7 +2587,11 @@ async def discover_vacancies_stream(
                 with SessionFactory() as score_session:
                     application = score_session.get(ApplicationRow, application_id)
                     score = application.match_score if application is not None else 0
-                await queue.put(
+                enrichment.update(
+                    matching_status="legacy",
+                    match_score=score,
+                )
+                await emit(
                     {
                         "event": "matching_ready",
                         "source": source,
@@ -2511,18 +2600,37 @@ async def discover_vacancies_stream(
                         "matching_status": "legacy",
                     }
                 )
+            return enrichment
 
     async def run_source(source: str) -> None:
         enrichment_tasks: list[asyncio.Task[None]] = []
+        direct_results: list[tuple[DiscoveryOutcome, dict[str, object]]] = []
+        direct_tasks: list[
+            tuple[DiscoveryOutcome, asyncio.Task[dict[str, object]]]
+        ] = []
         try:
             with SessionFactory() as source_session:
                 service = JobDiscoveryService(source_session)
 
                 async def on_outcome(outcome: DiscoveryOutcome) -> None:
-                    await publish_outcome(source, outcome)
-                    enrichment_tasks.append(
-                        asyncio.create_task(enrich_outcome(source, outcome.application_id))
-                    )
+                    if request.direct_rerank:
+                        direct_tasks.append(
+                            (
+                                outcome,
+                                asyncio.create_task(
+                                    enrich_outcome(
+                                        source,
+                                        outcome.application_id,
+                                        emit_events=False,
+                                    )
+                                ),
+                            )
+                        )
+                    else:
+                        await publish_outcome(source, outcome)
+                        enrichment_tasks.append(
+                            asyncio.create_task(enrich_outcome(source, outcome.application_id))
+                        )
 
                 if source == "greenhouse":
                     async with httpx.AsyncClient(
@@ -2533,7 +2641,7 @@ async def discover_vacancies_stream(
                             greenhouse_adapter=GreenhouseJobBoardApi(client),
                             board_urls=[str(board_url) for board_url in request.board_urls],
                             locations=request.locations,
-                            limit=request.limit,
+                            limit=discovery_limit,
                             search_text=request.search_text,
                             cv_file_id=request.cv_file_id,
                             on_outcome=on_outcome,
@@ -2553,7 +2661,7 @@ async def discover_vacancies_stream(
                             user_id,
                             headhunter_adapter=adapter,
                             locations=request.locations,
-                            limit=request.limit,
+                            limit=discovery_limit,
                             search_text=request.search_text,
                             cv_file_id=request.cv_file_id,
                             on_outcome=on_outcome,
@@ -2563,17 +2671,40 @@ async def discover_vacancies_stream(
                             user_id,
                             linkedin_adapter=adapter,
                             locations=request.locations,
-                            limit=request.limit,
+                            limit=discovery_limit,
                             search_text=request.search_text,
                             cv_file_id=request.cv_file_id,
                             on_outcome=on_outcome,
                         )
+                if request.direct_rerank:
+                    enrichments = await asyncio.gather(
+                        *(task for _outcome, task in direct_tasks)
+                    )
+                    direct_results.extend(
+                        (outcome, enrichment)
+                        for (outcome, _task), enrichment in zip(
+                            direct_tasks,
+                            enrichments,
+                            strict=True,
+                        )
+                    )
+                    direct_results.sort(
+                        key=lambda item: float(item[1].get("match_score", 0)),
+                        reverse=True,
+                    )
+                    for outcome, enrichment in direct_results[: request.limit]:
+                        await publish_outcome(source, outcome, enrichment)
         except Exception as error:  # noqa: BLE001 - one source must not end the whole stream
             await queue.put({"event": "source_error", "source": source, "error": str(error)})
         finally:
             await queue.put({"event": "source_complete", "source": source})
             if enrichment_tasks:
                 await asyncio.gather(*enrichment_tasks, return_exceptions=True)
+            unfinished_direct_tasks = [
+                task for _outcome, task in direct_tasks if not task.done()
+            ]
+            if unfinished_direct_tasks:
+                await asyncio.gather(*unfinished_direct_tasks, return_exceptions=True)
             await queue.put({"event": "_source_finished", "source": source})
 
     async def event_stream() -> AsyncIterator[bytes]:

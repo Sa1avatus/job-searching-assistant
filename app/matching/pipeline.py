@@ -8,6 +8,7 @@ metadata, per-requirement matches, and aggregate results.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 import uuid
 from datetime import UTC, datetime
@@ -44,6 +45,7 @@ from app.matching.scoring import (
     RequirementAssessment,
 )
 from app.matching.semantic import RerankedCandidate, Reranker, RetrievalCandidate
+from app.matching.vacancy_source import VACANCY_MATCHING_SOURCE_VERSION
 from app.observability.metrics import metrics
 from app.storage.tables import (
     ApplicationMatchResultRow,
@@ -313,7 +315,11 @@ class MatchingPipeline:
         requirement_rows: tuple[VacancyRequirementRow, ...],
     ) -> tuple[list[RequirementAssessment], ClaimPipelineResult | None]:
         """Run matching through claim pipeline if available, else legacy."""
-        if self._claim_pipeline is not None:
+        if (
+            self._claim_pipeline is not None
+            and self._claim_decomposer is not None
+            and self._evidence_evaluator is not None
+        ):
             try:
                 claim_result = await self._claim_pipeline.match_requirements(
                     application_id=application.id,
@@ -541,7 +547,7 @@ class MatchingPipeline:
             vacancy_id=vacancy.id,
             source_text=source_text,
         )
-        rows = tuple(
+        rows = [
             VacancyRequirementRow(
                 vacancy_id=vacancy.id,
                 requirement_text=requirement.text,
@@ -562,9 +568,83 @@ class MatchingPipeline:
                 confidence=requirement.confidence,
             )
             for requirement in extraction.requirements
-        )
+        ]
+        for skill, importance, section in self._structured_vacancy_skills(vacancy):
+            normalized_skill = self._skill_normalizer.normalize(skill).canonical
+            matching_row = next(
+                (
+                    row
+                    for row in rows
+                    if row.requirement_type == RequirementType.HARD_SKILL.value
+                    and self._contains_normalized_skill(row.normalized_text, normalized_skill)
+                ),
+                None,
+            )
+            if matching_row is not None:
+                if importance is RequirementImportance.REQUIRED:
+                    matching_row.importance = RequirementImportance.REQUIRED.value
+                    matching_row.weight = max(matching_row.weight, 1.0)
+                continue
+            rows.append(
+                VacancyRequirementRow(
+                    vacancy_id=vacancy.id,
+                    requirement_text=skill,
+                    normalized_text=normalized_skill,
+                    requirement_type=RequirementType.HARD_SKILL.value,
+                    importance=importance.value,
+                    weight=1.0 if importance is RequirementImportance.REQUIRED else 0.6,
+                    is_blocker=False,
+                    alternatives_json=[],
+                    source_fragment=skill,
+                    source_section=section,
+                    extraction_model="structured-vacancy-fields",
+                    extraction_model_version="1",
+                    extraction_schema_version="1",
+                    extraction_run_id=extraction_run_id,
+                    confidence=1.0,
+                )
+            )
         self._session.add_all(rows)
-        return rows
+        return tuple(rows)
+
+    def _structured_vacancy_skills(
+        self,
+        vacancy: VacancyRow,
+    ) -> tuple[tuple[str, RequirementImportance, str], ...]:
+        result: list[tuple[str, RequirementImportance, str]] = []
+        seen: set[str] = set()
+        for skills, importance, section in (
+            (
+                vacancy.required_skills or (),
+                RequirementImportance.REQUIRED,
+                "structured_required_skills",
+            ),
+            (
+                vacancy.preferred_skills or (),
+                RequirementImportance.PREFERRED,
+                "structured_preferred_skills",
+            ),
+        ):
+            for raw_skill in skills:
+                skill = " ".join(str(raw_skill).split())
+                if not skill:
+                    continue
+                key = self._skill_normalizer.normalize(skill).canonical.casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                result.append((skill, importance, section))
+        return tuple(result)
+
+    @staticmethod
+    def _contains_normalized_skill(requirement_text: str, normalized_skill: str) -> bool:
+        return (
+            re.search(
+                rf"(?<!\w){re.escape(normalized_skill.casefold())}(?!\w)",
+                requirement_text.casefold(),
+            )
+            is not None
+        )
 
     async def _extract_evidence(
         self,
@@ -692,6 +772,7 @@ class MatchingPipeline:
             cv_file,
             self._scorer.score(assessments),
             relevance=relevance,
+            assessments=assessments,
         )
 
     def _store_aggregate(
@@ -745,9 +826,15 @@ class MatchingPipeline:
                 "revision": self._reranker.model_revision,
             },
             "claim_pipeline": self._claim_pipeline is not None,
+            "matching_source_version": VACANCY_MATCHING_SOURCE_VERSION,
         }
         explanation: dict[str, object] = {
             "summary": list(score.explanation),
+            "matching_source_version": VACANCY_MATCHING_SOURCE_VERSION,
+            "key_skill_coverage": self._build_key_skill_coverage(
+                application,
+                assessments,
+            ),
         }
         if relevance is not None:
             explanation["hard_gate"] = {
@@ -759,9 +846,12 @@ class MatchingPipeline:
             matched_ids = [
                 a.requirement_id
                 for a in assessments
-                if a.match_level not in {
-                    MatchLevel.MISSING, MatchLevel.BLOCKER,
-                    MatchLevel.INSUFFICIENT_EVIDENCE, MatchLevel.EVALUATION_ERROR,
+                if a.match_level
+                not in {
+                    MatchLevel.MISSING,
+                    MatchLevel.BLOCKER,
+                    MatchLevel.INSUFFICIENT_EVIDENCE,
+                    MatchLevel.EVALUATION_ERROR,
                     MatchLevel.UNRESOLVED_BLOCKER,
                 }
             ]
@@ -813,6 +903,51 @@ class MatchingPipeline:
         aggregate.confidence = score.confidence
         return aggregate
 
+    def _build_key_skill_coverage(
+        self,
+        application: ApplicationRow,
+        assessments: tuple[RequirementAssessment, ...],
+    ) -> list[dict[str, object]]:
+        vacancy = self._session.get(VacancyRow, application.vacancy_id)
+        if vacancy is None:
+            return []
+        assessment_by_id = {item.requirement_id: item for item in assessments}
+        requirement_rows = tuple(
+            self._session.scalars(
+                select(VacancyRequirementRow).where(
+                    VacancyRequirementRow.vacancy_id == vacancy.id,
+                    VacancyRequirementRow.id.in_(tuple(assessment_by_id)),
+                )
+            )
+        )
+        coverage: list[dict[str, object]] = []
+        for skill, importance, _section in self._structured_vacancy_skills(vacancy):
+            normalized_skill = self._skill_normalizer.normalize(skill).canonical
+            requirement = next(
+                (
+                    row
+                    for row in requirement_rows
+                    if self._contains_normalized_skill(row.normalized_text, normalized_skill)
+                ),
+                None,
+            )
+            assessment = assessment_by_id.get(requirement.id) if requirement is not None else None
+            coverage.append(
+                {
+                    "skill": skill,
+                    "importance": importance.value,
+                    "requirement_id": requirement.id if requirement is not None else None,
+                    "requirement_text": (
+                        requirement.requirement_text if requirement is not None else None
+                    ),
+                    "match_level": (
+                        assessment.match_level.value if assessment is not None else "not_evaluated"
+                    ),
+                    "evaluated": assessment is not None,
+                }
+            )
+        return coverage
+
     def _compute_aggregate_scores(
         self,
         application_id: str,
@@ -860,9 +995,9 @@ class MatchingPipeline:
         try:
             response = await self._rag_client.search(
                 query,
+                owner_user_id=application.user_id,
                 collections=("vacancies", "profiles"),
                 top_k=3,
-                user_id=application.user_id,
             )
             return {
                 "request_id": response.request_id,

@@ -46,20 +46,31 @@ async def test_ingest_profile_sends_facts_as_content() -> None:
             user = UserRow(display_name="Alice")
             session.add(user)
             session.flush()
-            session.add_all([
-                ProfileFactRow(
-                    user_id=user.id,
-                    category="skills",
-                    name="python",
-                    value="5 years production",
-                ),
-                ProfileFactRow(
-                    user_id=user.id,
-                    category="experience",
-                    name="seniority",
-                    value="senior",
-                ),
-            ])
+            session.add_all(
+                [
+                    ProfileFactRow(
+                        user_id=user.id,
+                        category="skills",
+                        name="python",
+                        value="5 years production",
+                        is_verified=True,
+                    ),
+                    ProfileFactRow(
+                        user_id=user.id,
+                        category="experience",
+                        name="seniority",
+                        value="senior",
+                        is_verified=True,
+                    ),
+                    ProfileFactRow(
+                        user_id=user.id,
+                        category="skill",
+                        name="unverified-secret-skill",
+                        value="must not reach RAG",
+                        is_verified=False,
+                    ),
+                ]
+            )
             session.commit()
             rag = FakeRagClient(ingested=[])
             service = ProfileRagIngestionService(session, rag)
@@ -68,9 +79,11 @@ async def test_ingest_profile_sends_facts_as_content() -> None:
             assert result.document_id == "rag-doc-1"
             assert len(rag.ingested) == 1
             payload = rag.ingested[0]
+            assert payload["owner_user_id"] == user.id
             assert payload["external_document_id"] == f"profile:{user.id}"
             assert "python" in str(payload["content"])
             assert "5 years production" in str(payload["content"])
+            assert "unverified-secret-skill" not in str(payload["content"])
     finally:
         engine.dispose()
 
@@ -103,6 +116,7 @@ async def test_ingest_cv_sends_skills_and_summary() -> None:
             assert result is not None
             assert len(rag.ingested) == 1
             payload = rag.ingested[0]
+            assert payload["owner_user_id"] == user.id
             assert payload["external_document_id"] == f"cv:{cv.id}"
             assert "Built production APIs" in str(payload["content"])
     finally:

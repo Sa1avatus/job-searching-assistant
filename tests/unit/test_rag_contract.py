@@ -130,13 +130,16 @@ def test_create_rag_client_factory_returns_correct_types() -> None:
 @pytest.mark.asyncio
 async def test_fallback_client_conforms_to_protocol() -> None:
     client = RagFallbackClient()
-    search_result = await client.search("test")
+    search_result = await client.search("test", owner_user_id="owner-1")
     assert isinstance(search_result, RagSearchResponse)
     assert search_result.degraded is True
     assert search_result.results == ()
 
     doc_result = await client.ingest_document(
-        external_document_id="test", content="content", collection="col"
+        owner_user_id="owner-1",
+        external_document_id="test",
+        content="content",
+        collection="col",
     )
     assert isinstance(doc_result, RagDocumentResult)
     assert doc_result.status == "skipped"

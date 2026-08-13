@@ -1,6 +1,41 @@
 # Changelog
 
-## 1.4.0 — 2026-08-13
+All notable changes to Job Searching Assistant are documented in this file. The project follows
+semantic versioning for new releases; older historical version numbers are preserved as released.
+
+## [1.4.1] — 2026-08-13
+
+### Fixed
+
+- Application-material prompts now receive required, preferred, and extracted vacancy skills.
+  Skills shown on vacancy cards are therefore available to the materials workflow even when the
+  source supplied them outside the vacancy description.
+- Generated materials prioritize only vacancy skills that also occur in verified candidate facts.
+  Unconfirmed requirements remain visible as vacancy context but cannot be attributed to the
+  candidate.
+- JSA now sends the RAG service's required `X-Owner-User-Id` header for retrieval and for profile,
+  resume, and vacancy ingestion. User isolation no longer depends on a document metadata filter.
+- Synchronized the FastAPI metadata, package, `VERSION`, and README version after the 1.4 release.
+- Restored the API logger used by optional vacancy RAG ingestion, preventing its success and
+  fallback paths from failing with an undefined name.
+- Matching extraction now uses a versioned source containing structured required and preferred
+  skills as well as the description. Existing explanations are invalidated when those fields change.
+- Every structured key skill is represented by an evaluated requirement and recorded in explicit
+  `key_skill_coverage` explanation data.
+- Forced recalculation keeps the previous score and explanation while the replacement is pending,
+  so a failed refresh does not erase the last usable result.
+- **Direct to reranker** is now a server-side search mode: it ingests owner-scoped profile, CV, and
+  vacancy context, evaluates an expanded candidate pool, waits for detailed matching, and emits
+  the requested number of results in calculated-score order.
+- Enabled RAG now augments local verified-evidence ordering before the external reranker; degraded
+  or unavailable RAG falls back to the existing local hybrid retrieval.
+
+### Tests
+
+- Added regressions for key-skill propagation, alias-aware candidate confirmation, owner-scoped
+  RAG HTTP calls, and owner propagation through all ingestion services.
+
+## [1.4.0] — 2026-08-13
 
 ### Matching v2 claim pipeline (v2.2 → v2.3)
 
@@ -44,7 +79,8 @@
 
 - Added ownership guard module (app/security/ownership.py) with reusable validation helpers.
 - Added get_current_user FastAPI dependency (app/security/dependencies.py).
-- RAG search now passes user_id for server-side document scoping.
+- RAG search began passing `user_id` as a server-side metadata filter. Version 1.4.1 replaced this
+  provisional mechanism with the RAG API's authoritative owner header.
 - 12 cross-user isolation tests covering CV files, facts, applications, matching, and evidence.
 
 ### UI
@@ -73,7 +109,33 @@
 - Full suite: 922 passing.
 
 
-## 1.2.0 (in progress) — 2026-08-01
+## [1.3.0] — 2026-08-12
+
+### Added
+
+- Skill normalization, component scoring, language matching, hard relevance gates, and expanded
+  evaluation fixtures for matching.
+- Optional RAG client, context enrichment, and ingestion for vacancies, profiles, and resumes,
+  with a local fallback when the service is disabled or unavailable.
+- Email event classification, entity extraction, application timeline updates, review queues, and
+  safe EML, MBOX, and ZIP import.
+- Per-vacancy and bulk reranking, automatic reranking controls, model-health display, and persisted
+  dashboard preferences.
+- Canonical field taxonomy and form fingerprinting for changed-form detection.
+
+### Changed
+
+- Browser execution was separated into the browser worker, while API-side orchestration retained
+  the existing review and safety boundaries.
+- Reranking results update persisted scores and vacancy ordering.
+
+### Fixed
+
+- Corrected reranker request sizing, response parsing, health checks, model configuration, and
+  end-to-end score updates.
+- Corrected RAG vacancy ingestion during discovery and repeated reranking behavior.
+
+## [1.2.0] — 2026-08-09
 
 - Reorganized contributor and agent guidance around a concise `AGENTS.md` plus task-specific
   product, database, browser automation, testing, matching, and workflow documentation.

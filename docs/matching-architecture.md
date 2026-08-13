@@ -39,7 +39,9 @@ source-grounded inputs but never choose the final score.
   evidence gaps, duration gaps, and metadata gaps.
 - `app/matching/model_evaluators.py` contains LLM-backed requirement decomposer and evidence
   evaluator implementations using the existing ModelRouter.
-- `app/matching/rag_client.py` provides an optional RAG integration layer.
+- `app/matching/rag_client.py` provides an optional RAG integration layer. Every retrieval and
+  ingestion request carries the application's owning user in `X-Owner-User-Id`; document metadata
+  is not treated as an authorization boundary.
 - `app/matching/scoring.py` applies deterministic weights, blockers, eligibility, and score caps.
   Component scores include hard_skill, preferred_skill, role, seniority, experience, work_format,
   location, domain, and language. Aggregate quality signals include semantic_similarity (weighted
@@ -47,6 +49,9 @@ source-grounded inputs but never choose the final score.
   requirements_match (required match ratio, 0–100%).
 - `app/matching/pipeline.py` coordinates stages, persists the result, and optionally enriches the
   explanation with RAG context from related vacancies and profiles.
+- `app/matching/vacancy_source.py` builds the versioned extraction source from the vacancy title,
+  description, and structured required/preferred skills. Changing a structured skill therefore
+  invalidates the matching job and extraction version even when the description is unchanged.
 - `app/matching/jobs.py` and `backfill.py` provide durable, idempotent execution.
 
 ## Claim-based matching pipeline
@@ -104,6 +109,9 @@ creating duplicates.
 - The final score includes separate required_score, preferred_score, bonus_score, confidence,
   hard_blockers, and hard_blockers_unresolved.
 - RAG context enrichment is informational only — it never changes the deterministic score.
+- When RAG is enabled, owner-scoped profile retrieval may refine the ordering of locally verified
+  evidence before the configured reranker runs. Missing or degraded RAG preserves the local hybrid
+  ordering; RAG text never becomes candidate evidence by itself.
 - Confidence is penalized for each evaluation_error or unknown claim (up to -0.30).
 
 ## Failure behavior

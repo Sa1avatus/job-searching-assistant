@@ -704,6 +704,7 @@ class DiscoverVacanciesStreamRequest(BaseModel):
     limit: int = Field(default=15, ge=1, le=50)
     search_text: str | None = Field(default=None, max_length=300)
     cv_file_id: str | None = None
+    direct_rerank: bool = False
 
 
 class CompanyBlacklistRequest(BaseModel):

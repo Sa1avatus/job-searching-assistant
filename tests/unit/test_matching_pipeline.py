@@ -20,6 +20,7 @@ from app.matching.extraction import (
 from app.matching.pipeline import MatchingPipeline
 from app.matching.scoring import DeterministicMatchScorer
 from app.matching.semantic import FakeReranker, RetrievalCandidate
+from app.matching.vacancy_source import build_vacancy_matching_source
 from app.storage.database import Base
 from app.storage.tables import (
     ApplicationMatchResultRow,
@@ -271,6 +272,46 @@ def test_pipeline_reuses_unchanged_versioned_extractions() -> None:
             assert len(session.scalars(select(VacancyRequirementRow)).all()) == 1
             assert len(session.scalars(select(CandidateEvidenceRow)).all()) == 1
             assert len(session.scalars(select(RequirementMatchRow)).all()) == 1
+
+    asyncio.run(run())
+
+
+def test_pipeline_covers_every_structured_key_skill_in_explanation() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            application = _application(session)
+            vacancy = session.get(VacancyRow, application.vacancy_id)
+            assert vacancy is not None
+            vacancy.required_skills = ["Python", "PostgreSQL", "Redis"]
+            vacancy.preferred_skills = ["Docker"]
+            session.commit()
+            pipeline = MatchingPipeline(
+                session,
+                _vacancy_extractor(application.vacancy_id),
+                _candidate_extraction(application.selected_cv_file_id or ""),
+                _SessionRetriever(session),
+                FakeReranker(),
+                DeterministicMatchScorer(),
+            )
+
+            aggregate = await pipeline.match(
+                application.id,
+                vacancy_source_text=build_vacancy_matching_source(vacancy),
+                cv_source_text="Built production Python services",
+            )
+
+            requirement_rows = session.scalars(select(VacancyRequirementRow)).all()
+            coverage = aggregate.explanation_json["key_skill_coverage"]
+            assert len(requirement_rows) == 4
+            assert [item["skill"] for item in coverage] == [
+                "Python",
+                "PostgreSQL",
+                "Redis",
+                "Docker",
+            ]
+            assert all(item["evaluated"] for item in coverage)
+            assert all(item["match_level"] != "not_evaluated" for item in coverage)
 
     asyncio.run(run())
 

@@ -33,6 +33,7 @@ class ProfileRagIngestionService:
         }
         try:
             result = await self._rag.ingest_document(
+                owner_user_id=user_id,
                 external_document_id=f"profile:{user_id}",
                 content=content,
                 collection=collection,
@@ -86,6 +87,7 @@ class ProfileRagIngestionService:
         }
         try:
             result = await self._rag.ingest_document(
+                owner_user_id=cv.user_id,
                 external_document_id=f"cv:{cv.id}",
                 content=content,
                 collection=collection,
@@ -112,7 +114,10 @@ class ProfileRagIngestionService:
     def _build_content(self, user_id: str) -> str:
         facts = list(
             self._session.scalars(
-                select(ProfileFactRow).where(ProfileFactRow.user_id == user_id)
+                select(ProfileFactRow).where(
+                    ProfileFactRow.user_id == user_id,
+                    ProfileFactRow.is_verified.is_(True),
+                )
             ).all()
         )
         parts: list[str] = []

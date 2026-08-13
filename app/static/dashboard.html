@@ -3319,6 +3319,11 @@
                 const meter = card.querySelector('.match-meter');
                 if (meter) meter.replaceWith(createMatchMeter(newScore));
                 card.dataset.matchScore = String(newScore);
+                if (!details.hidden) {
+                  details.hidden = true;
+                  detailsButton.textContent = currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит';
+                  await loadMatchDetails(item.application_id, details, detailsButton);
+                }
                 recalcBtn.textContent = '\u2713 ' + (currentLanguage === 'en' ? 'Done' : 'Готово');
                 setTimeout(() => { recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate match' : 'Рассчитать подробно'; recalcBtn.disabled = false; }, 2000);
                 return;
@@ -3398,10 +3403,56 @@
         if (payload.fallback_reason) {
           container.append(element('div', `Fallback: ${payload.fallback_reason}`, 'task-state'));
         }
+        if (payload.explanation?.matching_source_version !== '2') {
+          const stale = element(
+            'div',
+            currentLanguage === 'en'
+              ? 'This explanation was calculated from an older vacancy source.'
+              : 'Это объяснение рассчитано по старой версии данных вакансии.',
+            'task-state'
+          );
+          const refreshStale = element(
+            'button',
+            currentLanguage === 'en' ? 'Refresh explanation' : 'Обновить объяснение'
+          );
+          refreshStale.type = 'button';
+          refreshStale.addEventListener('click', () => {
+            calculateDetailedMatch(applicationId, container, button, true).catch(error => {
+              container.replaceChildren(element('div', error.message, 'error'));
+            });
+          });
+          container.append(stale, refreshStale);
+        }
+        const keySkillCoverage = Array.isArray(payload.explanation?.key_skill_coverage)
+          ? payload.explanation.key_skill_coverage
+          : [];
+        appendMatchDetailList(
+          container,
+          currentLanguage === 'en' ? 'Key skill coverage' : 'Покрытие ключевых навыков',
+          keySkillCoverage,
+          item => {
+            const labels = currentLanguage === 'en'
+              ? {
+                  entailed: 'confirmed', partial: 'partially confirmed',
+                  related_but_insufficient: 'related evidence is insufficient',
+                  insufficient_evidence: 'insufficient evidence', evaluation_error: 'evaluation error',
+                  missing: 'not confirmed', not_evaluated: 'not evaluated'
+                }
+              : {
+                  entailed: 'подтверждён', partial: 'подтверждён частично',
+                  related_but_insufficient: 'связанных данных недостаточно',
+                  insufficient_evidence: 'недостаточно доказательств', evaluation_error: 'ошибка оценки',
+                  missing: 'не подтверждён', not_evaluated: 'не оценён'
+                };
+            return `${item.skill}: ${labels[item.match_level] || item.match_level}`;
+          }
+        );
         // Categorize requirements by entailment relation
         const entailed = payload.requirements.filter(r => r.entailment_relation === 'entailed');
         const partial = payload.requirements.filter(r => r.entailment_relation === 'partial');
         const relatedInsufficient = payload.requirements.filter(r => r.entailment_relation === 'related_but_insufficient');
+        const insufficientEvidence = payload.requirements.filter(r => r.entailment_relation === 'insufficient_evidence');
+        const evaluationErrors = payload.requirements.filter(r => r.entailment_relation === 'evaluation_error' || r.match_level === 'evaluation_error');
         const blockers = payload.requirements.filter(r => r.match_level === 'blocker' || r.is_hard_blocker);
         const missing = payload.requirements.filter(r => ['missing', 'theoretical_only'].includes(r.match_level) && !r.is_hard_blocker);
         appendMatchDetailList(
@@ -3439,6 +3490,31 @@
         );
         appendMatchDetailList(
           container,
+          currentLanguage === 'en' ? 'Insufficient evidence' : 'Недостаточно доказательств',
+          insufficientEvidence,
+          requirement => requirement.requirement_text
+        );
+        appendMatchDetailList(
+          container,
+          currentLanguage === 'en' ? 'Evaluation errors' : 'Ошибки оценки',
+          evaluationErrors,
+          requirement => `${requirement.requirement_text}: ${requirement.explanation?.split('\\n')[0] || ''}`
+        );
+        if (evaluationErrors.length) {
+          const retryErrors = element(
+            'button',
+            currentLanguage === 'en' ? 'Retry failed evaluations' : 'Повторить ошибочные оценки'
+          );
+          retryErrors.type = 'button';
+          retryErrors.addEventListener('click', () => {
+            calculateDetailedMatch(applicationId, container, button, true).catch(error => {
+              container.replaceChildren(element('div', error.message, 'error'));
+            });
+          });
+          container.append(retryErrors);
+        }
+        appendMatchDetailList(
+          container,
           '📊 Decomposition',
           payload.requirements.filter(r => r.retrieval_model_versions && r.retrieval_model_versions.pipeline === 'claim-based'),
           requirement => {
@@ -3452,9 +3528,9 @@
       }
     }
 
-    async function calculateDetailedMatch(applicationId, container, button) {
+    async function calculateDetailedMatch(applicationId, container, button, force = false) {
       container.replaceChildren(element('div', 'Запускаем подробный расчёт…', 'task-state'));
-      await asJson(await fetch(`/v1/applications/${applicationId}/recalculate-match`, {
+      await asJson(await fetch(`/v1/applications/${applicationId}/recalculate-match${force ? '?force=true' : ''}`, {
         method: 'POST', headers: headers(false)
       }));
       const deadline = Date.now() + 180000;
@@ -3757,7 +3833,8 @@
             locations,
             limit: 15,
             search_text: searchText,
-            cv_file_id: cvFileId
+            cv_file_id: cvFileId,
+            direct_rerank: Boolean(document.querySelector('#direct-rerank')?.checked)
           })
         });
         if (!response.ok) throw new Error(await response.text());
@@ -3770,8 +3847,8 @@
             const item = {
               ...event.item,
               source: event.source,
-              matching_status: 'processing',
-              materials_status: 'processing'
+              matching_status: event.item.matching_status || 'processing',
+              materials_status: event.item.materials_status || 'processing'
             };
             if (['rejected', 'skipped', 'submitted', 'interview'].includes(
               item.application_status
@@ -3839,11 +3916,6 @@
           return;
         }
         showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
-        // Auto-rerank if checkbox is checked
-        if (document.querySelector('#direct-rerank')?.checked && outcomes.length > 0) {
-          await new Promise(r => setTimeout(r, 500));
-          document.querySelector('#rerank-all').click();
-        }
       } catch (error) { showError(error); }
     });
     async function loadRerankerModelInfo() {

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.matching.opensearch_index import SearchHit
+from app.matching.rag_client import RagClient
 from app.matching.semantic import EmbeddingClient, RetrievalCandidate
 from app.observability.metrics import metrics
 from app.storage.tables import CandidateEvidenceRow
@@ -249,6 +250,91 @@ class HybridRetriever:
         return tuple(
             sorted(
                 candidates,
+                key=lambda candidate: (candidate.hybrid_score, candidate.evidence_id),
+                reverse=True,
+            )[: self._retrieval_limit]
+        )
+
+
+class RagAugmentedRetriever:
+    """Use owner-scoped external RAG scores to refine local evidence retrieval."""
+
+    def __init__(
+        self,
+        local_retriever: HybridRetriever,
+        rag_client: RagClient,
+        *,
+        retrieval_limit: int = 20,
+    ) -> None:
+        self._local = local_retriever
+        self._rag = rag_client
+        self._retrieval_limit = retrieval_limit
+
+    async def retrieve(
+        self,
+        requirement_text: str,
+        *,
+        user_id: str,
+        cv_file_id: str,
+    ) -> tuple[RetrievalCandidate, ...]:
+        local_candidates = await self._local.retrieve(
+            requirement_text,
+            user_id=user_id,
+            cv_file_id=cv_file_id,
+        )
+        if not local_candidates:
+            return ()
+        try:
+            response = await self._rag.search(
+                requirement_text,
+                owner_user_id=user_id,
+                collections=("profiles",),
+                top_k=self._retrieval_limit,
+            )
+        except Exception as error:
+            metrics.increment("rag_retrieval_fallback_total")
+            logger.warning(
+                "rag_evidence_retrieval_failed",
+                error_type=type(error).__name__,
+                user_id=user_id,
+                cv_file_id=cv_file_id,
+            )
+            return local_candidates
+        if response.degraded or not response.results:
+            metrics.increment("rag_retrieval_fallback_total")
+            return local_candidates
+
+        augmented = []
+        for candidate in local_candidates:
+            evidence_tokens = _tokens(candidate.evidence_text)
+            rag_support = max(
+                (
+                    result.score
+                    * (
+                        len(evidence_tokens & _tokens(result.content)) / len(evidence_tokens)
+                        if evidence_tokens
+                        else 0.0
+                    )
+                    for result in response.results
+                ),
+                default=0.0,
+            )
+            augmented.append(
+                RetrievalCandidate(
+                    evidence_id=candidate.evidence_id,
+                    evidence_text=candidate.evidence_text,
+                    lexical_score=candidate.lexical_score,
+                    dense_score=candidate.dense_score,
+                    hybrid_score=min(
+                        1.0,
+                        0.7 * candidate.hybrid_score + 0.3 * rag_support,
+                    ),
+                )
+            )
+        metrics.increment("rag_retrieval_augmented_total")
+        return tuple(
+            sorted(
+                augmented,
                 key=lambda candidate: (candidate.hybrid_score, candidate.evidence_id),
                 reverse=True,
             )[: self._retrieval_limit]

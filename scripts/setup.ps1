@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$EnableDetailedMatching
+    [switch]$EnableDetailedMatching,
+    [switch]$ConfigureOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -78,6 +79,26 @@ if (-not $keyLine -or $keyLine -eq "APP_BROWSER_STATE_ENCRYPTION_KEY=") {
     Set-EnvValue -Name "APP_BROWSER_STATE_ENCRYPTION_KEY" -Value $fernetKey
 }
 
+$envLines = [System.IO.File]::ReadAllLines($envPath)
+$apiKeyLine = $envLines | Where-Object { $_ -match "^APP_API_KEY=" } | Select-Object -First 1
+if (-not $apiKeyLine -or $apiKeyLine -eq "APP_API_KEY=") {
+    $randomBytes = [byte[]]::new(32)
+    $randomGenerator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $randomGenerator.GetBytes($randomBytes)
+    } finally {
+        $randomGenerator.Dispose()
+    }
+    $apiKey = [Convert]::ToBase64String($randomBytes).Replace("+", "-").Replace("/", "_")
+    Set-EnvValue -Name "APP_API_KEY" -Value $apiKey
+}
+Set-EnvValue -Name "APP_ENVIRONMENT" -Value "production"
+
+if ($ConfigureOnly) {
+    Write-Host "LAN API authentication is configured in the local .env file."
+    return
+}
+
 if ($EnableDetailedMatching) {
     Set-EnvValue -Name "APP_MATCHING_V2_ENABLED" -Value "true"
     Write-Warning (
@@ -103,3 +124,5 @@ Write-Host ""
 $projectVersion = (Get-Content -LiteralPath (Join-Path $projectRoot "VERSION") -Raw).Trim()
 Write-Host "Job Searching Assistant $projectVersion is ready."
 Write-Host "Open: http://127.0.0.1:8000/dashboard"
+Write-Host "LAN:  http://192.168.1.93:8000/dashboard"
+Write-Host "The dashboard API key is stored locally as APP_API_KEY in .env."
