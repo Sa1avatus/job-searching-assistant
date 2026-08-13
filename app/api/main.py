@@ -150,6 +150,7 @@ from app.llm.router import ModelProvider, ModelRouter, NoModelAvailableError
 from app.matching.jobs import MatchingJobNotReadyError, MatchingJobService
 from app.observability.logging import configure_logging
 from app.observability.metrics import metrics
+from app.prompts.registry import PromptRegistry
 from app.security.autofill_decryption import decrypt_autofill_value
 from app.security.autofill_encryption import InvalidAutofillValueEncryption
 from app.services.application_email_sync import (
@@ -222,6 +223,7 @@ from app.storage.tables import (
     CvFileRow,
     EmailIntegrationRow,
     LlmPreferenceRow,
+    ProfileFactRow,
     RequirementMatchRow,
     SiteDefinitionRow,
     SiteFieldMappingRow,
