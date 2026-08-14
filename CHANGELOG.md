@@ -5,8 +5,81 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-08-14
+
+### Quality
+
+- Restored all green quality gates: Ruff check, Ruff format, mypy, and full pytest (982 passing).
+- Added explicit tuple type annotation in `task_repository.py` to resolve mypy assignment error.
+- Dashboard matching polling now treats `failed` as a terminal status alongside `scored` and
+  `degraded`, matching the test expectation.
+
+### Security
+
+- Added API-level cross-user isolation tests (`test_cross_user_isolation.py`) verifying that
+  User A receives 404 when accessing User B's CV files, profile facts, blacklist entries,
+  and application statistics. 8 new tests, all passing.
+- Combined with existing `test_user_isolation.py` (12 service-level tests), the tenant isolation
+  path is now covered at both the service and HTTP layers.
+
+### Testing
+
+- Added RAG E2E smoke test (`test_rag_e2e.py`) exercising owner-scoped ingestion, search,
+  isolation, and idempotent upsert across `profiles`, `resumes`, and `vacancies` collections.
+  Requires `--rag-e2e` flag and a running RAG service.
+- Added RAG fallback client unit tests (`test_rag_fallback.py`) verifying empty results,
+  unavailable health, and graceful delete/ingest handling.
+
+### Verified
+
+- RAG collections `profiles`, `resumes`, `vacancies` confirmed present in the RAG platform with
+  correct API key permissions (`documents:write`, `documents:read`, `retrieval:search`).
+- Resume RAG sync status already displayed in dashboard with retry capability.
+- Profile facts RAG sync triggers on create, update, import, and delete.
+
 ### Changed
 
+- Added manual batch import of application correspondence from multiple EML files, mbox mailbox
+  exports, and ZIP archives. Attached emails are extracted and classified as separate messages;
+  imports use the existing deduplication, vacancy matching, and status-update pipeline and retain no
+  uploaded source files. Uploads are bounded to 100 selected files, 50 MB, and 500 parsed messages.
+- Manual email import now reads HTML-only message bodies, recognizes additional common rejection
+  wording, and uses normalized sender display names as conservative company hints. Import summaries
+  report unknown and unmatched messages separately from processing errors.
+- Matching dispatcher now honors an owner's OpenAI-compatible/local model preference instead of
+  incorrectly constructing a Gemini provider with the local model credential.
+- All matching LLM stages now honor `APP_MATCHING_MODEL_TIMEOUT_SECONDS`; the prior hard-coded
+  60-second request limit caused slower local models to fail even when the configured timeout was
+  higher.
+- The matching runtime's OpenAI-compatible HTTP client now uses the same configured timeout. Its
+  separate 60-second read timeout previously terminated local inference before the matching-stage
+  timeout could take effect.
+- OpenAI-compatible matching requests now send the actual response JSON Schema instead of generic
+  JSON mode. Ollama requests also disable reasoning output, preventing local Qwen models from
+  returning valid JSON with schema-incompatible free-form enum and confidence values.
+- Ollama structured-output schemas now inline local `$ref` definitions and omit validation-only
+  constraints unsupported by its grammar parser. The original complete schema remains in the
+  prompt and Pydantic still validates every returned matching payload.
+- Email synchronization now recognizes explicit qualification-mismatch rejection wording such as
+  `regret to inform you` and `skillset does not match our qualifications`.
+- Email-to-application matching now prefers a unique vacancy-title match over a broader company
+  match, so several applications to one employer no longer make a clearly titled email ambiguous.
+- IMAP synchronization checks the bounded set of recent messages whether read or unread; message
+  fingerprints keep repeated synchronization idempotent. Previously, opening a message before sync
+  could make the application miss it permanently.
+- Previously stored, unmatched `unknown` email events are reclassified and relinked on a later sync
+  when improved rules can identify their outcome and application.
+- Employer rejections now use the distinct terminal status `employer_rejected` (**Отказ
+  работодателя**); `rejected` remains the candidate's own **Отклонена мной** decision. Existing
+  email-applied rejections are migrated to the employer status.
+- Search-result vacancy cards now expose **Почему подходит** / **Why it matches** from their
+  additional-actions menu and expand the same detailed matching explanation used by **All
+  vacancies**.
+- Resume search keywords now accept up to 2,000 characters, matching the experience-summary limit;
+  both fields use equally sized multiline editors with browser-side length limits.
+- Vacancy-discovery API requests now accept the same 2,000-character search-keyword value. Long
+  comma/newline-separated lists are converted into at most eight site-friendly queries of at most
+  200 characters instead of sending one oversized external search query.
 - Defined one canonical RAG collection contract: reviewed facts use `profiles`, analysed resumes
   use `resumes`, and vacancies use `vacancies`.
 - Resume ingestion no longer writes CV-derived content into the profile-facts collection.
@@ -44,6 +117,11 @@ semantic versioning for new releases; older historical version numbers are prese
 - Confirmed resumes now schedule idempotent RAG synchronization through the durable dispatcher.
   Synchronization state, attempt count, completion time, and sanitized failure code are visible per
   resume; manual retries receive a fresh bounded attempt budget without duplicating active work.
+- Restored the complete static quality baseline: all Python sources are Ruff-formatted, Ruff lint
+  and mypy pass without weakening their configuration, and stale matching-admin operations were
+  reconciled with the current backfill service.
+- Added the missing browser-worker submission-probe contract used by application status sync and
+  strict validation for browser-worker vacancy payloads before persistence.
 
 ### Tests
 

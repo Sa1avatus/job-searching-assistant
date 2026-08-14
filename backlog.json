@@ -67,7 +67,7 @@
         "Official API fixture passes",
         "Read-only live smoke passes"
       ],
-      "status": "in_progress"
+      "status": "completed"
     },
     {
       "id": "LI-001",
@@ -395,7 +395,7 @@
         "Artifacts and background jobs enforce ownership",
         "Audit results update SEC-001 status"
       ],
-      "status": "planned"
+      "status": "completed"
     },
     {
       "id": "QUALITY-BASELINE-001",
@@ -412,7 +412,7 @@
         "Mypy passes",
         "Full pytest remains green"
       ],
-      "status": "in_progress"
+      "status": "completed"
     },
     {
       "id": "MATCH-EVAL-001",
@@ -445,7 +445,7 @@
         "Cross-owner reads are rejected",
         "No private document content is written to logs"
       ],
-      "status": "in_progress"
+      "status": "completed"
     },
     {
       "id": "RAG-RESUME-SYNC-001",
@@ -531,7 +531,39 @@
         "Cross-owner isolation is verified",
         "Synthetic documents are cleaned up"
       ],
-      "status": "planned"
+      "status": "completed"
+    },
+    {
+      "id": "RAG-SYNC-STATUS-001",
+      "title": "Show RAG synchronization status in the dashboard",
+      "description": "Display per-resume RAG sync status (not_scheduled, scheduled, running, completed, failed) with failure code, attempt count, last sync time, and manual retry button.",
+      "category": "rag",
+      "priority": 0,
+      "expected_impact": "Operators can see why a resume is missing from RAG and retry without re-uploading.",
+      "complexity": "small",
+      "dependencies": ["RAG-RESUME-SYNC-001"],
+      "acceptance_criteria": [
+        "Dashboard shows RAG sync status for each resume",
+        "Failure code is displayed without exposing document content",
+        "Retry button triggers a new sync task"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "BACKLOG-CLEANUP-001",
+      "title": "Reconcile backlog with actual implementation state",
+      "description": "Close completed items, update statuses, add missing items from the stabilization plan, and align version with changelog.",
+      "category": "quality",
+      "priority": 1,
+      "expected_impact": "Backlog reflects actual project state instead of stale assumptions.",
+      "complexity": "small",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "All completed items are marked completed",
+        "New items from the plan are added",
+        "Version number reflects current release"
+      ],
+      "status": "completed"
     }
   ]
 }

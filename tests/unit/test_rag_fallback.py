@@ -27,9 +27,7 @@ def test_fallback_health_reports_unavailable():
 def test_fallback_delete_returns_false():
     client = RagFallbackClient()
     deleted = asyncio.run(
-        client.delete_document(
-            owner_user_id="x", external_document_id="y", collection="z"
-        )
+        client.delete_document(owner_user_id="x", external_document_id="y", collection="z")
     )
     assert deleted is False
 

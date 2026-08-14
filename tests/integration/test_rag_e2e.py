@@ -9,13 +9,13 @@ Skipped when RAG is not configured or unavailable.
 
 from __future__ import annotations
 
-import hashlib
+import contextlib
 import uuid
 
 import httpx
 import pytest
 
-from app.matching.rag_client import RagHttpClient, RagFallbackClient, create_rag_client
+from app.matching.rag_client import RagHttpClient
 from app.matching.rag_collections import PROFILE_COLLECTION, RESUME_COLLECTION, VACANCY_COLLECTION
 
 pytestmark = pytest.mark.skipif(
@@ -68,14 +68,12 @@ def cleanup_docs(rag_client):
     yield docs
 
     for owner, external_id, collection in docs:
-        try:
+        with contextlib.suppress(Exception):
             rag_client.delete_document(
                 owner_user_id=owner,
                 external_document_id=external_id,
                 collection=collection,
             )
-        except Exception:
-            pass  # best-effort cleanup
 
 
 # ── Ingestion round-trip ───────────────────────────────────────
