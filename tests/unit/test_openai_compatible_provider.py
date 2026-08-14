@@ -8,6 +8,7 @@ import pytest
 from app.llm.providers.openai_compatible import (
     OpenAICompatibleProvider,
     OpenAICompatibleResponseError,
+    simplify_json_schema_for_ollama,
 )
 from app.llm.router import ModelRequest, ModelTaskClass
 
@@ -32,7 +33,18 @@ async def test_openai_compatible_provider_sends_chat_completion_request() -> Non
             "role": "user",
             "content": "Return a result",
         }
-        assert payload["response_format"] == {"type": "json_object"}
+        assert payload["response_format"] == {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "structured_response",
+                "strict": True,
+                "schema": {"type": "object"},
+            },
+        }
+        assert (
+            'Follow this JSON Schema exactly: {"type":"object"}'
+            in payload["messages"][0]["content"]
+        )
         return httpx.Response(
             200,
             json={"choices": [{"message": {"content": '{"result": "ok"}'}}]},
@@ -45,7 +57,86 @@ async def test_openai_compatible_provider_sends_chat_completion_request() -> Non
             model=" custom-model ",
             base_url="https://models.example.test/v1/",
         )
-        assert await provider.complete(_request()) == {"result": "ok"}
+        request = _request()
+        request = ModelRequest(
+            task_name=request.task_name,
+            task_class=request.task_class,
+            prompt=request.prompt,
+            max_cost_usd=request.max_cost_usd,
+            response_schema={"type": "object"},
+        )
+        assert await provider.complete(request) == {"result": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_ollama_compatible_provider_disables_reasoning() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        # Ollama models use native /api/chat with think=false
+        assert payload["think"] is False
+        assert payload["options"]["num_predict"] == 16384
+        return httpx.Response(
+            200,
+            json={"message": {"content": '{"result": "ok"}'}, "done_reason": "stop"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="ollama",
+            model="qwen3:8b",
+            base_url="http://host.docker.internal:11434/v1",
+        )
+        request = _request()
+        request = ModelRequest(
+            task_name=request.task_name,
+            task_class=request.task_class,
+            prompt=request.prompt,
+            max_cost_usd=request.max_cost_usd,
+            response_schema={"type": "object"},
+        )
+        assert await provider.complete(request) == {"result": "ok"}
+
+
+def test_ollama_schema_simplification_inlines_definitions_and_drops_constraints() -> None:
+    schema = {
+        "$defs": {
+            "Item": {
+                "title": "Item",
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "minLength": 1, "maxLength": 100},
+                },
+                "required": ["name"],
+                "additionalProperties": False,
+            }
+        },
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {"$ref": "#/$defs/Item"},
+                "maxItems": 200,
+            }
+        },
+        "required": ["items"],
+    }
+
+    assert simplify_json_schema_for_ollama(schema) == {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["items"],
+    }
 
 
 def test_openai_compatible_provider_support_and_cost() -> None:
@@ -97,9 +188,7 @@ def test_openai_compatible_provider_rejects_invalid_configuration(
 async def test_openai_compatible_provider_rejects_invalid_responses(
     response: httpx.Response,
 ) -> None:
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda _: response)
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: response)) as client:
         provider = OpenAICompatibleProvider(
             client,
             api_key="unique-secret-sentinel",
