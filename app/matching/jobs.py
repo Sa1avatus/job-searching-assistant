@@ -11,7 +11,9 @@ from app.storage.tables import (
     ApplicationMatchResultRow,
     ApplicationRow,
     CvFileRow,
+    RequirementMatchRow,
     TaskTransitionRow,
+    VacancyRequirementRow,
     VacancyRow,
     WorkflowTaskRow,
 )
@@ -86,12 +88,15 @@ class MatchingJobService:
                 existing.priority = priority
             if force:
                 existing.refresh_requested = True
+                # Clear cached extraction so pipeline re-extracts requirements
+                self._clear_extraction_cache(vacancy.id)
             self._session.commit()
             return existing
 
         # A forced rerun replaces only a terminal task. Active work is coalesced above so a
         # second click cannot delete a claim that a worker is currently executing.
         if force and existing is not None:
+            self._clear_extraction_cache(vacancy.id)
             self._session.execute(
                 delete(TaskTransitionRow).where(TaskTransitionRow.task_id == existing.id)
             )
@@ -132,3 +137,24 @@ class MatchingJobService:
             aggregate.fallback_reason = None
             self._session.commit()
         return task
+
+    def _clear_extraction_cache(self, vacancy_id: str) -> None:
+        """Clear cached extraction results so pipeline re-extracts from scratch."""
+        self._session.execute(
+            delete(VacancyRequirementRow).where(
+                VacancyRequirementRow.vacancy_id == vacancy_id
+            )
+        )
+        self._session.execute(
+            delete(RequirementMatchRow).where(
+                RequirementMatchRow.application_id.in_(
+                    select(ApplicationMatchResultRow.application_id).where(
+                        ApplicationMatchResultRow.application_id.in_(
+                            select(ApplicationRow.id).where(
+                                ApplicationRow.vacancy_id == vacancy_id
+                            )
+                        )
+                    )
+                )
+            )
+        )

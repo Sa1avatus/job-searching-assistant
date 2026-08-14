@@ -3406,7 +3406,7 @@
       const moreMenu = element('div', undefined, 'more-actions__menu');
       moreMenu.hidden = true;
       moreMenu.setAttribute('role', 'menu');
-      const recalcBtn = element('button', currentLanguage === 'en' ? 'Recalculate match' : 'Рассчитать подробно');
+      const recalcBtn = element('button', currentLanguage === 'en' ? 'Recalculate' : 'Пересчитать');
       recalcBtn.type = 'button';
       recalcBtn.addEventListener('click', async () => {
         moreMenu.hidden = true;
@@ -3433,11 +3433,11 @@
           }
           recalcBtn.textContent = '\u2713 ' + (currentLanguage === 'en' ? 'Done' : 'Готово');
           setTimeout(() => {
-            recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate match' : 'Рассчитать подробно';
+            recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate' : 'Пересчитать';
             recalcBtn.disabled = false;
           }, 2000);
         } catch (e) {
-          recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate match' : 'Рассчитать подробно'; recalcBtn.disabled = false;
+          recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate' : 'Пересчитать'; recalcBtn.disabled = false;
           showError(e);
         }
       });
@@ -3505,21 +3505,6 @@
           'task-state'
         );
         container.replaceChildren(heading, summary);
-        // Always-visible recalculate button
-        const recalcRow = element('div', undefined, 'task-state');
-        const recalcBtn = element(
-          'button',
-          currentLanguage === 'en' ? 'Recalculate' : 'Пересчитать'
-        );
-        recalcBtn.type = 'button';
-        recalcBtn.style.marginTop = '6px';
-        recalcBtn.addEventListener('click', () => {
-          calculateDetailedMatch(applicationId, container, button, true).catch(error => {
-            container.replaceChildren(element('div', error.message, 'error'));
-          });
-        });
-        recalcRow.append(recalcBtn);
-        container.append(recalcRow);
         if (payload.fallback_reason) {
           container.append(element('div', `Fallback: ${payload.fallback_reason}`, 'task-state'));
         }
