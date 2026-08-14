@@ -3675,18 +3675,28 @@
     }
 
     async function calculateDetailedMatch(applicationId, container, button, force = false) {
+      const wasHidden = container.hidden;
+      container.hidden = false;
       container.replaceChildren(element('div', currentLanguage === 'en'
         ? 'Starting detailed matching…'
         : 'Запускаем подробный расчёт…', 'task-state'));
-      const task = await asJson(await fetch(`/v1/applications/${applicationId}/recalculate-match${force ? '?force=true' : ''}`, {
-        method: 'POST', headers: headers(false)
-      }));
-      await waitForMatchingTask(task, current => {
-        container.replaceChildren(element('div', matchingTaskStatusText(current), 'task-state'));
-      });
-      container.hidden = true;
-      button.textContent = currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит';
-      await loadMatchDetails(applicationId, container, button);
+      button.disabled = true;
+      try {
+        const task = await asJson(await fetch(`/v1/applications/${applicationId}/recalculate-match${force ? '?force=true' : ''}`, {
+          method: 'POST', headers: headers(false)
+        }));
+        await waitForMatchingTask(task, current => {
+          container.replaceChildren(element('div', matchingTaskStatusText(current), 'task-state'));
+        });
+        container.hidden = true;
+        button.textContent = currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит';
+        await loadMatchDetails(applicationId, container, button);
+      } catch (error) {
+        container.replaceChildren(element('div', error.message, 'error'));
+        button.textContent = currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит';
+      } finally {
+        button.disabled = false;
+      }
     }
 
     function appendMatchDetailList(container, title, items, textForItem) {

@@ -178,7 +178,7 @@ class OpenAICompatibleProvider(ModelProvider):
             "options": {
                 "temperature": 0,
                 "num_predict": 16384,
-                "num_ctx": 4096,
+                "num_ctx": 8192,
             },
         }
         if request.response_schema is not None:
