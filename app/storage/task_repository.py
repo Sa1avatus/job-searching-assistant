@@ -29,6 +29,7 @@ class SqlTaskRepository:
         application_id: str | None = None,
         *,
         queue_name: str = "dispatcher",
+        priority: int = 0,
         payload: dict[str, object] | None = None,
     ) -> WorkflowTask:
         row = self._session.scalar(
@@ -39,6 +40,7 @@ class SqlTaskRepository:
                 idempotency_key=idempotency_key,
                 application_id=application_id,
                 queue_name=queue_name,
+                priority=priority,
                 task_payload=payload or {},
             )
             self._session.add(row)
@@ -119,6 +121,77 @@ class SqlTaskRepository:
             row.task_payload,
         )
 
+    def touch_claim(self, task_id: str, *, now: datetime | None = None) -> bool:
+        row = self._session.get(WorkflowTaskRow, task_id)
+        if row is None or row.state != TaskState.RUNNING.value:
+            return False
+        row.updated_at = now or datetime.now(UTC)
+        self._session.commit()
+        return True
+
+    def recover_stale_running_tasks(
+        self,
+        *,
+        cutoff: datetime,
+        recovery_worker: str,
+        queue_name: str,
+        max_attempts: int,
+        now: datetime | None = None,
+    ) -> int:
+        recovery_time = now or datetime.now(UTC)
+        rows = self._session.scalars(
+            select(WorkflowTaskRow).where(
+                WorkflowTaskRow.state == TaskState.RUNNING.value,
+                WorkflowTaskRow.updated_at < cutoff,
+                WorkflowTaskRow.queue_name == queue_name,
+            )
+        ).all()
+        for row in rows:
+            task = self._to_domain(row)
+            evidence = (f"stale_before:{cutoff.isoformat()}",)
+            transitions: tuple[TaskTransition, ...]
+            if task.attempt_number >= max_attempts:
+                transitions = (
+                    task.transition(
+                        TaskState.FAILED,
+                        reason="stale task exhausted bounded retry attempts",
+                        worker=recovery_worker,
+                        evidence=evidence,
+                    ),
+                )
+            else:
+                transitions = (
+                    task.transition(
+                        TaskState.INTERRUPTED,
+                        reason="stale running task recovered after worker interruption",
+                        worker=recovery_worker,
+                        evidence=evidence,
+                    ),
+                    task.transition(
+                        TaskState.SCHEDULED,
+                        reason="recovered task returned to its durable queue",
+                        worker=recovery_worker,
+                        evidence=evidence,
+                    ),
+                )
+                row.scheduled_for = recovery_time
+            row.state = task.state.value
+            row.updated_at = recovery_time
+            for transition in transitions:
+                row.transitions.append(
+                    TaskTransitionRow(
+                        previous_state=transition.previous_state.value,
+                        new_state=transition.new_state.value,
+                        reason=transition.reason,
+                        worker=transition.worker,
+                        attempt_number=transition.attempt_number,
+                        evidence=list(transition.evidence),
+                        occurred_at=transition.occurred_at,
+                    )
+                )
+        self._session.commit()
+        return len(rows)
+
     def finish_claim(
         self,
         task_id: str,
@@ -196,6 +269,7 @@ class SqlTaskRepository:
         reason: str,
         delay_seconds: int,
         evidence: tuple[str, ...] = (),
+        new_priority: int | None = None,
     ) -> None:
         if delay_seconds < 1:
             raise ValueError("delay_seconds must be positive")
@@ -211,6 +285,8 @@ class SqlTaskRepository:
         )
         row.state = TaskState.RETRY_SCHEDULED.value
         row.scheduled_for = datetime.now(UTC) + timedelta(seconds=delay_seconds)
+        if new_priority is not None:
+            row.priority = new_priority
         row.transitions.append(
             TaskTransitionRow(
                 previous_state=transition.previous_state.value,
@@ -224,13 +300,20 @@ class SqlTaskRepository:
         )
         self._session.commit()
 
-    def interrupt_stale_running_tasks(self, *, cutoff: datetime, recovery_worker: str) -> int:
-        rows = self._session.scalars(
-            select(WorkflowTaskRow).where(
-                WorkflowTaskRow.state == TaskState.RUNNING.value,
-                WorkflowTaskRow.updated_at < cutoff,
-            )
-        ).all()
+    def interrupt_stale_running_tasks(
+        self,
+        *,
+        cutoff: datetime,
+        recovery_worker: str,
+        queue_name: str | None = None,
+    ) -> int:
+        conditions = [
+            WorkflowTaskRow.state == TaskState.RUNNING.value,
+            WorkflowTaskRow.updated_at < cutoff,
+        ]
+        if queue_name is not None:
+            conditions.append(WorkflowTaskRow.queue_name == queue_name)
+        rows = self._session.scalars(select(WorkflowTaskRow).where(*conditions)).all()
         for row in rows:
             task = self._to_domain(row)
             task.transition(

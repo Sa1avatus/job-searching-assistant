@@ -332,10 +332,13 @@
       <div id="application-statistics" class="statistics-grid" aria-live="polite"></div>
       <button id="sync-application-statuses" type="button">Синхронизировать отклики</button>
       <button id="sync-application-emails" type="button">Синхронизировать почту</button>
+      <button id="import-application-emails" type="button">Импортировать письма</button>
+      <input id="application-email-files" type="file" accept=".eml,.mbox,.zip,message/rfc822,application/zip" multiple hidden>
+      <div class="hint">Можно выбрать несколько EML, почтовый ящик mbox или ZIP-архив. Вложенные письма будут обработаны отдельно.</div>
       <div class="vacancy-filters">
         <div><label for="vacancy-query">Текст</label><input id="vacancy-query" placeholder="должность, компания или описание"></div>
         <div><label for="vacancy-source">Источник</label><select id="vacancy-source"><option value="all">Все</option><option value="headhunter">hh.ru</option><option value="linkedin">LinkedIn</option><option value="greenhouse">Greenhouse</option><option value="registry">Реестр</option><option value="other">Другие</option></select></div>
-        <div><label for="vacancy-status">Статус</label><select id="vacancy-status"><option value="all">Все</option><option value="saved">Сохранена</option><option value="awaiting_review">Ожидает решения</option><option value="approved">Принята</option><option value="rejected">Отклонена</option><option value="skipped">Пропущена</option><option value="submitted">Отправлена</option><option value="interview">Собеседование</option></select></div>
+        <div><label for="vacancy-status">Статус</label><select id="vacancy-status"><option value="all">Все</option><option value="saved">Сохранена</option><option value="awaiting_review">Ожидает решения</option><option value="approved">Принята</option><option value="rejected">Отклонена мной</option><option value="employer_rejected">Отказ работодателя</option><option value="skipped">Пропущена</option><option value="submitted">Отправлена</option><option value="interview">Собеседование</option></select></div>
         <div><label for="vacancy-location">Локация</label><input id="vacancy-location" placeholder="например, Москва"></div>
         <div><label for="vacancy-score">Соответствие от</label><input id="vacancy-score" type="number" min="0" max="100" value="0"></div>
         <div><label for="vacancy-published-from">Опубликована с</label><input id="vacancy-published-from" type="date"></div>
@@ -579,11 +582,11 @@
           <button id="add-manual-skill" type="button">Добавить</button>
         </div>
         <label style="margin-top:14px;">Краткое summary опыта</label>
-        <textarea id="summary-text"></textarea>
+        <textarea id="summary-text" maxlength="2000"></textarea>
         <label style="margin-top:14px;">Суммарный опыт, лет</label>
         <input id="experience-years" type="number" min="0" max="80" step="0.5">
         <label style="margin-top:14px;">Ключевые слова для поиска</label>
-        <input id="keywords-text">
+        <textarea id="keywords-text" maxlength="2000"></textarea>
         <div class="row" style="margin-top:14px;">
           <div style="flex:0"><button id="confirm-facts" type="button" class="primary">Подтвердить и сохранить</button></div>
         </div>
@@ -674,6 +677,8 @@
       'Все сохранённые вакансии': 'All saved vacancies',
       'Синхронизировать отклики': 'Sync applications',
       'Синхронизировать почту': 'Sync email',
+      'Импортировать письма': 'Import email files',
+      'Можно выбрать несколько EML, почтовый ящик mbox или ZIP-архив. Вложенные письма будут обработаны отдельно.': 'Select multiple EML files, an mbox mailbox, or a ZIP archive. Attached emails are processed separately.',
       'Подключение почты по IMAP': 'Connect email over IMAP',
       'Используйте отдельный пароль приложения. Пароль сохраняется только в зашифрованном виде, содержимое писем не сохраняется.': 'Use a dedicated app password. The password is stored only in encrypted form, and email contents are not stored.',
       'IMAP-хост': 'IMAP host',
@@ -783,6 +788,7 @@
       'Ожидает решения': 'Awaiting decision',
       'Принята': 'Accepted',
       'Отклонена': 'Rejected',
+      'Отказ работодателя': 'Employer rejection',
       'Пропущена': 'Skipped',
       'Отправлена': 'Submitted',
       'Собеседование': 'Interview',
@@ -2754,7 +2760,7 @@
 
     const editableApplicationStatuses = [
       'draft', 'saved', 'awaiting_review', 'approved',
-      'rejected', 'skipped', 'submitted', 'interview'
+      'rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'
     ];
 
     async function setApplicationStatus(applicationId, newStatus) {
@@ -2780,10 +2786,10 @@
         {headers: headers(false)}
       ));
       const labels = currentLanguage === 'en'
-        ? {total: 'Total', approved: 'Accepted', rejected: 'Rejected', submitted: 'Submitted', interview: 'Interviews', email_events: 'Emails processed', email_rejections: 'Email rejections', email_next_stages: 'Email next stages'}
-        : {total: 'Всего', approved: 'Принято', rejected: 'Отклонено', submitted: 'Отправлено', interview: 'Собеседования', email_events: 'Обработано писем', email_rejections: 'Отказы из почты', email_next_stages: 'Этапы из почты'};
+        ? {total: 'Total', approved: 'Accepted', rejected: 'Rejected by me', employer_rejected: 'Employer rejections', submitted: 'Submitted', interview: 'Interviews', email_events: 'Emails processed', email_rejections: 'Email rejections', email_next_stages: 'Email next stages'}
+        : {total: 'Всего', approved: 'Принято', rejected: 'Отклонено мной', employer_rejected: 'Отказы работодателей', submitted: 'Отправлено', interview: 'Собеседования', email_events: 'Обработано писем', email_rejections: 'Отказы из почты', email_next_stages: 'Этапы из почты'};
       container.replaceChildren();
-      ['total', 'approved', 'rejected', 'submitted', 'interview', 'email_events', 'email_rejections', 'email_next_stages'].forEach(key => {
+      ['total', 'approved', 'rejected', 'employer_rejected', 'submitted', 'interview', 'email_events', 'email_rejections', 'email_next_stages'].forEach(key => {
         const card = element('div', labels[key], 'statistic-card');
         card.append(element('strong', String(statistics[key] || 0)));
         container.append(card);
@@ -2839,6 +2845,42 @@
         showError(error);
       } finally {
         button.disabled = false;
+      }
+    });
+
+    const applicationEmailFiles = document.querySelector('#application-email-files');
+    document.querySelector('#import-application-emails').addEventListener('click', () => {
+      applicationEmailFiles.click();
+    });
+    applicationEmailFiles.addEventListener('change', async event => {
+      const selectedFiles = Array.from(event.currentTarget.files || []);
+      if (!selectedFiles.length) return;
+      const userId = userIdInput.value.trim();
+      if (!userId) {
+        event.currentTarget.value = '';
+        showError(new Error(currentLanguage === 'en' ? 'Set User ID first' : 'Сначала укажите User ID'));
+        return;
+      }
+      const button = document.querySelector('#import-application-emails');
+      const form = new FormData();
+      selectedFiles.forEach(file => form.append('files', file, file.name));
+      button.disabled = true;
+      showStatus(currentLanguage === 'en' ? 'Importing email files…' : 'Импортируем файлы писем…');
+      try {
+        const summary = await asJson(await fetchWithTimeout(
+          `/v1/users/${userId}/application-email-import`,
+          {method: 'POST', headers: headers(false), body: form},
+          120000
+        ));
+        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1)]);
+        showStatus(currentLanguage === 'en'
+          ? `Email import complete: ${summary.processed} processed, ${summary.created} new, ${summary.status_updated} statuses updated, ${summary.unknown} unknown, ${summary.unmatched} unmatched, ${summary.failed} failed.`
+          : `Импорт писем завершён: обработано ${summary.processed}, новых событий ${summary.created}, обновлено статусов ${summary.status_updated}, не распознано ${summary.unknown}, не привязано к вакансиям ${summary.unmatched}, ошибок ${summary.failed}.`);
+      } catch (error) {
+        showError(error);
+      } finally {
+        button.disabled = false;
+        event.currentTarget.value = '';
       }
     });
 
@@ -2933,6 +2975,8 @@
       coverBlock.append(coverHeader, coverText);
       card.append(coverBlock);
       const taskState = element('div', '', 'task-state'); taskState.id = `state-${item.application_id}`;
+      const matchDetails = element('div', undefined, 'match-details');
+      matchDetails.hidden = true;
       if (item.materials_status === 'processing') {
         taskState.textContent = currentLanguage === 'en'
           ? 'Cover letter generation is in progress.'
@@ -3063,6 +3107,16 @@
       const moreMenu = element('div', undefined, 'more-actions__menu');
       moreMenu.hidden = true;
       moreMenu.setAttribute('role', 'menu');
+      const matchDetailsButton = element(
+        'button',
+        currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит'
+      );
+      matchDetailsButton.type = 'button';
+      matchDetailsButton.addEventListener('click', () => {
+        moreMenu.hidden = true;
+        moreToggle.setAttribute('aria-expanded', 'false');
+        loadMatchDetails(item.application_id, matchDetails, matchDetailsButton).catch(showError);
+      });
       const changeStatus = element(
         'button',
         currentLanguage === 'en' ? 'Change status' : 'Изменить статус'
@@ -3100,10 +3154,10 @@
         moreToggle.setAttribute('aria-expanded', String(!moreMenu.hidden));
       });
       if (!isSubmitted) moreMenu.append(manualSubmitted);
-      moreMenu.append(blacklist, changeStatus);
+      moreMenu.append(matchDetailsButton, blacklist, changeStatus);
       moreActions.append(moreToggle, moreMenu, statusPopup);
       actions.append(accept, reject, link, moreActions);
-      card.append(actions, taskState);
+      card.append(actions, taskState, matchDetails);
       // Load current materials (cover letter) for this application.
       fetch(`/v1/applications/${item.application_id}/materials`, {headers: headers(false)})
         .then(response => response.ok ? response.json() : null)
@@ -3127,7 +3181,7 @@
           item.vacancy_summary = materials.vacancy_summary;
           item.employment_types = materials.employment_types || [];
           item.key_skills = materials.key_skills || [];
-          if (['rejected', 'skipped', 'submitted', 'interview'].includes(materials.application_status)) {
+          if (['rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'].includes(materials.application_status)) {
             item.application_status = materials.application_status;
             updateCachedSearchResults(
               candidate => candidate.application_id !== item.application_id
@@ -3193,7 +3247,7 @@
         !normalized.application_id || !normalized.vacancy_id || !normalized.title
         || !normalized.source_url || !Number.isFinite(normalized.match_score)
         || !['headhunter', 'linkedin', 'greenhouse'].includes(source)
-        || ['rejected', 'skipped', 'submitted', 'interview'].includes(normalized.application_status)
+        || ['rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'].includes(normalized.application_status)
       ) return null;
       normalized.match_score = Math.max(0, Math.min(100, normalized.match_score));
       return normalized;
@@ -3242,7 +3296,7 @@
             return { ...item, application_status: newStatus };
           }
           return item;
-        }).filter(item => !['rejected', 'skipped', 'submitted', 'interview'].includes(
+        }).filter(item => !['rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'].includes(
           item.application_status
         ));
         localStorage.setItem(storageKey, JSON.stringify(cached));
@@ -3291,12 +3345,12 @@
     const vacancyStatusLabels = {
       ru: {
         saved: 'Сохранена', awaiting_review: 'Ожидает решения', approved: 'Принята',
-        rejected: 'Отклонена', skipped: 'Пропущена', submitted: 'Отправлена',
+        rejected: 'Отклонена мной', employer_rejected: 'Отказ работодателя', skipped: 'Пропущена', submitted: 'Отправлена',
         interview: 'Собеседование', draft: 'Черновик'
       },
       en: {
         saved: 'Saved', awaiting_review: 'Awaiting decision', approved: 'Accepted',
-        rejected: 'Rejected', skipped: 'Skipped', submitted: 'Submitted',
+        rejected: 'Rejected by me', employer_rejected: 'Employer rejection', skipped: 'Skipped', submitted: 'Submitted',
         interview: 'Interview', draft: 'Draft'
       }
     };
@@ -3359,32 +3413,29 @@
         recalcBtn.disabled = true;
         recalcBtn.textContent = currentLanguage === 'en' ? 'Calculating…' : 'Рассчитываем…';
         try {
-          const resp = await fetch(`/v1/applications/${item.application_id}/recalculate-match?force=true`, {
+          const task = await asJson(await fetch(`/v1/applications/${item.application_id}/recalculate-match?force=true`, {
             method: 'POST', headers: headers(false)
+          }));
+          await waitForMatchingTask(task, current => {
+            recalcBtn.textContent = matchingTaskStatusText(current);
           });
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          for (let i = 0; i < 60; i++) {
-            await new Promise(r => setTimeout(r, 2000));
-            const det = await fetch(`/v1/applications/${item.application_id}/match-details`, { headers: headers(false) });
-            if (det.ok) {
-              const data = await det.json();
-              if (data.status === 'scored' || data.status === 'degraded') {
-                const newScore = Math.round(data.final_score);
-                const meter = card.querySelector('.match-meter');
-                if (meter) meter.replaceWith(createMatchMeter(newScore));
-                card.dataset.matchScore = String(newScore);
-                if (!details.hidden) {
-                  details.hidden = true;
-                  detailsButton.textContent = currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит';
-                  await loadMatchDetails(item.application_id, details, detailsButton);
-                }
-                recalcBtn.textContent = '\u2713 ' + (currentLanguage === 'en' ? 'Done' : 'Готово');
-                setTimeout(() => { recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate match' : 'Рассчитать подробно'; recalcBtn.disabled = false; }, 2000);
-                return;
-              }
-            }
+          const data = await asJson(await fetch(`/v1/applications/${item.application_id}/match-details`, {
+            headers: headers(false)
+          }));
+          const newScore = Math.round(data.final_score);
+          const meter = card.querySelector('.match-meter');
+          if (meter) meter.replaceWith(createMatchMeter(newScore));
+          card.dataset.matchScore = String(newScore);
+          if (!details.hidden) {
+            details.hidden = true;
+            detailsButton.textContent = currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит';
+            await loadMatchDetails(item.application_id, details, detailsButton);
           }
-          recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate match' : 'Рассчитать подробно'; recalcBtn.disabled = false;
+          recalcBtn.textContent = '\u2713 ' + (currentLanguage === 'en' ? 'Done' : 'Готово');
+          setTimeout(() => {
+            recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate match' : 'Рассчитать подробно';
+            recalcBtn.disabled = false;
+          }, 2000);
         } catch (e) {
           recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate match' : 'Рассчитать подробно'; recalcBtn.disabled = false;
           showError(e);
@@ -3582,39 +3633,51 @@
       }
     }
 
+    function matchingTaskStatusText(task) {
+      const runningTransition = task.transitions?.find(item => item.new_state === 'running');
+      const startedAt = runningTransition?.occurred_at || task.created_at;
+      const elapsedSeconds = Math.max(0, Math.round((Date.now() - Date.parse(startedAt)) / 1000));
+      const elapsed = elapsedSeconds >= 60
+        ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`
+        : `${elapsedSeconds}s`;
+      const stage = task.pipeline_status ? ` · stage: ${task.pipeline_status}` : '';
+      const position = task.queue_position ? ` · queue: ${task.queue_position}` : '';
+      return `Matching: ${task.state}${stage}${position} · ${elapsed}`;
+    }
+
+    async function waitForMatchingTask(task, onUpdate, timeoutMs = 900000) {
+      const deadline = Date.now() + timeoutMs;
+      let current = task;
+      while (Date.now() < deadline) {
+        onUpdate(current);
+        if (current.state === 'completed') return current;
+        if (['failed', 'cancelled', 'interrupted'].includes(current.state)) {
+          const lastTransition = current.transitions?.[current.transitions.length - 1];
+          throw new Error(lastTransition?.reason || `Matching task ${current.state}`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        current = await asJson(await fetch(`/v1/workflow-tasks/${encodeURIComponent(current.id)}`, {
+          headers: headers(false)
+        }));
+      }
+      throw new Error(currentLanguage === 'en'
+        ? 'Matching is still running after 15 minutes.'
+        : 'Расчёт всё ещё выполняется спустя 15 минут.');
+    }
+
     async function calculateDetailedMatch(applicationId, container, button, force = false) {
-      container.replaceChildren(element('div', 'Запускаем подробный расчёт…', 'task-state'));
-      await asJson(await fetch(`/v1/applications/${applicationId}/recalculate-match${force ? '?force=true' : ''}`, {
+      container.replaceChildren(element('div', currentLanguage === 'en'
+        ? 'Starting detailed matching…'
+        : 'Запускаем подробный расчёт…', 'task-state'));
+      const task = await asJson(await fetch(`/v1/applications/${applicationId}/recalculate-match${force ? '?force=true' : ''}`, {
         method: 'POST', headers: headers(false)
       }));
-      const deadline = Date.now() + 180000;
-      while (Date.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, 2500));
-        const response = await fetch(`/v1/applications/${applicationId}/match-details`, {
-          headers: headers(false)
-        });
-        if (!response.ok) {
-          if (response.status === 404) continue;
-          await asJson(response);
-        }
-        const payload = await response.json();
-        if (['scored', 'degraded', 'failed'].includes(payload.status)) {
-          container.hidden = true;
-          button.textContent = 'Почему подходит';
-          await loadMatchDetails(applicationId, container, button);
-          return;
-        }
-        container.replaceChildren(element(
-          'div',
-          `Подробный расчёт выполняется: ${payload.status}.`,
-          'task-state'
-        ));
-      }
-      container.replaceChildren(element(
-        'div',
-        'Расчёт продолжается в фоне. Откройте «Почему подходит» немного позже.',
-        'task-state'
-      ));
+      await waitForMatchingTask(task, current => {
+        container.replaceChildren(element('div', matchingTaskStatusText(current), 'task-state'));
+      });
+      container.hidden = true;
+      button.textContent = currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит';
+      await loadMatchDetails(applicationId, container, button);
     }
 
     function appendMatchDetailList(container, title, items, textForItem) {
@@ -3904,7 +3967,7 @@
               matching_status: event.item.matching_status || 'processing',
               materials_status: event.item.materials_status || 'processing'
             };
-            if (['rejected', 'skipped', 'submitted', 'interview'].includes(
+            if (['rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'].includes(
               item.application_status
             )) return;
             const resultKey = item.application_id || item.source_url;
@@ -4039,7 +4102,7 @@
               if (resp.ok) {
                 const data = await resp.json();
                 console.log(`[rerank] ${appId} attempt=${attempt} status=${data.status} final_score=${data.final_score}`);
-                if (data.status === 'scored' || data.status === 'degraded') {
+                if (['scored', 'degraded', 'failed'].includes(data.status)) {
                   scoreMap.set(appId, Math.round(data.final_score));
                   scoreFound = true;
                   break;
