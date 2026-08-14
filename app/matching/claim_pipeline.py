@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import contextlib
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 
 import structlog
 from sqlalchemy.orm import Session
@@ -28,11 +30,22 @@ from app.matching.entailment import (
 from app.matching.extraction import RequirementImportance, RequirementType
 from app.matching.gap_analysis import GapAnalysisResult, analyze_gaps
 from app.matching.scoring import MatchLevel, RequirementAssessment
-from app.matching.semantic import RerankedCandidate, Reranker
+from app.matching.semantic import RerankedCandidate, Reranker, RetrievalCandidate
 from app.observability.metrics import metrics
-from app.storage.tables import CandidateEvidenceRow
+from app.storage.tables import CandidateEvidenceRow, VacancyRequirementRow
 
 logger = structlog.get_logger(__name__)
+
+
+class ClaimRetriever(Protocol):
+    async def retrieve(
+        self,
+        requirement_text: str,
+        *,
+        user_id: str,
+        cv_file_id: str,
+    ) -> tuple[RetrievalCandidate, ...]: ...
+
 
 # Symbols for UI display
 _RELATION_SYMBOLS: dict[str, str] = {
@@ -101,12 +114,13 @@ class ClaimMatchPipeline:
         session: Session,
         decomposer: RequirementDecomposer,
         evaluator: EvidenceEvaluator,
-        retriever: object,
+        retriever: ClaimRetriever,
         reranker: Reranker,
         *,
         retrieval_top_k: int = 20,
         reranker_top_k: int = 5,
         fallback_enabled: bool = True,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> None:
         self._session = session
         self._decomposer = decomposer
@@ -116,18 +130,20 @@ class ClaimMatchPipeline:
         self._retrieval_top_k = retrieval_top_k
         self._reranker_top_k = reranker_top_k
         self._fallback_enabled = fallback_enabled
+        self._on_progress = on_progress
+        self._llm_call_count = 0
 
     async def match_requirements(
         self,
         application_id: str,
         user_id: str,
         cv_file_id: str,
-        requirements: tuple,
+        requirements: tuple[VacancyRequirementRow, ...],
     ) -> ClaimPipelineResult:
         """Run claim-based matching for all requirements."""
-        assessments = []
-        requirement_results = []
-        gap_inputs = []
+        assessments: list[RequirementAssessment] = []
+        requirement_results: list[RequirementClaimResults] = []
+        gap_inputs: list[dict[str, object]] = []
         relation_counts: dict[str, int] = {
             "entailed": 0,
             "partial": 0,
@@ -138,7 +154,7 @@ class ClaimMatchPipeline:
             "contradicted": 0,
         }
 
-        for requirement in requirements:
+        for req_idx, requirement in enumerate(requirements, 1):
             try:
                 req_result = await self._match_single_requirement(user_id, cv_file_id, requirement)
                 requirement_results.append(req_result)
@@ -179,6 +195,9 @@ class ClaimMatchPipeline:
                         entailment_relation=EntailmentRelation.EVALUATION_ERROR,
                     )
                 )
+            finally:
+                if self._on_progress is not None:
+                    self._on_progress(req_idx, len(requirements))
 
         for relation, count in relation_counts.items():
             metrics.set_gauge(f"claims_{relation}", float(count))
@@ -196,7 +215,7 @@ class ClaimMatchPipeline:
         self,
         user_id: str,
         cv_file_id: str,
-        requirement,
+        requirement: VacancyRequirementRow,
     ) -> RequirementClaimResults:
         decompose_started = time.perf_counter()
         decomposition = await self._decomposer.decompose(
@@ -207,6 +226,7 @@ class ClaimMatchPipeline:
             is_blocker=requirement.is_blocker,
         )
         decompose_duration = time.perf_counter() - decompose_started
+        self._llm_call_count += 1
         metrics.observe("claim_decomposition_duration_seconds", decompose_duration)
         metrics.set_gauge("claims_per_requirement", float(len(decomposition.claims)))
 
@@ -315,6 +335,7 @@ class ClaimMatchPipeline:
                     claim_criticality=claim.criticality.value,
                     source_requirement=claim.source_text,
                 )
+                self._llm_call_count += 1
                 all_entailments.append(eval_result)
                 if eval_result.relation in (
                     EntailmentRelation.ENTAILED,
@@ -448,7 +469,7 @@ class ClaimMatchPipeline:
 
     def _aggregate_claims(
         self,
-        requirement,
+        requirement: VacancyRequirementRow,
         decomposition: RequirementDecomposition,
         claim_results: list[ClaimMatchResult],
     ) -> RequirementClaimResults:
@@ -509,6 +530,15 @@ class ClaimMatchPipeline:
 
         overall_relation = self._determine_overall_relation(relations)
 
+        # AND aggregation: 0.65 * min + 0.35 * weighted_avg
+        # OR aggregation: max (already handled above by selecting best from OR groups)
+        if strengths:
+            min_strength = min(strengths)
+            avg_strength = sum(strengths) / len(strengths)
+            overall_strength = 0.65 * min_strength + 0.35 * avg_strength
+        else:
+            overall_strength = 0.0
+
         _RELATION_TO_LEVEL = {
             "entailed": MatchLevel.EXACT,
             "partial": MatchLevel.PARTIAL,
@@ -545,7 +575,7 @@ class ClaimMatchPipeline:
             requirement_text=requirement.requirement_text,
             claim_results=claim_results,
             overall_relation=overall_relation,
-            overall_strength=max(strengths) if strengths else 0.0,
+            overall_strength=round(overall_strength, 4),
             match_level=match_level,
             is_hard_blocker=is_hard_blocker,
             explanation="\n".join(lines),
@@ -597,7 +627,7 @@ class ClaimMatchPipeline:
 
     def _build_assessment(
         self,
-        requirement,
+        requirement: VacancyRequirementRow,
         req_result: RequirementClaimResults,
     ) -> RequirementAssessment:
         entailment_relation = None
@@ -613,10 +643,18 @@ class ClaimMatchPipeline:
             ):
                 best_entailment = cr.best_entailment
 
-        is_unresolved = (
-            req_result.is_hard_blocker
-            and req_result.overall_relation in ("insufficient_evidence", "evaluation_error")
+        is_unresolved = req_result.is_hard_blocker and req_result.overall_relation in (
+            "insufficient_evidence",
+            "evaluation_error",
         )
+
+        # Compute average coverage across claims for this requirement
+        coverages = [
+            cr.best_entailment.coverage
+            for cr in req_result.claim_results
+            if cr.best_entailment is not None and cr.best_entailment.coverage > 0
+        ]
+        claim_coverage = sum(coverages) / len(coverages) if coverages else None
 
         return RequirementAssessment(
             requirement_id=requirement.id,
@@ -630,4 +668,5 @@ class ClaimMatchPipeline:
             entailment_relation=entailment_relation,
             evidence_strength=req_result.overall_strength,
             evidence_experience_level=experience_level,
+            claim_coverage=claim_coverage,
         )

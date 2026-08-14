@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = Field(default=2.0, ge=0.1, le=60)
     worker_retry_seconds: int = Field(default=30, ge=1, le=3600)
     worker_max_attempts: int = Field(default=3, ge=1, le=20)
+    matching_worker_concurrency: int = Field(default=2, ge=1, le=8)
     max_document_bytes: int = Field(default=5_242_880, ge=1_024, le=20_971_520)
     max_evidence_bytes: int = Field(default=10_485_760, ge=1_024, le=52_428_800)
     retention_days: int = Field(default=30, ge=1, le=3650)

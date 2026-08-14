@@ -658,6 +658,10 @@ class ApplicationMatchResultRow(Base):
     preferred_score: Mapped[float] = mapped_column(Float, default=0.0)
     bonus_score: Mapped[float] = mapped_column(Float, default=0.0)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    # Pipeline progress tracking
+    requirements_total: Mapped[int] = mapped_column(Integer, default=0)
+    requirements_processed: Mapped[int] = mapped_column(Integer, default=0)
+    llm_calls_made: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class ApplicationAnswerRow(Base):
@@ -699,6 +703,7 @@ class WorkflowTaskRow(Base):
     scheduled_for: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, index=True
     )
+    refresh_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
@@ -787,9 +792,7 @@ class FactImportBatchRow(Base):
     __tablename__ = "fact_import_batches"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     source_type: Mapped[str] = mapped_column(String(50))
     source_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)

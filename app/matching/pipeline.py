@@ -209,8 +209,8 @@ class MatchingPipeline:
                 metrics.observe("embedding_duration_seconds", indexing_duration)
                 metrics.set_gauge("evidence_index_size", float(len(evidence_rows)))
 
-            self._set_status(application.id, "retrieving")
-            self._set_status(application.id, "reranking")
+            self._set_status(application.id, "matching")
+            self._set_progress(application.id, requirements_total=len(requirement_rows))
 
             # Choose pipeline: claim-based or legacy
             assessments, claim_result = await self._run_matching(
@@ -321,6 +321,16 @@ class MatchingPipeline:
             and self._evidence_evaluator is not None
         ):
             try:
+                # Wire up progress tracking
+                def _on_requirement_progress(processed: int, total: int) -> None:
+                    self._set_progress(
+                        application.id,
+                        requirements_processed=processed,
+                        llm_calls_delta=self._claim_pipeline._llm_call_count,
+                    )
+                    self._claim_pipeline._llm_call_count = 0
+
+                self._claim_pipeline._on_progress = _on_requirement_progress
                 claim_result = await self._claim_pipeline.match_requirements(
                     application_id=application.id,
                     user_id=application.user_id,
@@ -524,6 +534,9 @@ class MatchingPipeline:
         aggregate.fallback_reason = None
         aggregate.started_at = datetime.now(UTC)
         aggregate.calculated_at = None
+        aggregate.requirements_total = 0
+        aggregate.requirements_processed = 0
+        aggregate.llm_calls_made = 0
         self._session.commit()
 
     def _set_status(self, application_id: str, status: str) -> None:
@@ -531,6 +544,25 @@ class MatchingPipeline:
         if aggregate is None:
             raise MatchingEntityNotFoundError("Matching run state not found")
         aggregate.status = status
+        self._session.commit()
+
+    def _set_progress(
+        self,
+        application_id: str,
+        *,
+        requirements_total: int | None = None,
+        requirements_processed: int | None = None,
+        llm_calls_delta: int = 0,
+    ) -> None:
+        aggregate = self._session.get(ApplicationMatchResultRow, application_id)
+        if aggregate is None:
+            return
+        if requirements_total is not None:
+            aggregate.requirements_total = requirements_total
+        if requirements_processed is not None:
+            aggregate.requirements_processed = requirements_processed
+        if llm_calls_delta:
+            aggregate.llm_calls_made = (aggregate.llm_calls_made or 0) + llm_calls_delta
         self._session.commit()
 
     async def _extract_requirements(
@@ -907,6 +939,10 @@ class MatchingPipeline:
         explanation["hard_blockers"] = list(score.hard_blockers)
         explanation["hard_blockers_unresolved"] = list(score.hard_blockers_unresolved)
         explanation["confidence"] = score.confidence
+        explanation["raw_score_before_blockers"] = score.raw_score_before_blockers
+        explanation["blocker_penalty"] = score.blocker_penalty
+        explanation["calibration_version"] = score.calibration_version
+        explanation["recommendations"] = list(score.recommendations)
         aggregate.explanation_json = explanation
         aggregate.calculated_at = datetime.now(UTC)
         # Persist new scoring fields

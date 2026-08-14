@@ -42,6 +42,46 @@ class EvidenceStrengthCategory(StrEnum):
     EXPLICIT = "explicit"
 
 
+class EvidenceType(StrEnum):
+    """Type of evidence supporting a claim."""
+
+    DIRECT = "direct"
+    INDIRECT = "indirect"
+    CONTEXTUAL = "contextual"
+    NONE = "none"
+
+
+class ClaimExperienceLevel(StrEnum):
+    """Experience level detected in evidence for a claim."""
+
+    COMMERCIAL_PRODUCTION = "commercial_production"
+    INTERNAL_PRODUCTION = "internal_production"
+    WORKING_PERSONAL_PROJECT = "working_personal_project"
+    PROTOTYPE = "prototype"
+    EXPERIMENT = "experiment"
+    STUDIED_ONLY = "studied_only"
+    NONE = "none"
+
+
+# Configurable coefficients for evidence type and experience level
+_EVIDENCE_TYPE_COEFFICIENTS: dict[EvidenceType, float] = {
+    EvidenceType.DIRECT: 1.00,
+    EvidenceType.INDIRECT: 0.70,
+    EvidenceType.CONTEXTUAL: 0.40,
+    EvidenceType.NONE: 0.00,
+}
+
+_EXPERIENCE_LEVEL_COEFFICIENTS: dict[ClaimExperienceLevel, float] = {
+    ClaimExperienceLevel.COMMERCIAL_PRODUCTION: 1.00,
+    ClaimExperienceLevel.INTERNAL_PRODUCTION: 0.95,
+    ClaimExperienceLevel.WORKING_PERSONAL_PROJECT: 0.80,
+    ClaimExperienceLevel.PROTOTYPE: 0.65,
+    ClaimExperienceLevel.EXPERIMENT: 0.50,
+    ClaimExperienceLevel.STUDIED_ONLY: 0.25,
+    ClaimExperienceLevel.NONE: 0.00,
+}
+
+
 class StrictEntailmentModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -61,6 +101,12 @@ class EntailmentResult(StrictEntailmentModel):
     evidence_strength_category: EvidenceStrengthCategory = EvidenceStrengthCategory.NONE
     supporting_evidence_ids: list[str] = Field(default_factory=list)
     provenance: dict[str, object] = Field(default_factory=dict)
+    # Coverage-based scoring: degree of claim fulfillment (0-1)
+    coverage: float = Field(ge=0, le=1, default=0.0)
+    # Type of evidence (direct, indirect, contextual, none)
+    evidence_type: EvidenceType = EvidenceType.NONE
+    # Experience level detected in evidence
+    experience_level: ClaimExperienceLevel = ClaimExperienceLevel.NONE
     # New: structured error info for technical failures
     error_type: str | None = Field(default=None, max_length=100)
     provider: str | None = Field(default=None, max_length=100)
@@ -103,23 +149,45 @@ def compute_evidence_strength(
     entailment_score: float,
     *,
     weights: dict[str, float] | None = None,
+    coverage: float = 0.0,
+    evidence_type: EvidenceType = EvidenceType.NONE,
+    experience_level: ClaimExperienceLevel = ClaimExperienceLevel.NONE,
 ) -> tuple[float, EvidenceStrengthCategory]:
     """Compute evidence strength from component scores.
 
+    When coverage > 0, uses coverage-based scoring:
+        claim_score = coverage × evidence_quality_factor
+    where evidence_quality_factor combines evidence_type and experience_level.
+
+    Falls back to the legacy blend (semantic + reranker + entailment) when coverage is 0.
     Returns (strength, category).
     """
-    w = weights or _ENTAILMENT_WEIGHTS
-    normalized_semantic = semantic_score if semantic_score is not None else 0.0
-    normalized_reranker = reranker_score if reranker_score is not None else 0.0
+    if coverage > 0:
+        # Coverage-based scoring (preferred)
+        type_coeff = _EVIDENCE_TYPE_COEFFICIENTS.get(evidence_type, 0.0)
+        exp_coeff = _EXPERIENCE_LEVEL_COEFFICIENTS.get(experience_level, 0.0)
+        # evidence_quality_factor: blend of type and experience, bounded 0.7-1.0 for supported
+        if type_coeff > 0 and exp_coeff > 0:
+            quality_factor = max(0.7, min(1.0, 0.5 * type_coeff + 0.5 * exp_coeff))
+        elif type_coeff > 0:
+            quality_factor = max(0.5, min(0.85, type_coeff))
+        else:
+            quality_factor = 0.0
+        strength = min(coverage * quality_factor, _RELATION_STRENGTH_CAPS.get(relation, 1.0))
+    else:
+        # Legacy blend
+        w = weights or _ENTAILMENT_WEIGHTS
+        normalized_semantic = semantic_score if semantic_score is not None else 0.0
+        normalized_reranker = reranker_score if reranker_score is not None else 0.0
 
-    raw = (
-        w.get("semantic_score", 0.25) * normalized_semantic
-        + w.get("reranker_score", 0.25) * normalized_reranker
-        + w.get("entailment_score", 0.50) * entailment_score
-    )
+        raw = (
+            w.get("semantic_score", 0.25) * normalized_semantic
+            + w.get("reranker_score", 0.25) * normalized_reranker
+            + w.get("entailment_score", 0.50) * entailment_score
+        )
 
-    cap = _RELATION_STRENGTH_CAPS.get(relation, 0.0)
-    strength = min(raw, cap)
+        cap = _RELATION_STRENGTH_CAPS.get(relation, 0.0)
+        strength = min(raw, cap)
 
     if strength < 0.30:
         category = EvidenceStrengthCategory.NONE

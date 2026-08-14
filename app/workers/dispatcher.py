@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings, get_settings
 from app.domain.models import TaskState
+from app.llm.router import NoModelAvailableError
 from app.observability.logging import configure_logging
 from app.services.rag_sync import RagSyncService
 from app.storage.database import SessionFactory
@@ -26,7 +27,7 @@ from app.storage.tables import (
     WorkerHeartbeatRow,
 )
 from app.storage.task_repository import ClaimedTask, SqlTaskRepository
-from app.workers.coordination import RedisCoordinationClient, RedisCoordinator
+from app.workers.coordination import RedisCoordinationClient, RedisCoordinator, WorkerLease
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +139,8 @@ class DurableTaskDispatcher:
         worker_name: str,
         settings: Settings,
         queue_name: str = "dispatcher",
+        retry_priority: int | None = None,
+        on_claim_completed: Callable[[str, TaskState], None] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._coordinator = coordinator
@@ -145,6 +148,8 @@ class DurableTaskDispatcher:
         self._worker_name = worker_name
         self._settings = settings
         self._queue_name = queue_name
+        self._retry_priority = retry_priority
+        self._on_claim_completed = on_claim_completed
 
     async def run_once(self) -> bool:
         self._heartbeat("polling")
@@ -169,6 +174,7 @@ class DurableTaskDispatcher:
                 )
             return True
 
+        claim_heartbeat = asyncio.create_task(self._maintain_claim(claimed_task.task_id, lease))
         try:
             task_kind = claimed_task.idempotency_key.partition(":")[0]
             handler = self._handlers.get(task_kind)
@@ -190,12 +196,18 @@ class DurableTaskDispatcher:
                             evidence=outcome.evidence,
                         )
                     else:
+                        retry_delay = min(
+                            self._settings.worker_retry_seconds
+                            * (2 ** max(claimed_task.attempt_number - 1, 0)),
+                            300,
+                        )
                         repository.retry_claim(
                             claimed_task.task_id,
                             worker=self._worker_name,
                             reason=outcome.reason,
-                            delay_seconds=self._settings.worker_retry_seconds,
+                            delay_seconds=retry_delay,
                             evidence=outcome.evidence,
+                            new_priority=self._retry_priority,
                         )
                 else:
                     evidence = outcome.evidence
@@ -230,10 +242,21 @@ class DurableTaskDispatcher:
                         worker=self._worker_name,
                         evidence=evidence,
                     )
+                    if self._on_claim_completed is not None:
+                        self._on_claim_completed(claimed_task.task_id, outcome.state)
         except Exception as error:
             with self._session_factory() as session:
                 repository = SqlTaskRepository(session)
-                if claimed_task.attempt_number >= self._settings.worker_max_attempts:
+                is_non_retryable = isinstance(error, NoModelAvailableError) and not error.retryable
+                if is_non_retryable:
+                    repository.finish_claim(
+                        claimed_task.task_id,
+                        new_state=TaskState.FAILED,
+                        reason="task handler failed with a non-retryable model error",
+                        worker=self._worker_name,
+                        evidence=(type(error).__name__, "retryable:false"),
+                    )
+                elif claimed_task.attempt_number >= self._settings.worker_max_attempts:
                     repository.finish_claim(
                         claimed_task.task_id,
                         new_state=TaskState.FAILED,
@@ -242,17 +265,42 @@ class DurableTaskDispatcher:
                         evidence=(type(error).__name__,),
                     )
                 else:
+                    retry_delay = min(
+                        self._settings.worker_retry_seconds
+                        * (2 ** max(claimed_task.attempt_number - 1, 0)),
+                        300,
+                    )
                     repository.retry_claim(
                         claimed_task.task_id,
                         worker=self._worker_name,
                         reason="task handler failed and was scheduled for bounded retry",
-                        delay_seconds=self._settings.worker_retry_seconds,
+                        delay_seconds=retry_delay,
                         evidence=(type(error).__name__,),
+                        new_priority=self._retry_priority,
                     )
         finally:
+            claim_heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await claim_heartbeat
             await self._coordinator.release_lease(lease)
             self._heartbeat("healthy")
         return True
+
+    async def _maintain_claim(self, task_id: str, lease: WorkerLease) -> None:
+        interval_seconds = min(max(self._settings.worker_lease_seconds / 3, 1), 30)
+        while True:
+            await asyncio.sleep(interval_seconds)
+            with self._session_factory() as session:
+                is_running = SqlTaskRepository(session).touch_claim(task_id)
+            if not is_running:
+                return
+            renewed = await self._coordinator.renew_lease(lease)
+            if not renewed:
+                structlog.get_logger().warning(
+                    "workflow_task_lease_renewal_failed",
+                    task_id=task_id,
+                    worker=self._worker_name,
+                )
 
     def _heartbeat(self, status: str) -> None:
         with self._session_factory() as session:
@@ -269,16 +317,25 @@ class DurableTaskDispatcher:
 async def run_worker() -> None:
     configure_logging()
     settings = get_settings()
-    from app.matching.runtime import MatchingRuntime
 
     redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
     coordinator = RedisCoordinator(cast(RedisCoordinationClient, redis_client))
+
+    with SessionFactory() as session:
+        recovered = SqlTaskRepository(session).recover_stale_running_tasks(
+            cutoff=datetime.now(UTC) - timedelta(seconds=settings.worker_lease_seconds * 2),
+            recovery_worker="dispatcher-recovery",
+            queue_name="dispatcher",
+            max_attempts=settings.worker_max_attempts,
+        )
+    if recovered > 0:
+        structlog.get_logger().info("dispatcher_recovered_stale_tasks", count=recovered)
+
     dispatcher = DurableTaskDispatcher(
         session_factory=SessionFactory,
         coordinator=coordinator,
         handlers={
             "application-review": ApplicationReviewCheckpointHandler(SessionFactory),
-            "matching-v2": MatchingTaskHandler(MatchingRuntime(SessionFactory, settings)),
             "rag-resume-sync": ResumeRagSyncTaskHandler(SessionFactory, settings),
         },
         worker_name="dispatcher-1",

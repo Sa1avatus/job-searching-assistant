@@ -295,8 +295,9 @@ def test_direct_rerank_stream_enriches_before_emitting_sorted_vacancies(monkeypa
         operation_order.append("vacancy")
         return SimpleNamespace(document_id="vacancy-doc", status="indexed")
 
-    def schedule_matching(service, application_id, *, force=False):
+    def schedule_matching(service, application_id, *, force=False, priority=100):
         assert force is True
+        assert priority == 50
         operation_order.append("matching")
         application = service._session.get(ApplicationRow, application_id)
         assert application is not None

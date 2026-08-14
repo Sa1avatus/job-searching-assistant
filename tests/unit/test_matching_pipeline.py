@@ -211,7 +211,7 @@ def test_pipeline_persists_explainable_shadow_result_without_changing_legacy_sco
             assert application.match_score == 42
             assert aggregate.application_id == application.id
             assert aggregate.final_score > 0
-            assert aggregate.scoring_version == "matching-v2.3"
+            assert aggregate.scoring_version == "matching-v3.0"
             assert aggregate.explanation_json["hard_gate"]["decision"] == "review"
             assert requirement_match is not None
             assert requirement_match.reranker_score is not None

@@ -197,3 +197,116 @@ Resume-extracted facts are automatically available as evidence for claim evaluat
 extraction. Matching results are invalidated when facts change.
 
 See `matching-data-model.md` for persistence and `matching-local-development.md` for local checks.
+
+## Scoring v3.0 — Coverage-Based Matching
+
+Scoring v3.0 shifts from semantic-similarity-based scoring to coverage-based scoring where the
+final score reflects actual claim fulfillment by verified evidence, not text similarity.
+
+### Evidence Evaluator Output
+
+The evaluator now returns structured fields beyond the entailment relation:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `coverage` | 0-1 | Degree of claim fulfillment (1.0=fully covered) |
+| `evidence_type` | enum | `direct`, `indirect`, `contextual`, `none` |
+| `experience_level` | enum | `commercial_production`, `internal_production`, `working_personal_project`, `prototype`, `experiment`, `studied_only`, `none` |
+
+### Claim Score Formula
+
+When coverage is available:
+```
+claim_score = coverage × evidence_quality_factor
+```
+
+where `evidence_quality_factor` blends evidence_type and experience_level coefficients:
+- `evidence_quality_factor = max(0.7, min(1.0, 0.5 × type_coeff + 0.5 × exp_coeff))`
+- Falls back to legacy blend (25% semantic + 25% reranker + 50% entailment) when coverage=0
+
+### Evidence Type Coefficients
+
+| Type | Coefficient |
+|---|---|
+| DIRECT | 1.00 |
+| INDIRECT | 0.70 |
+| CONTEXTUAL | 0.40 |
+| NONE | 0.00 |
+
+### Experience Level Coefficients
+
+| Level | Coefficient |
+|---|---|
+| commercial_production | 1.00 |
+| internal_production | 0.95 |
+| working_personal_project | 0.80 |
+| prototype | 0.65 |
+| experiment | 0.50 |
+| studied_only | 0.25 |
+| none | 0.00 |
+
+### AND Aggregation
+
+For requirements with multiple AND claims:
+```
+and_score = 0.65 × min(claim_scores) + 0.35 × weighted_average(claim_scores)
+```
+
+This ensures one poorly-supported sub-condition noticeably lowers the entire requirement score.
+
+### OR Aggregation
+
+For OR requirements:
+```
+or_score = max(claim_scores)
+```
+
+### UNKNOWN Policy
+
+UNKNOWN/INSUFFICIENT_EVIDENCE does NOT mean 0. It uses a configurable neutral prior:
+- `INSUFFICIENT_EVIDENCE → match_factor = 0.40`
+- `UNKNOWN → match_factor = 0.40`
+
+UNKNOWN reduces confidence but does not automatically zero the score. UI must display UNKNOWN
+visually distinct from NOT MATCHED.
+
+### Blocker Policy
+
+Confirmed hard blockers zero the score. But the system preserves transparency:
+- `raw_score_before_blockers`: the score before penalty
+- `blocker_penalty`: the amount subtracted
+- `final_score`: after penalty
+
+Only truly binary eligibility conditions are hard blockers:
+- Mandatory work authorization
+- Mandatory citizenship/security clearance
+- Mandatory professional license
+- Strict mandatory language level
+- Explicit mandatory location constraint
+
+Technical skills (Python, RAG, ML, Docker) are NEVER hard blockers, even when required.
+
+### Calibration
+
+Identity calibration (v3.0): raw_score = final_score. Architecture supports future isotonic
+regression when expert-labeled vacancy/profile pairs become available. Calibration model version
+is persisted.
+
+### Recommendations
+
+Weak/missing claims automatically generate actionable recommendations:
+- MISSING → "Gain hands-on experience with X"
+- RELATED → "Clarify existing experience to explicitly demonstrate X"
+- THEORETICAL_ONLY → "Move from theoretical knowledge to practical application of X"
+
+Recommendations are capped at 10 and stored in the explanation JSON.
+
+### API Response Extensions
+
+The match-details endpoint now returns additional fields (backward compatible):
+- `raw_score_before_blockers`: score before blocker penalty
+- `blocker_penalty`: amount subtracted by blockers
+- `calibration_version`: calibration model used
+- `recommendations`: list of actionable recommendations
+- `hard_blockers`: confirmed hard blocker requirement IDs
+- `hard_blockers_unresolved`: unresolved hard blocker requirement IDs

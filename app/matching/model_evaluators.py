@@ -15,8 +15,10 @@ from app.matching.cache import (
 )
 from app.matching.claims import RequirementDecomposition
 from app.matching.entailment import (
+    ClaimExperienceLevel,
     EntailmentRelation,
     EntailmentResult,
+    EvidenceType,
     compute_evidence_strength,
 )
 from app.matching.extraction import StrictExtractionModel
@@ -24,7 +26,7 @@ from app.matching.normalization import SkillNormalizer
 from app.prompts.registry import PromptRegistry
 
 _PROMPT_VERSION_DECOMPOSE = "2"
-_PROMPT_VERSION_ENTAIL = "2"
+_PROMPT_VERSION_ENTAIL = "3"
 
 # Base entailment scores when LLM doesn't provide one
 _RELATION_BASE_SCORE = {
@@ -52,11 +54,13 @@ class RouterRequirementDecomposer:
         *,
         skill_normalizer: SkillNormalizer | None = None,
         cache: MatchingCache | None = None,
+        timeout_seconds: float = 60,
     ) -> None:
         self._router = router
         self._prompt_registry = prompt_registry
         self._skill_normalizer = skill_normalizer or SkillNormalizer()
         self._cache = cache
+        self._timeout_seconds = timeout_seconds
 
     async def decompose(
         self,
@@ -94,7 +98,7 @@ class RouterRequirementDecomposer:
                 task_class=ModelTaskClass.LOW_COST,
                 prompt=prompt,
                 max_cost_usd=0.05,
-                timeout_seconds=60,
+                timeout_seconds=self._timeout_seconds,
             ),
             RequirementDecomposition,
         )
@@ -134,10 +138,12 @@ class RouterEvidenceEvaluator:
         prompt_registry: PromptRegistry,
         *,
         cache: MatchingCache | None = None,
+        timeout_seconds: float = 60,
     ) -> None:
         self._router = router
         self._prompt_registry = prompt_registry
         self._cache = cache
+        self._timeout_seconds = timeout_seconds
 
     async def evaluate(
         self,
@@ -201,14 +207,17 @@ class RouterEvidenceEvaluator:
                     task_class=ModelTaskClass.LOW_COST,
                     prompt=prompt,
                     max_cost_usd=0.03,
-                    timeout_seconds=60,
+                    timeout_seconds=self._timeout_seconds,
                 ),
                 _RawEntailmentResult,
             )
         except Exception as error:
             error_type = type(error).__name__
             return self._build_error_result(
-                claim_id, evidence_id, semantic_score, reranker_score,
+                claim_id,
+                evidence_id,
+                semantic_score,
+                reranker_score,
                 error_type=error_type,
                 reason=f"Evaluator technical failure ({error_type})",
             )
@@ -218,7 +227,10 @@ class RouterEvidenceEvaluator:
             relation = EntailmentRelation(raw_result.relation)
         except ValueError:
             return self._build_error_result(
-                claim_id, evidence_id, semantic_score, reranker_score,
+                claim_id,
+                evidence_id,
+                semantic_score,
+                reranker_score,
                 error_type="invalid_relation_value",
                 reason="Evaluator returned an unsupported relation",
             )
@@ -227,8 +239,35 @@ class RouterEvidenceEvaluator:
         if entailment_score == 0.0:
             entailment_score = _RELATION_BASE_SCORE.get(relation, 0.0)
 
+        # Parse evidence_type and experience_level with fallback
+        try:
+            evidence_type = EvidenceType(raw_result.evidence_type)
+        except ValueError:
+            evidence_type = EvidenceType.NONE
+        try:
+            experience_level = ClaimExperienceLevel(raw_result.experience_level)
+        except ValueError:
+            experience_level = ClaimExperienceLevel.NONE
+
+        coverage = raw_result.coverage
+        # If evaluator didn't provide coverage, derive from relation + entailment_score
+        if coverage == 0.0 and relation in (
+            EntailmentRelation.ENTAILED,
+            EntailmentRelation.PARTIAL,
+        ):
+            coverage = (
+                entailment_score if entailment_score > 0
+                else _RELATION_BASE_SCORE.get(relation, 0.0)
+            )
+
         strength, category = compute_evidence_strength(
-            relation, semantic_score, reranker_score, entailment_score
+            relation,
+            semantic_score,
+            reranker_score,
+            entailment_score,
+            coverage=coverage,
+            evidence_type=evidence_type,
+            experience_level=experience_level,
         )
 
         result = EntailmentResult(
@@ -242,6 +281,9 @@ class RouterEvidenceEvaluator:
             entailment_score=round(entailment_score, 4),
             evidence_strength=strength,
             evidence_strength_category=category,
+            coverage=round(coverage, 4),
+            evidence_type=evidence_type,
+            experience_level=experience_level,
         )
 
         if self._cache is not None:
@@ -284,6 +326,9 @@ class RouterEvidenceEvaluator:
             entailment_score=0.0,
             evidence_strength=strength,
             evidence_strength_category=category,
+            coverage=0.0,
+            evidence_type=EvidenceType.NONE,
+            experience_level=ClaimExperienceLevel.NONE,
             error_type=error_type,
         )
 
@@ -295,3 +340,6 @@ class _RawEntailmentResult(StrictExtractionModel):
     confidence: float = 0.5
     reason: str = ""
     entailment_score: float = 0.0
+    coverage: float = 0.0
+    evidence_type: str = "none"
+    experience_level: str = "none"

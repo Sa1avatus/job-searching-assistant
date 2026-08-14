@@ -55,17 +55,22 @@ _ENTAILMENT_TO_MATCH_FACTOR = {
     EntailmentRelation.ENTAILED: 1.0,
     EntailmentRelation.PARTIAL: 0.65,
     EntailmentRelation.RELATED_BUT_INSUFFICIENT: 0.15,
-    EntailmentRelation.INSUFFICIENT_EVIDENCE: 0.15,
+    # UNKNOWN neutral prior: not 0, not full match — configurable
+    EntailmentRelation.INSUFFICIENT_EVIDENCE: 0.40,
     EntailmentRelation.CONTRADICTED: 0.0,
     EntailmentRelation.EVALUATION_ERROR: 0.10,
-    EntailmentRelation.UNKNOWN: 0.0,
+    EntailmentRelation.UNKNOWN: 0.40,
 }
 
 _CATEGORY_WEIGHTS = {
-    "required": 0.60,
-    "preferred": 0.25,
-    "bonus": 0.15,
+    "required": 0.85,
+    "preferred": 0.10,
+    "bonus": 0.05,
 }
+
+# AND aggregation coefficients
+_AND_MIN_WEIGHT = 0.65
+_AND_AVG_WEIGHT = 0.35
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +86,8 @@ class RequirementAssessment:
     evidence_strength: float | None = None
     is_hard_blocker: bool = False
     is_unresolved_blocker: bool = False
+    # Coverage-based scoring: average coverage across claims for this requirement
+    claim_coverage: float | None = None
 
     def __post_init__(self) -> None:
         if self.weight < 0:
@@ -111,10 +118,14 @@ class DeterministicScore:
     hard_blockers: tuple[str, ...] = ()
     hard_blockers_unresolved: tuple[str, ...] = ()
     confidence: float = 0.0
+    raw_score_before_blockers: int = 0
+    blocker_penalty: int = 0
+    calibration_version: str = "identity"
+    recommendations: tuple[str, ...] = ()
 
 
 class DeterministicMatchScorer:
-    scoring_version = "matching-v2.3"
+    scoring_version = "matching-v3.0"
 
     def score(self, assessments: tuple[RequirementAssessment, ...]) -> DeterministicScore:
         effective_level_by_requirement = {
@@ -124,24 +135,28 @@ class DeterministicMatchScorer:
 
         # Confirmed hard blockers: hard_blocker AND confirmed missing/contradicted
         confirmed_hard_blockers = [
-            a for a in assessments
+            a
+            for a in assessments
             if a.is_hard_blocker
             and effective_level_by_requirement[a.requirement_id]
             in {MatchLevel.MISSING, MatchLevel.BLOCKER}
         ]
         # Unresolved hard blockers: marked as unresolved OR hard_blocker with uncertain state
         unresolved_hard_blockers = [
-            a for a in assessments
+            a
+            for a in assessments
             if (a.is_hard_blocker or a.is_unresolved_blocker)
             and effective_level_by_requirement[a.requirement_id]
             in {
-                MatchLevel.INSUFFICIENT_EVIDENCE, MatchLevel.EVALUATION_ERROR,
+                MatchLevel.INSUFFICIENT_EVIDENCE,
+                MatchLevel.EVALUATION_ERROR,
                 MatchLevel.UNRESOLVED_BLOCKER,
             }
         ]
 
         blocker_assessments = [
-            a for a in assessments
+            a
+            for a in assessments
             if a.is_blocker
             and not a.is_hard_blocker
             and effective_level_by_requirement[a.requirement_id]
@@ -157,7 +172,8 @@ class DeterministicMatchScorer:
         )
 
         required_assessments = [
-            a for a in assessments
+            a
+            for a in assessments
             if a.importance is RequirementImportance.REQUIRED and not a.is_hard_blocker
         ]
         evaluation_error_assessments = [
@@ -168,8 +184,10 @@ class DeterministicMatchScorer:
         matched_required_count = sum(
             effective_level_by_requirement[a.requirement_id]
             not in {
-                MatchLevel.MISSING, MatchLevel.BLOCKER,
-                MatchLevel.INSUFFICIENT_EVIDENCE, MatchLevel.EVALUATION_ERROR,
+                MatchLevel.MISSING,
+                MatchLevel.BLOCKER,
+                MatchLevel.INSUFFICIENT_EVIDENCE,
+                MatchLevel.EVALUATION_ERROR,
             }
             for a in required_assessments
         )
@@ -193,7 +211,8 @@ class DeterministicMatchScorer:
 
         has_confirmed_hard_blockers = bool(confirmed_hard_blockers) or missing_authorization
 
-        final_score = round(weighted_score)
+        raw_score = round(weighted_score)
+        final_score = raw_score
 
         explanation: list[str] = []
         if confirmed_hard_blockers:
@@ -217,17 +236,23 @@ class DeterministicMatchScorer:
                 "evaluated due to a technical error"
             )
 
-        # Score caps — only CONFIRMED hard blockers zero the score
+        # Score caps — transparent penalty stages
+        blocker_penalty = 0
         if has_confirmed_hard_blockers:
+            blocker_penalty = final_score
             final_score = 0
         elif blocker_assessments:
-            final_score = min(final_score, 20)
+            cap = 20
+            blocker_penalty = max(0, final_score - cap)
+            final_score = min(final_score, cap)
         elif missing_required_count:
             if required_assessments:
                 missing_ratio = missing_required_count / len(required_assessments)
                 cap = max(20, round(80 * (1 - missing_ratio)))
+                blocker_penalty = max(0, final_score - cap)
                 final_score = min(final_score, cap)
             else:
+                blocker_penalty = max(0, final_score - 49)
                 final_score = min(final_score, 49)
 
         # Eligibility
@@ -247,10 +272,10 @@ class DeterministicMatchScorer:
         strengths = [a.evidence_strength for a in assessments if a.evidence_strength is not None]
         base_confidence = sum(strengths) / len(strengths) if strengths else 0.0
         error_count = sum(
-            1 for a in assessments
-            if a.entailment_relation in {
-                EntailmentRelation.EVALUATION_ERROR, EntailmentRelation.UNKNOWN
-            }
+            1
+            for a in assessments
+            if a.entailment_relation
+            in {EntailmentRelation.EVALUATION_ERROR, EntailmentRelation.UNKNOWN}
         )
         error_penalty = min(0.3, error_count * 0.05)
         confidence = max(0.0, base_confidence - error_penalty)
@@ -258,16 +283,25 @@ class DeterministicMatchScorer:
         confirmed_blocker_ids = tuple(a.requirement_id for a in confirmed_hard_blockers)
         unresolved_blocker_ids = tuple(a.requirement_id for a in unresolved_hard_blockers)
 
+        # Generate recommendations from weak claims
+        recommendations = self._generate_recommendations(
+            assessments, effective_level_by_requirement
+        )
+
         return DeterministicScore(
             eligibility_status=eligibility_status,
             final_score=max(0, min(100, final_score)),
             hard_skill_score=self._component_score(
-                assessments, effective_level_by_requirement,
-                RequirementType.HARD_SKILL, RequirementImportance.REQUIRED,
+                assessments,
+                effective_level_by_requirement,
+                RequirementType.HARD_SKILL,
+                RequirementImportance.REQUIRED,
             ),
             preferred_skill_score=self._component_score(
-                assessments, effective_level_by_requirement,
-                RequirementType.HARD_SKILL, RequirementImportance.PREFERRED,
+                assessments,
+                effective_level_by_requirement,
+                RequirementType.HARD_SKILL,
+                RequirementImportance.PREFERRED,
             ),
             role_score=self._component_score(
                 assessments, effective_level_by_requirement, RequirementType.ROLE
@@ -301,6 +335,10 @@ class DeterministicMatchScorer:
             hard_blockers=confirmed_blocker_ids,
             hard_blockers_unresolved=unresolved_blocker_ids,
             confidence=round(confidence, 3),
+            raw_score_before_blockers=max(0, min(100, raw_score)),
+            blocker_penalty=max(0, blocker_penalty),
+            calibration_version="identity",
+            recommendations=tuple(recommendations),
         )
 
     @staticmethod
@@ -356,6 +394,36 @@ class DeterministicMatchScorer:
         return 100 * earned_weight / total_weight
 
     @staticmethod
+    def _generate_recommendations(
+        assessments: tuple[RequirementAssessment, ...],
+        effective_level_by_requirement: dict[str, MatchLevel],
+    ) -> list[str]:
+        """Generate actionable recommendations from weak/missing claims."""
+        recommendations: list[str] = []
+        for a in assessments:
+            level = effective_level_by_requirement.get(a.requirement_id, MatchLevel.MISSING)
+            if (
+                level in {MatchLevel.MISSING, MatchLevel.RELATED, MatchLevel.THEORETICAL_ONLY}
+                and a.requirement_type is RequirementType.HARD_SKILL
+            ):
+                    if level is MatchLevel.MISSING:
+                        recommendations.append(
+                            f"Gain hands-on experience with {a.requirement_id} "
+                            "and add concrete project descriptions"
+                        )
+                    elif level is MatchLevel.RELATED:
+                        recommendations.append(
+                            f"Clarify or expand existing experience to explicitly demonstrate "
+                            f"{a.requirement_id} with measurable outcomes"
+                        )
+                    elif level is MatchLevel.THEORETICAL_ONLY:
+                        recommendations.append(
+                            f"Move from theoretical knowledge to practical application "
+                            f"of {a.requirement_id} in a project or production setting"
+                        )
+        return recommendations[:10]  # Cap at 10
+
+    @staticmethod
     def _category_score(
         assessments: tuple[RequirementAssessment, ...],
         effective_level_by_requirement: dict[str, MatchLevel],
@@ -379,7 +447,8 @@ class DeterministicMatchScorer:
         importance: RequirementImportance | None = None,
     ) -> int:
         component = [
-            a for a in assessments
+            a
+            for a in assessments
             if a.requirement_type is requirement_type
             and (importance is None or a.importance is importance)
         ]

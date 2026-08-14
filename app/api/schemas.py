@@ -16,6 +16,8 @@ EmploymentTypeName = Literal[
     "internship",
 ]
 
+_MAX_SEARCH_TEXT_LENGTH = 2_000
+
 
 class VacancyRequest(BaseModel):
     source_url: HttpUrl
@@ -278,6 +280,12 @@ class ApplicationMatchDetailsResponse(BaseModel):
     preferred_score: float = 0.0
     bonus_score: float = 0.0
     confidence: float = 0.0
+    raw_score_before_blockers: float = 0.0
+    blocker_penalty: float = 0.0
+    calibration_version: str = "identity"
+    recommendations: list[str] = Field(default_factory=list)
+    hard_blockers: list[str] = Field(default_factory=list)
+    hard_blockers_unresolved: list[str] = Field(default_factory=list)
 
 
 class TaskTransitionResponse(BaseModel):
@@ -287,6 +295,7 @@ class TaskTransitionResponse(BaseModel):
     worker: str
     attempt_number: int
     evidence: list[str]
+    occurred_at: datetime
 
 
 class WorkflowTaskResponse(BaseModel):
@@ -297,6 +306,18 @@ class WorkflowTaskResponse(BaseModel):
     state: str
     attempt_number: int
     priority: int
+    queue_position: int | None = None
+    pipeline_status: str | None = None
+    pipeline_started_at: datetime | None = None
+    pipeline_updated_at: datetime | None = None
+    calculated_at: datetime | None = None
+    requirements_total: int | None = None
+    requirements_processed: int | None = None
+    llm_calls_made: int | None = None
+    refresh_requested: bool = False
+    scheduled_for: datetime
+    created_at: datetime
+    updated_at: datetime
     transitions: list[TaskTransitionResponse]
 
 
@@ -402,7 +423,7 @@ class ConfirmProfileFactsRequest(BaseModel):
 
 
 class ConfirmResumeProfileRequest(ConfirmProfileFactsRequest):
-    search_keywords: str = Field(default="", max_length=500)
+    search_keywords: str = Field(default="", max_length=2_000)
     years_of_experience: float | None = Field(default=None, ge=0, le=80)
 
 
@@ -635,7 +656,7 @@ class DiscoverHeadHunterVacanciesRequest(BaseModel):
         max_length=20,
     )
     limit: int = Field(default=15, ge=1, le=50)
-    search_text: str | None = Field(default=None, max_length=300)
+    search_text: str | None = Field(default=None, max_length=_MAX_SEARCH_TEXT_LENGTH)
     cv_file_id: str | None = None
 
 
@@ -690,7 +711,7 @@ class DiscoverLinkedInVacanciesRequest(BaseModel):
         max_length=5,
     )
     limit: int = Field(default=15, ge=1, le=50)
-    search_text: str | None = Field(default=None, max_length=300)
+    search_text: str | None = Field(default=None, max_length=_MAX_SEARCH_TEXT_LENGTH)
     cv_file_id: str | None = None
 
 
@@ -704,7 +725,7 @@ class DiscoverGreenhouseVacanciesRequest(BaseModel):
     )
     locations: list[str] = Field(default_factory=list, max_length=20)
     limit: int = Field(default=15, ge=1, le=50)
-    search_text: str | None = Field(default=None, max_length=300)
+    search_text: str | None = Field(default=None, max_length=_MAX_SEARCH_TEXT_LENGTH)
     cv_file_id: str | None = None
 
 
@@ -715,7 +736,7 @@ class DiscoverVacanciesStreamRequest(BaseModel):
     board_urls: list[HttpUrl] = Field(default_factory=list, max_length=20)
     locations: list[str] = Field(default_factory=list, max_length=20)
     limit: int = Field(default=15, ge=1, le=50)
-    search_text: str | None = Field(default=None, max_length=300)
+    search_text: str | None = Field(default=None, max_length=_MAX_SEARCH_TEXT_LENGTH)
     cv_file_id: str | None = None
     direct_rerank: bool = False
 

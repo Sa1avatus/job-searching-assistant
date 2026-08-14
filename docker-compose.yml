@@ -182,6 +182,50 @@ services:
       - default
       - local-code-worker
 
+  matching-worker:
+    build: .
+    restart: unless-stopped
+    environment:
+      APP_DATABASE_URL: "postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment"
+      APP_REDIS_URL: "redis://redis:6379/0"
+      APP_OPENSEARCH_URL: "http://opensearch:9200"
+      APP_MATCHING_V2_ENABLED: "${APP_MATCHING_V2_ENABLED:-false}"
+      APP_MATCHING_V2_SHADOW_MODE: "${APP_MATCHING_V2_SHADOW_MODE:-false}"
+      APP_MATCHING_V2_FALLBACK_ENABLED: "${APP_MATCHING_V2_FALLBACK_ENABLED:-true}"
+      APP_MATCHING_MODEL_SERVICE_URL: "${APP_MATCHING_MODEL_SERVICE_URL:-http://matching-models:8090}"
+      APP_EMBEDDING_SERVICE_URL: "${APP_EMBEDDING_SERVICE_URL:-http://matching-models:8090}"
+      APP_EMBEDDING_DIMENSIONS: "${APP_EMBEDDING_DIMENSIONS:-384}"
+      APP_RERANKER_SERVICE_URL: "${APP_RERANKER_SERVICE_URL:-}"
+      APP_RERANKER_API_KEY: "${APP_RERANKER_API_KEY:-}"
+      APP_RAG_SERVICE_URL: "${APP_RAG_SERVICE_URL:-}"
+      APP_RAG_API_KEY: "${APP_RAG_API_KEY:-}"
+      APP_RAG_PROJECT_ID: "${APP_RAG_PROJECT_ID:-}"
+      APP_RAG_COLLECTION: "${APP_RAG_COLLECTION:-default}"
+      APP_RAG_ENABLED: "${APP_RAG_ENABLED:-false}"
+      APP_BROWSER_STATE_ENCRYPTION_KEY: "${APP_BROWSER_STATE_ENCRYPTION_KEY:-}"
+      APP_ANTHROPIC_API_KEY: "${APP_ANTHROPIC_API_KEY:-}"
+      APP_GEMINI_API_KEY: "${APP_GEMINI_API_KEY:-}"
+      APP_MATCHING_WORKER_CONCURRENCY: "${APP_MATCHING_WORKER_CONCURRENCY:-2}"
+      APP_WORKER_LEASE_SECONDS: "300"
+      APP_WORKER_POLL_SECONDS: "2"
+      APP_WORKER_RETRY_SECONDS: "30"
+      APP_WORKER_MAX_ATTEMPTS: "3"
+    command: ["python", "-m", "app.workers.matching_worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - ./.artifacts:/app/.artifacts
+    networks:
+      - default
+      - local-code-worker
+
   browser-worker:
     profiles: ["browser"]
     build:

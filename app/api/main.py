@@ -4,7 +4,6 @@ import secrets
 import sys
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import AsyncExitStack
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
@@ -87,9 +86,9 @@ from app.api.schemas import (
     LlmPreferenceResponse,
     LlmPreferenceUpdateRequest,
     PrepareApplicationRequest,
+    ProfileFactDetailResponse,
     ProfileFactRequest,
     ProfileFactResponse,
-    ProfileFactDetailResponse,
     RequirementMatchDetailResponse,
     RerankerStatusResponse,
     ResumeRagSyncResponse,
@@ -149,7 +148,11 @@ from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
 from app.llm.providers.openai_compatible import OpenAICompatibleProvider
 from app.llm.router import ModelProvider, ModelRouter, NoModelAvailableError
-from app.matching.jobs import MatchingJobNotReadyError, MatchingJobService
+from app.matching.jobs import (
+    BACKGROUND_MATCHING_PRIORITY,
+    MatchingJobNotReadyError,
+    MatchingJobService,
+)
 from app.observability.logging import configure_logging
 from app.observability.metrics import metrics
 from app.prompts.registry import PromptRegistry
@@ -171,8 +174,16 @@ from app.services.browser_authorization import (
     BrowserAuthorizationSite,
 )
 from app.services.browser_handoff import create_browser_handoff
+from app.services.browser_worker_client import BrowserWorkerClient
 from app.services.company_blacklist import CompanyBlacklistService
+from app.services.email_file_import import (
+    MAX_EMAIL_IMPORT_BYTES,
+    MAX_EMAIL_IMPORT_FILES,
+    UploadedEmailFile,
+    UploadedEmailImportProvider,
+)
 from app.services.email_integrations import EmailIntegrationService, InvalidEmailIntegration
+from app.services.http_adapters import HttpHeadHunterAdapter, HttpLinkedInAdapter
 from app.services.imap_email_provider import ImapApplicationEmailProvider
 from app.services.job_discovery import (
     DiscoveryOutcome,
@@ -188,12 +199,12 @@ from app.services.materials_generation import (
     cover_letter_matches_vacancy_language,
     detect_vacancy_language,
 )
+from app.services.rag_sync import RagSyncService
 from app.services.recruitment import (
     DuplicateEntityError,
     EntityNotFoundError,
     RecruitmentService,
 )
-from app.services.rag_sync import RagSyncService
 from app.services.reranker_status import RerankerStatusProbe
 from app.services.resume_intake import ResumeIntakeService
 from app.services.resume_rag_jobs import (
@@ -243,8 +254,6 @@ from app.storage.tables import (
     WorkerHeartbeatRow,
     WorkflowTaskRow,
 )
-from app.services.browser_worker_client import BrowserWorkerClient
-from app.services.http_adapters import HttpHeadHunterAdapter, HttpLinkedInAdapter
 from app.workers.browser_worker import create_session_store
 
 configure_logging()
@@ -311,9 +320,7 @@ def serialize_cv_file(
     active_cv_file_id: str | None,
     rag_status: ResumeRagJobStatus | None = None,
 ) -> CvFileResponse:
-    rag_status = rag_status or ResumeRagJobStatus(
-        None, "not_scheduled", 0, None, None, None
-    )
+    rag_status = rag_status or ResumeRagJobStatus(None, "not_scheduled", 0, None, None, None)
     return CvFileResponse(
         id=cv_file.id,
         user_id=cv_file.user_id,
@@ -346,6 +353,20 @@ def resume_rag_status(session: Session, cv_file_id: str) -> ResumeRagJobStatus:
     return ResumeRagJobService(session).status(cv_file_id)
 
 
+def required_mapping_string(data: dict[str, object], key: str, *, default: str = "") -> str:
+    value = data.get(key, default)
+    if not isinstance(value, str):
+        raise ValueError(f"Browser worker returned invalid {key}")
+    return value
+
+
+def required_mapping_string_list(data: dict[str, object], key: str) -> list[str]:
+    value = data.get(key, [])
+    if not isinstance(value, list | tuple) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"Browser worker returned invalid {key}")
+    return [item for item in value if isinstance(item, str)]
+
+
 def required_api_scope(method: str, path: str) -> str:
     if path == "/v1/assessments":
         return "assessments:write"
@@ -358,6 +379,8 @@ def required_api_scope(method: str, path: str) -> str:
     if path.startswith("/v1/vacancies"):
         return "vacancies:write"
     if method == "GET" and path.startswith("/v1/evidence/"):
+        return "review:read"
+    if method == "GET" and path.startswith("/v1/workflow-tasks/"):
         return "review:read"
     if path == "/v1/applications/prepare":
         return "applications:write"
@@ -504,7 +527,6 @@ async def model_router() -> AsyncIterator[ModelRouter]:
     settings = get_settings()
     async with httpx.AsyncClient(timeout=60, follow_redirects=False, trust_env=False) as client:
         yield ModelRouter(build_model_providers(client, settings))
-
 
 
 def document_storage() -> DocumentStorage:
@@ -860,8 +882,7 @@ async def synchronize_application_statuses(
             status_code=503,
             detail="APP_BROWSER_STATE_ENCRYPTION_KEY is required",
         )
-    store = create_session_store(settings)
-    probes: dict[str, object] = {}
+    probes: dict[str, ApplicationSubmissionProbe] = {}
     browser_client = BrowserWorkerClient(settings.browser_worker_url)
     headhunter_probe = await browser_client.probe(user_id=user_id, site_key="headhunter")
     if headhunter_probe.valid:
@@ -886,6 +907,57 @@ async def synchronize_application_emails(
     session: Annotated[Session, Depends(session_scope)],
     provider: Annotated[ApplicationEmailProvider, Depends(get_application_email_provider)],
 ) -> ApplicationEmailSyncResponse:
+    try:
+        summary = await ApplicationEmailSyncService(session).synchronize(user_id, provider)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return ApplicationEmailSyncResponse.model_validate(asdict(summary))
+
+
+@app.post(
+    "/v1/users/{user_id}/application-email-import",
+    response_model=ApplicationEmailSyncResponse,
+)
+async def import_application_emails(
+    user_id: str,
+    files: Annotated[
+        list[UploadFile],
+        File(description="EML files, an mbox mailbox, or ZIP archives containing EML files"),
+    ],
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationEmailSyncResponse:
+    if not files:
+        raise HTTPException(status_code=422, detail="At least one email file is required")
+    if len(files) > MAX_EMAIL_IMPORT_FILES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"At most {MAX_EMAIL_IMPORT_FILES} email files can be imported at once",
+        )
+    uploaded_files: list[UploadedEmailFile] = []
+    total_bytes = 0
+    try:
+        for upload in files:
+            remaining = MAX_EMAIL_IMPORT_BYTES - total_bytes
+            content = await upload.read(remaining + 1)
+            if len(content) > remaining:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="Email import exceeds the total size limit",
+                )
+            total_bytes += len(content)
+            uploaded_files.append(
+                UploadedEmailFile(
+                    filename=upload.filename or "",
+                    content=content,
+                )
+            )
+    finally:
+        for upload in files:
+            await upload.close()
+    try:
+        provider = UploadedEmailImportProvider(uploaded_files)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     try:
         summary = await ApplicationEmailSyncService(session).synchronize(user_id, provider)
     except EntityNotFoundError as error:
@@ -920,9 +992,7 @@ def get_llm_preference(
     row = session.get(LlmPreferenceRow, user_id)
     if row is None:
         return None
-    return LlmPreferenceResponse(  # type: ignore[arg-type]
-        provider=row.provider, model=row.model, base_url=row.base_url
-    )
+    return LlmPreferenceResponse.model_validate(row, from_attributes=True)
 
 
 @app.get(
@@ -963,9 +1033,7 @@ def get_autofill_values(
             detail="APP_BROWSER_STATE_ENCRYPTION_KEY is required",
         )
     try:
-        values = list_autofill_values(
-            session, user_id=user_id, encryption_key=encryption_key
-        )
+        values = list_autofill_values(session, user_id=user_id, encryption_key=encryption_key)
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except InvalidAutofillValueEncryption as error:
@@ -1105,9 +1173,7 @@ def update_llm_preference(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except InvalidLlmPreference as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return LlmPreferenceResponse(  # type: ignore[arg-type]
-        provider=row.provider, model=row.model, base_url=row.base_url
-    )
+    return LlmPreferenceResponse.model_validate(row, from_attributes=True)
 
 
 @app.put(
@@ -1170,9 +1236,7 @@ def _custom_authorization_site(row: SiteDefinitionRow) -> BrowserAuthorizationSi
     markers = tuple(
         marker
         for marker in raw_markers
-        if isinstance(marker, str)
-        and marker.startswith("/")
-        and len(marker) <= 500
+        if isinstance(marker, str) and marker.startswith("/") and len(marker) <= 500
     )
     if not markers:
         login_path = urlsplit(row.login_url).path or "/"
@@ -1548,7 +1612,7 @@ def get_site_field_effective_value(
     return EffectiveValueResponse(
         value_key=mapping.value_key,
         value=transformed_value,
-        source=resolved.source.value,  # type: ignore[arg-type]
+        source=resolved.source.value,
         source_record_id=resolved.source_record_id,
         is_sensitive=resolved.is_sensitive,
         requires_review=resolved.requires_review or mapping.review_required,
@@ -1580,9 +1644,7 @@ async def get_browser_session_statuses(
         )
         .order_by(SiteDefinitionRow.name, SiteDefinitionRow.site_key)
     ).all()
-    custom_sites = [
-        row for row in custom_sites if row.site_key not in KNOWN_AUTHORIZATION_SITES
-    ]
+    custom_sites = [row for row in custom_sites if row.site_key not in KNOWN_AUTHORIZATION_SITES]
     sites = [
         ("headhunter", "hh.ru", False),
         ("linkedin", "LinkedIn", False),
@@ -1826,14 +1888,22 @@ def list_profile_facts_detailed(
     facts = session.scalars(query).all()
     return [
         ProfileFactDetailResponse(
-            id=f.id, user_id=f.user_id, category=f.category, name=f.name,
-            value=f.value, is_verified=f.is_verified,
-            source_type=f.source_type, source_id=f.source_id,
-            source_text=f.source_text, extraction_method=f.extraction_method,
-            batch_id=f.batch_id, confidence=f.confidence,
+            id=f.id,
+            user_id=f.user_id,
+            category=f.category,
+            name=f.name,
+            value=f.value,
+            is_verified=f.is_verified,
+            source_type=f.source_type,
+            source_id=f.source_id,
+            source_text=f.source_text,
+            extraction_method=f.extraction_method,
+            batch_id=f.batch_id,
+            confidence=f.confidence,
             experience_started_at=f.experience_started_at,
             experience_ended_at=f.experience_ended_at,
-            status=f.status, created_at=f.created_at,
+            status=f.status,
+            created_at=f.created_at,
         )
         for f in facts
     ]
@@ -1850,8 +1920,8 @@ async def import_facts_from_file(
     auto_accept: bool = False,
 ) -> FactImportResultResponse:
     """Import facts from an uploaded file (TXT, MD, CSV, JSON, PDF, DOCX)."""
-    from app.services.fact_ingestion import FactIngestionService
     from app.llm.preferences import InvalidLlmPreference
+    from app.services.fact_ingestion import FactIngestionService
 
     content = await file.read()
     settings = get_settings()
@@ -1863,7 +1933,10 @@ async def import_facts_from_file(
         if not providers:
             raise HTTPException(
                 status_code=503,
-                detail="No LLM provider configured. Set one in the Model tab or via APP_GEMINI_API_KEY / APP_ANTHROPIC_API_KEY.",
+                detail=(
+                    "No LLM provider configured. Set one in the Model tab or via "
+                    "APP_GEMINI_API_KEY / APP_ANTHROPIC_API_KEY."
+                ),
             )
         router = ModelRouter(providers)
         prompt_registry = PromptRegistry.load(
@@ -1872,7 +1945,9 @@ async def import_facts_from_file(
         service = FactIngestionService(session, router, prompt_registry)
         try:
             result = await service.import_from_file(
-                user_id, file.filename or "upload", content,
+                user_id,
+                file.filename or "upload",
+                content,
                 auto_accept=auto_accept,
             )
         except ValueError as error:
@@ -1909,8 +1984,8 @@ async def extract_facts_from_resume(
     session: Annotated[Session, Depends(session_scope)],
 ) -> FactImportResultResponse:
     """Extract facts from an existing resume using LLM."""
-    from app.services.fact_ingestion import FactIngestionService
     from app.llm.preferences import InvalidLlmPreference
+    from app.services.fact_ingestion import FactIngestionService
 
     settings = get_settings()
     async with httpx.AsyncClient(timeout=120, follow_redirects=False, trust_env=False) as client:
@@ -1921,7 +1996,10 @@ async def extract_facts_from_resume(
         if not providers:
             raise HTTPException(
                 status_code=503,
-                detail="No LLM provider configured. Set one in the Model tab or via APP_GEMINI_API_KEY / APP_ANTHROPIC_API_KEY.",
+                detail=(
+                    "No LLM provider configured. Set one in the Model tab or via "
+                    "APP_GEMINI_API_KEY / APP_ANTHROPIC_API_KEY."
+                ),
             )
         router = ModelRouter(providers)
         prompt_registry = PromptRegistry.load(
@@ -1930,8 +2008,10 @@ async def extract_facts_from_resume(
         service = FactIngestionService(session, router, prompt_registry)
         try:
             result = await service.extract_from_resume(
-                user_id, request.cv_file_id,
-                force=request.force, auto_accept=request.auto_accept,
+                user_id,
+                request.cv_file_id,
+                force=request.force,
+                auto_accept=request.auto_accept,
             )
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
@@ -1970,18 +2050,24 @@ def list_fact_import_batches(
 
     service = FactIngestionService(
         session,
-        ModelRouter([]),  # No LLM needed for listing
+        ModelRouter(()),  # No LLM needed for listing
         PromptRegistry.load(Path(__file__).parents[2] / "prompts" / "registry.json"),
     )
     batches = service.list_batches(user_id)
     return [
         FactImportBatchResponse(
-            id=b.id, user_id=b.user_id, source_type=b.source_type,
-            source_id=b.source_id, source_filename=b.source_filename,
+            id=b.id,
+            user_id=b.user_id,
+            source_type=b.source_type,
+            source_id=b.source_id,
+            source_filename=b.source_filename,
             extractor_version=b.extractor_version,
-            facts_created=b.facts_created, facts_merged=b.facts_merged,
-            facts_skipped=b.facts_skipped, facts_rejected=b.facts_rejected,
-            status=b.status, created_at=b.created_at,
+            facts_created=b.facts_created,
+            facts_merged=b.facts_merged,
+            facts_skipped=b.facts_skipped,
+            facts_rejected=b.facts_rejected,
+            status=b.status,
+            created_at=b.created_at,
         )
         for b in batches
     ]
@@ -2000,7 +2086,7 @@ def undo_fact_import_batch(
 
     service = FactIngestionService(
         session,
-        ModelRouter([]),
+        ModelRouter(()),
         PromptRegistry.load(Path(__file__).parents[2] / "prompts" / "registry.json"),
     )
     try:
@@ -2032,7 +2118,7 @@ def recalculate_application_match(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except MatchingJobNotReadyError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return _workflow_task_response(task)
+    return _workflow_task_response(task, session)
 
 
 @app.post(
@@ -2516,6 +2602,7 @@ async def discover_vacancies_stream(
                     MatchingJobService(matching_session).schedule(
                         application_id,
                         force=force,
+                        priority=BACKGROUND_MATCHING_PRIORITY,
                     )
                 matching_was_scheduled = True
             except Exception as error:  # noqa: BLE001 - legacy score remains available
@@ -2569,9 +2656,7 @@ async def discover_vacancies_stream(
                                 profile_ingestion = ProfileRagIngestionService(rag_session, rag)
                                 await profile_ingestion.ingest_profile(app_row.user_id)
                                 if app_row.selected_cv_file_id is not None:
-                                    await profile_ingestion.ingest_cv(
-                                        app_row.selected_cv_file_id
-                                    )
+                                    await profile_ingestion.ingest_cv(app_row.selected_cv_file_id)
                             result = await VacancyRagIngestionService(
                                 rag_session, rag
                             ).ingest_vacancy(
@@ -2656,14 +2741,17 @@ async def discover_vacancies_stream(
                     with SessionFactory() as poll_session:
                         aggregate = poll_session.get(ApplicationMatchResultRow, application_id)
                         application = poll_session.get(ApplicationRow, application_id)
-                        if (
-                            aggregate is not None
-                            and aggregate.status in {"scored", "degraded", "failed"}
-                        ):
+                        if aggregate is not None and aggregate.status in {
+                            "scored",
+                            "degraded",
+                            "failed",
+                        }:
                             score = (
                                 round(aggregate.final_score)
                                 if aggregate.status == "scored"
-                                else application.match_score if application is not None else 0
+                                else application.match_score
+                                if application is not None
+                                else 0
                             )
                             enrichment.update(
                                 matching_status=aggregate.status,
@@ -2713,11 +2801,9 @@ async def discover_vacancies_stream(
             return enrichment
 
     async def run_source(source: str) -> None:
-        enrichment_tasks: list[asyncio.Task[None]] = []
+        enrichment_tasks: list[asyncio.Task[dict[str, object]]] = []
         direct_results: list[tuple[DiscoveryOutcome, dict[str, object]]] = []
-        direct_tasks: list[
-            tuple[DiscoveryOutcome, asyncio.Task[dict[str, object]]]
-        ] = []
+        direct_tasks: list[tuple[DiscoveryOutcome, asyncio.Task[dict[str, object]]]] = []
         try:
             with SessionFactory() as source_session:
                 service = JobDiscoveryService(source_session)
@@ -2763,13 +2849,13 @@ async def discover_vacancies_stream(
                         )
                     browser_client = BrowserWorkerClient(settings.browser_worker_url)
                     if source == "headhunter":
-                        adapter = HttpHeadHunterAdapter(browser_client, user_id)
+                        headhunter_adapter = HttpHeadHunterAdapter(browser_client, user_id)
                     else:
-                        adapter = HttpLinkedInAdapter(browser_client, user_id)
+                        linkedin_adapter = HttpLinkedInAdapter(browser_client, user_id)
                     if source == "headhunter":
                         await service.discover_headhunter_vacancies(
                             user_id,
-                            headhunter_adapter=adapter,
+                            headhunter_adapter=headhunter_adapter,
                             locations=request.locations,
                             limit=discovery_limit,
                             search_text=request.search_text,
@@ -2779,7 +2865,7 @@ async def discover_vacancies_stream(
                     else:
                         await service.discover_linkedin_vacancies(
                             user_id,
-                            linkedin_adapter=adapter,
+                            linkedin_adapter=linkedin_adapter,
                             locations=request.locations,
                             limit=discovery_limit,
                             search_text=request.search_text,
@@ -2787,9 +2873,7 @@ async def discover_vacancies_stream(
                             on_outcome=on_outcome,
                         )
                 if request.direct_rerank:
-                    enrichments = await asyncio.gather(
-                        *(task for _outcome, task in direct_tasks)
-                    )
+                    enrichments = await asyncio.gather(*(task for _outcome, task in direct_tasks))
                     direct_results.extend(
                         (outcome, enrichment)
                         for (outcome, _task), enrichment in zip(
@@ -2799,20 +2883,27 @@ async def discover_vacancies_stream(
                         )
                     )
                     direct_results.sort(
-                        key=lambda item: float(item[1].get("match_score", 0)),
+                        key=lambda item: (
+                            float(raw_score)
+                            if isinstance(
+                                (raw_score := item[1].get("match_score", 0)),
+                                str | int | float,
+                            )
+                            else 0.0
+                        ),
                         reverse=True,
                     )
                     for outcome, enrichment in direct_results[: request.limit]:
                         await publish_outcome(source, outcome, enrichment)
         except Exception as error:  # noqa: BLE001 - one source must not end the whole stream
-            await queue.put({"event": "source_error", "source": source, "error": str(error)})
+            await queue.put(
+                {"event": "source_error", "source": source, "error": type(error).__name__}
+            )
         finally:
             await queue.put({"event": "source_complete", "source": source})
             if enrichment_tasks:
                 await asyncio.gather(*enrichment_tasks, return_exceptions=True)
-            unfinished_direct_tasks = [
-                task for _outcome, task in direct_tasks if not task.done()
-            ]
+            unfinished_direct_tasks = [task for _outcome, task in direct_tasks if not task.done()]
             if unfinished_direct_tasks:
                 await asyncio.gather(*unfinished_direct_tasks, return_exceptions=True)
             await queue.put({"event": "_source_finished", "source": source})
@@ -2921,18 +3012,27 @@ async def import_headhunter_vacancy(
         data = await browser_client.extract_headhunter(
             user_id="anonymous", url=str(request.source_url)
         )
+        source_url = required_mapping_string(data, "source_url", default=str(request.source_url))
+        title = required_mapping_string(data, "title")
+        company = required_mapping_string(data, "company")
+        location = required_mapping_string(data, "location")
+        description_text = required_mapping_string(data, "description_text")
+        required_skills = required_mapping_string_list(data, "required_skills")
+        requires_sensitive_review = data.get("requires_sensitive_review", False)
+        if not isinstance(requires_sensitive_review, bool):
+            raise ValueError("Browser worker returned invalid sensitive-review flag")
         vacancy = RecruitmentService(session).create_vacancy(
-            source_url=data.get("source_url", str(request.source_url)),
-            title=data.get("title", ""),
-            company=data.get("company", ""),
-            required_skills=list(data.get("required_skills", [])),
+            source_url=source_url,
+            title=title,
+            company=company,
+            required_skills=required_skills,
             preferred_skills=[],
-            location=data.get("location", ""),
-            description_text=data.get("description_text", ""),
+            location=location,
+            description_text=description_text,
             adapter_name="headhunter",
-            source_evidence_url=data.get("source_url", str(request.source_url)),
+            source_evidence_url=source_url,
             application_fields=[],
-            requires_sensitive_review=data.get("requires_sensitive_review", False),
+            requires_sensitive_review=requires_sensitive_review,
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -3040,12 +3140,8 @@ def application_match_details(
             source_fragment=requirement.source_fragment,
             evidence_id=evidence.id if evidence is not None else None,
             evidence_text=evidence.evidence_text if evidence is not None else None,
-            evidence_experience_level=(
-                evidence.experience_level if evidence is not None else None
-            ),
-            evidence_source_fragment=(
-                evidence.source_fragment if evidence is not None else None
-            ),
+            evidence_experience_level=(evidence.experience_level if evidence is not None else None),
+            evidence_source_fragment=(evidence.source_fragment if evidence is not None else None),
             lexical_score=requirement_match.lexical_score,
             dense_score=requirement_match.dense_score,
             hybrid_score=requirement_match.hybrid_score,
@@ -3096,6 +3192,18 @@ def application_match_details(
         preferred_score=aggregate.preferred_score,
         bonus_score=aggregate.bonus_score,
         confidence=aggregate.confidence,
+        raw_score_before_blockers=float(
+            aggregate.explanation_json.get("raw_score_before_blockers", 0)
+        ),
+        blocker_penalty=float(aggregate.explanation_json.get("blocker_penalty", 0)),
+        calibration_version=str(
+            aggregate.explanation_json.get("calibration_version", "identity")
+        ),
+        recommendations=list(aggregate.explanation_json.get("recommendations", [])),
+        hard_blockers=list(aggregate.explanation_json.get("hard_blockers", [])),
+        hard_blockers_unresolved=list(
+            aggregate.explanation_json.get("hard_blockers_unresolved", [])
+        ),
     )
 
 
@@ -3115,7 +3223,7 @@ def prepare_browser_review(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return _workflow_task_response(task)
+    return _workflow_task_response(task, session)
 
 
 @app.post(
@@ -3151,7 +3259,7 @@ def apply_headhunter(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return _workflow_task_response(task)
+    return _workflow_task_response(task, session)
 
 
 @app.post(
@@ -3188,7 +3296,7 @@ def apply_linkedin(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return _workflow_task_response(task)
+    return _workflow_task_response(task, session)
 
 
 @app.get(
@@ -3200,14 +3308,47 @@ def get_application_task(
     session: Annotated[Session, Depends(session_scope)],
 ) -> WorkflowTaskResponse:
     task = session.scalar(
-        select(WorkflowTaskRow).where(WorkflowTaskRow.application_id == application_id)
+        select(WorkflowTaskRow)
+        .where(WorkflowTaskRow.application_id == application_id)
+        .order_by(WorkflowTaskRow.created_at.desc())
     )
     if task is None:
         raise HTTPException(status_code=404, detail="Workflow task not found")
-    return _workflow_task_response(task)
+    return _workflow_task_response(task, session)
 
 
-def _workflow_task_response(task: WorkflowTaskRow) -> WorkflowTaskResponse:
+@app.get("/v1/workflow-tasks/{task_id}", response_model=WorkflowTaskResponse)
+def get_workflow_task(
+    task_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> WorkflowTaskResponse:
+    task = session.get(WorkflowTaskRow, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Workflow task not found")
+    return _workflow_task_response(task, session)
+
+
+def _workflow_task_response(task: WorkflowTaskRow, session: Session) -> WorkflowTaskResponse:
+    active_states = ("running", "scheduled", "retry_scheduled")
+    queue_position: int | None = None
+    if task.state in active_states:
+        ordered_ids = list(
+            session.scalars(
+                select(WorkflowTaskRow.id)
+                .where(
+                    WorkflowTaskRow.queue_name == task.queue_name,
+                    WorkflowTaskRow.state.in_(active_states),
+                )
+                .order_by(WorkflowTaskRow.priority.desc(), WorkflowTaskRow.created_at)
+            )
+        )
+        if task.id in ordered_ids:
+            queue_position = ordered_ids.index(task.id) + 1
+    aggregate = (
+        session.get(ApplicationMatchResultRow, task.application_id)
+        if task.idempotency_key.startswith("matching-v2:") and task.application_id is not None
+        else None
+    )
     return WorkflowTaskResponse(
         id=task.id,
         application_id=task.application_id,
@@ -3216,6 +3357,18 @@ def _workflow_task_response(task: WorkflowTaskRow) -> WorkflowTaskResponse:
         state=task.state,
         attempt_number=task.attempt_number,
         priority=task.priority,
+        queue_position=queue_position,
+        pipeline_status=aggregate.status if aggregate is not None else None,
+        pipeline_started_at=aggregate.started_at if aggregate is not None else None,
+        pipeline_updated_at=aggregate.updated_at if aggregate is not None else None,
+        calculated_at=aggregate.calculated_at if aggregate is not None else None,
+        requirements_total=aggregate.requirements_total if aggregate is not None else None,
+        requirements_processed=aggregate.requirements_processed if aggregate is not None else None,
+        llm_calls_made=aggregate.llm_calls_made if aggregate is not None else None,
+        refresh_requested=task.refresh_requested,
+        scheduled_for=task.scheduled_for,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
         transitions=[
             TaskTransitionResponse(
                 previous_state=transition.previous_state,
@@ -3224,6 +3377,7 @@ def _workflow_task_response(task: WorkflowTaskRow) -> WorkflowTaskResponse:
                 worker=transition.worker,
                 attempt_number=transition.attempt_number,
                 evidence=transition.evidence,
+                occurred_at=transition.occurred_at,
             )
             for transition in task.transitions
         ],
