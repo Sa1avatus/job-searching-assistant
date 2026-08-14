@@ -38,6 +38,34 @@ def _handle_refresh_requested(task_id: str, new_state: TaskState, worker_prefix:
         logger.info("matching_refresh_auto_rescheduled", task_id=task_id)
 
 
+
+async def _periodic_recovery(
+    stopped: asyncio.Event,
+    worker_prefix: str,
+    settings: object,
+    interval_seconds: int,
+) -> None:
+    """Periodically recover stale running tasks from crashed workers."""
+    logger = structlog.get_logger()
+    while not stopped.is_set():
+        with suppress(TimeoutError):
+            await asyncio.wait_for(stopped.wait(), timeout=interval_seconds)
+        if stopped.is_set():
+            break
+        try:
+            with SessionFactory() as session:
+                recovered = SqlTaskRepository(session).recover_stale_running_tasks(
+                    cutoff=datetime.now(UTC) - timedelta(seconds=interval_seconds),
+                    recovery_worker=f"{worker_prefix}-periodic-recovery",
+                    queue_name=MATCHING_QUEUE_NAME,
+                    max_attempts=settings.worker_max_attempts,
+                )
+            if recovered > 0:
+                logger.info("periodic_recovery_recovered", count=recovered)
+        except Exception:
+            logger.warning("periodic_recovery_failed", exc_info=True)
+
+
 async def _run_slot(
     dispatcher: DurableTaskDispatcher,
     stopped: asyncio.Event,
@@ -101,6 +129,13 @@ async def run_worker() -> None:
         )
         for dispatcher in dispatchers
     ]
+    # Periodic stale task recovery — catches orphaned tasks from crashed workers
+    recovery_interval = max(settings.worker_lease_seconds, 120)
+    tasks.append(
+        asyncio.create_task(
+            _periodic_recovery(stopped, worker_prefix, settings, recovery_interval)
+        )
+    )
     try:
         await stopped.wait()
     finally:
