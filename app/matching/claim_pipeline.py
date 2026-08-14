@@ -60,6 +60,34 @@ _RELATION_SYMBOLS: dict[str, str] = {
     "missing": "✗",
 }
 
+_RELATION_LABELS_RU: dict[str, str] = {
+    "entailed": "подтверждено",
+    "partial": "частично подтверждено",
+    "related_but_insufficient": "недостаточно данных",
+    "insufficient_evidence": "недостаточно доказательств",
+    "evaluation_error": "ошибка оценки",
+    "contradicted": "противоречит",
+    "unknown": "неизвестно",
+    "missing": "отсутствует",
+}
+
+_RELATION_LABELS_EN: dict[str, str] = {
+    "entailed": "confirmed",
+    "partial": "partially confirmed",
+    "related_but_insufficient": "insufficient evidence",
+    "insufficient_evidence": "insufficient evidence",
+    "evaluation_error": "evaluation error",
+    "contradicted": "contradicted",
+    "unknown": "unknown",
+    "missing": "missing",
+}
+
+
+def _is_cyrillic(text: str) -> bool:
+    """Check if text contains significant Cyrillic content."""
+    cyrillic = sum(1 for ch in text if 'Ѐ' <= ch <= 'ӿ')
+    return cyrillic > len(text) * 0.1
+
 
 @dataclass
 class SynthesizedEvidence:
@@ -602,21 +630,38 @@ class ClaimMatchPipeline:
 
         is_hard_blocker = any(cr.claim.criticality.value == "hard_blocker" for cr in claim_results)
 
-        lines = [f"Decomposed into {len(decomposition.claims)} claims:"]
+        is_ru = _is_cyrillic(requirement.requirement_text)
+        labels = _RELATION_LABELS_RU if is_ru else _RELATION_LABELS_EN
+        header = (
+            f"Разложено на {len(decomposition.claims)} утверждений:"
+            if is_ru
+            else f"Decomposed into {len(decomposition.claims)} claims:"
+        )
+        lines = [header]
         for cr in claim_results:
             symbol = _RELATION_SYMBOLS.get(cr.relation, "?")
+            label = labels.get(cr.relation, cr.relation)
             synth_note = ""
             if cr.synthesized and len(cr.synthesized.evidence_ids) > 1:
-                synth_note = f" [synthesized from {len(cr.synthesized.evidence_ids)} evidence]"
+                synth_note = (
+                    f" [синтезировано из {len(cr.synthesized.evidence_ids)} источников]"
+                    if is_ru
+                    else f" [synthesized from {len(cr.synthesized.evidence_ids)} evidence]"
+                )
             duration_note = ""
             if cr.duration_result:
                 dr = cr.duration_result
                 duration_note = (
-                    f" [duration: {dr.get('actual_years', 0):.1f}/"
-                    f"{dr.get('required_years', 0):.1f} years]"
+                    f" [стаж: {dr.get('actual_years', 0):.1f}/"
+                    f"{dr.get('required_years', 0):.1f} лет]"
+                    if is_ru
+                    else (
+                        f" [duration: {dr.get('actual_years', 0):.1f}/"
+                        f"{dr.get('required_years', 0):.1f} years]"
+                    )
                 )
             lines.append(
-                f"  {symbol} {cr.claim.subject}: {cr.relation} "
+                f"  {symbol} {cr.claim.subject}: {label} "
                 f"(strength={cr.evidence_strength:.2f}){synth_note}{duration_note}"
             )
 
