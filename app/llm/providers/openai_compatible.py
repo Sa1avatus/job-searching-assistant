@@ -12,6 +12,54 @@ class OpenAICompatibleResponseError(RuntimeError):
     """An OpenAI-compatible endpoint returned an unusable response."""
 
 
+_OLLAMA_UNSUPPORTED_SCHEMA_KEYWORDS = frozenset(
+    {
+        "default",
+        "description",
+        "maxItems",
+        "maxLength",
+        "maximum",
+        "minItems",
+        "minLength",
+        "minimum",
+        "title",
+    }
+)
+
+
+def simplify_json_schema_for_ollama(schema: dict[str, object]) -> dict[str, object]:
+    """Inline local definitions and retain only grammar-relevant constraints."""
+
+    definitions = schema.get("$defs")
+    known_definitions = definitions if isinstance(definitions, dict) else {}
+
+    def simplify(value: object) -> object:
+        if isinstance(value, list):
+            return [simplify(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+
+        reference = value.get("$ref")
+        if isinstance(reference, str) and reference.startswith("#/$defs/"):
+            definition_name = reference.removeprefix("#/$defs/")
+            resolved = known_definitions.get(definition_name)
+            if isinstance(resolved, dict):
+                merged = dict(resolved)
+                merged.update({key: item for key, item in value.items() if key != "$ref"})
+                return simplify(merged)
+
+        return {
+            key: simplify(item)
+            for key, item in value.items()
+            if key != "$defs" and key not in _OLLAMA_UNSUPPORTED_SCHEMA_KEYWORDS
+        }
+
+    simplified = simplify(schema)
+    if not isinstance(simplified, dict):
+        raise ValueError("JSON schema must be an object")
+    return simplified
+
+
 def normalize_openai_compatible_base_url(base_url: str) -> str:
     try:
         parsed_url = httpx.URL(base_url.strip())
@@ -28,9 +76,7 @@ def normalize_openai_compatible_base_url(base_url: str) -> str:
     ):
         raise ValueError("OpenAI-compatible base URL is invalid")
 
-    return str(
-        parsed_url.copy_with(path=parsed_url.path.rstrip("/"))
-    ).rstrip("/")
+    return str(parsed_url.copy_with(path=parsed_url.path.rstrip("/"))).rstrip("/")
 
 
 def remove_json_markdown_fence(content: str) -> str:
@@ -66,14 +112,12 @@ def parse_model_json(content: str) -> dict[str, object]:
         excerpt = normalized_content[:2000]
 
         raise OpenAICompatibleResponseError(
-            "OpenAI-compatible model content was not valid JSON: "
-            f"{error}; content={excerpt!r}"
+            f"OpenAI-compatible model content was not valid JSON: {error}; content={excerpt!r}"
         ) from error
 
     if not isinstance(parsed, dict):
         raise OpenAICompatibleResponseError(
-            "OpenAI-compatible response JSON was not an object: "
-            f"received {type(parsed).__name__}"
+            f"OpenAI-compatible response JSON was not an object: received {type(parsed).__name__}"
         )
 
     return parsed
@@ -94,22 +138,15 @@ class OpenAICompatibleProvider(ModelProvider):
         normalized_model = model.strip()
 
         if not normalized_api_key:
-            raise ValueError(
-                "OpenAI-compatible API key must not be empty"
-            )
+            raise ValueError("OpenAI-compatible API key must not be empty")
 
         if not normalized_model:
-            raise ValueError(
-                "OpenAI-compatible model must not be empty"
-            )
+            raise ValueError("OpenAI-compatible model must not be empty")
 
-        normalized_base_url = normalize_openai_compatible_base_url(
-            base_url
-        )
+        normalized_base_url = normalize_openai_compatible_base_url(base_url)
 
-        self._completion_url = httpx.URL(
-            f"{normalized_base_url}/chat/completions"
-        )
+        self._completion_url = httpx.URL(f"{normalized_base_url}/chat/completions")
+        self._is_ollama = self._completion_url.port == 11434
         self._http_client = http_client
         self._api_key = normalized_api_key
         self._model = normalized_model
@@ -127,6 +164,52 @@ class OpenAICompatibleProvider(ModelProvider):
         self,
         request: ModelRequest,
     ) -> dict[str, object]:
+        response_schema = request.response_schema
+        schema_instruction = (
+            "\nFollow this JSON Schema exactly: "
+            + json.dumps(response_schema, ensure_ascii=False, separators=(",", ":"))
+            if response_schema is not None
+            else ""
+        )
+        response_format: dict[str, object] = {"type": "json_object"}
+        if response_schema is not None:
+            grammar_schema = (
+                simplify_json_schema_for_ollama(response_schema)
+                if self._is_ollama
+                else response_schema
+            )
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "structured_response",
+                    "strict": True,
+                    "schema": grammar_schema,
+                },
+            }
+        request_payload: dict[str, object] = {
+            "model": self._model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Return exactly one valid JSON object. "
+                        "Do not use Markdown code fences. "
+                        "Do not include explanations, comments, "
+                        "headings, or text before or after the JSON." + schema_instruction
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": request.prompt,
+                },
+            ],
+            "temperature": 0,
+            "stream": False,
+            "max_tokens": 16384,
+            "response_format": response_format,
+        }
+        if self._is_ollama:
+            request_payload["reasoning_effort"] = "none"
         response = await self._http_client.post(
             self._completion_url,
             headers={
@@ -134,29 +217,7 @@ class OpenAICompatibleProvider(ModelProvider):
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },
-            json={
-                "model": self._model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Return exactly one valid JSON object. "
-                            "Do not use Markdown code fences. "
-                            "Do not include explanations, comments, "
-                            "headings, or text before or after the JSON."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": request.prompt,
-                    },
-                ],
-                "temperature": 0,
-                "stream": False,
-                "response_format": {
-                    "type": "json_object",
-                },
-            },
+            json=request_payload,
         )
 
         response_content_type = response.headers.get(
@@ -216,8 +277,7 @@ class OpenAICompatibleProvider(ModelProvider):
             finish_reason = first_choice.get("finish_reason")
         except (KeyError, IndexError, TypeError) as error:
             raise OpenAICompatibleResponseError(
-                "OpenAI-compatible response has an invalid shape; "
-                f"payload={str(payload)[:2000]}"
+                f"OpenAI-compatible response has an invalid shape; payload={str(payload)[:2000]}"
             ) from error
 
         if not isinstance(content, str) or not content.strip():
