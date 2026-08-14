@@ -147,6 +147,7 @@ class OpenAICompatibleProvider(ModelProvider):
 
         self._completion_url = httpx.URL(f"{normalized_base_url}/chat/completions")
         self._is_ollama = self._completion_url.port == 11434
+        self._ollama_base = str(self._completion_url.copy_with(path="")) if self._is_ollama else ""
         self._http_client = http_client
         self._api_key = normalized_api_key
         self._model = normalized_model
@@ -160,6 +161,53 @@ class OpenAICompatibleProvider(ModelProvider):
     def estimate_cost_usd(self, request: ModelRequest) -> float:
         return 0.0
 
+    async def _complete_ollama_native(
+        self,
+        request: ModelRequest,
+        system_prompt: str,
+    ) -> dict[str, object]:
+        """Use Ollama native /api/chat with think=false to avoid reasoning token drain."""
+        payload: dict[str, object] = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": request.prompt},
+            ],
+            "stream": False,
+            "think": False,
+            "options": {
+                "temperature": 0,
+                "num_predict": 16384,
+                "num_ctx": 32768,
+            },
+        }
+        if request.response_schema is not None:
+            payload["format"] = simplify_json_schema_for_ollama(request.response_schema)
+
+        ollama_url = f"{self._ollama_base}/api/chat"
+        response = await self._http_client.post(
+            ollama_url,
+            json=payload,
+        )
+
+        if response.status_code >= 400:
+            raise OpenAICompatibleResponseError(
+                f"Ollama native API returned HTTP {response.status_code}; "
+                f"body={response.text[:1000]!r}"
+            )
+
+        data = response.json()
+        content = data.get("message", {}).get("content", "")
+        done_reason = data.get("done_reason", "")
+
+        if not content or not content.strip():
+            raise OpenAICompatibleResponseError(
+                f"Ollama native API returned empty content; "
+                f"done_reason={done_reason!r}"
+            )
+
+        return parse_model_json(content)
+
     async def complete(
         self,
         request: ModelRequest,
@@ -171,19 +219,26 @@ class OpenAICompatibleProvider(ModelProvider):
             if response_schema is not None
             else ""
         )
+        system_prompt = (
+            "Return exactly one valid JSON object. "
+            "Do not use Markdown code fences. "
+            "Do not include explanations, comments, "
+            "headings, or text before or after the JSON."
+            + schema_instruction
+        )
+
+        # For Ollama: use native API with think=false to prevent reasoning token drain
+        if self._is_ollama:
+            return await self._complete_ollama_native(request, system_prompt)
+
         response_format: dict[str, object] = {"type": "json_object"}
         if response_schema is not None:
-            grammar_schema = (
-                simplify_json_schema_for_ollama(response_schema)
-                if self._is_ollama
-                else response_schema
-            )
             response_format = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": "structured_response",
                     "strict": True,
-                    "schema": grammar_schema,
+                    "schema": response_schema,
                 },
             }
         request_payload: dict[str, object] = {
@@ -191,12 +246,7 @@ class OpenAICompatibleProvider(ModelProvider):
             "messages": [
                 {
                     "role": "system",
-                    "content": (
-                        "Return exactly one valid JSON object. "
-                        "Do not use Markdown code fences. "
-                        "Do not include explanations, comments, "
-                        "headings, or text before or after the JSON." + schema_instruction
-                    ),
+                    "content": system_prompt,
                 },
                 {
                     "role": "user",
@@ -208,8 +258,6 @@ class OpenAICompatibleProvider(ModelProvider):
             "max_tokens": 16384,
             "response_format": response_format,
         }
-        if self._is_ollama:
-            request_payload["reasoning_effort"] = "none"
         response = await self._http_client.post(
             self._completion_url,
             headers={
