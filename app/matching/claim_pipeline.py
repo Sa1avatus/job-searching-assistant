@@ -6,6 +6,7 @@ reranking → entailment evaluation → deterministic aggregation.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import time
 from collections.abc import Callable
@@ -121,8 +122,10 @@ class ClaimMatchPipeline:
         reranker_top_k: int = 5,
         fallback_enabled: bool = True,
         on_progress: Callable[[int, int], None] | None = None,
+        llm_concurrency: int = 10,
     ) -> None:
         self._session = session
+        self._llm_concurrency = llm_concurrency
         self._decomposer = decomposer
         self._evaluator = evaluator
         self._retriever = retriever
@@ -140,7 +143,56 @@ class ClaimMatchPipeline:
         cv_file_id: str,
         requirements: tuple[VacancyRequirementRow, ...],
     ) -> ClaimPipelineResult:
-        """Run claim-based matching for all requirements."""
+        """Run claim-based matching for all requirements in parallel."""
+        semaphore = asyncio.Semaphore(self._llm_concurrency)
+        completed_count = 0
+        total = len(requirements)
+        progress_lock = asyncio.Lock()
+
+        async def _process_one(
+            req_idx: int,
+            requirement: VacancyRequirementRow,
+        ) -> tuple[
+            RequirementClaimResults,
+            RequirementAssessment | None,
+            list[dict[str, object]],
+            dict[str, int],
+        ]:
+            async with semaphore:
+                result = await self._match_single_requirement(
+                    user_id, cv_file_id, requirement,
+                )
+            assessment = self._build_assessment(requirement, result)
+            local_gaps = []
+            local_counts: dict[str, int] = {}
+            for cr in result.claim_results:
+                local_gaps.append({
+                    "claim_id": cr.claim.id,
+                    "claim_subject": cr.claim.subject,
+                    "claim_type": cr.claim.claim_type.value,
+                    "relation": cr.relation,
+                    "evidence_strength": cr.evidence_strength,
+                    "has_evidence": cr.has_evidence,
+                    "duration_result": cr.duration_result,
+                })
+                local_counts[cr.relation] = (
+                    local_counts.get(cr.relation, 0) + 1
+                )
+            nonlocal completed_count
+            async with progress_lock:
+                completed_count += 1
+                if self._on_progress is not None:
+                    self._on_progress(completed_count, total)
+            return result, assessment, local_gaps, local_counts
+
+        tasks = [
+            asyncio.create_task(_process_one(idx, req))
+            for idx, req in enumerate(requirements)
+        ]
+        raw_results = await asyncio.gather(
+            *tasks, return_exceptions=True,
+        )
+
         assessments: list[RequirementAssessment] = []
         requirement_results: list[RequirementClaimResults] = []
         gap_inputs: list[dict[str, object]] = []
@@ -154,56 +206,54 @@ class ClaimMatchPipeline:
             "contradicted": 0,
         }
 
-        for req_idx, requirement in enumerate(requirements, 1):
-            try:
-                req_result = await self._match_single_requirement(user_id, cv_file_id, requirement)
-                requirement_results.append(req_result)
-
-                assessment = self._build_assessment(requirement, req_result)
-                assessments.append(assessment)
-
-                for cr in req_result.claim_results:
-                    gap_inputs.append(
-                        {
-                            "claim_id": cr.claim.id,
-                            "claim_subject": cr.claim.subject,
-                            "claim_type": cr.claim.claim_type.value,
-                            "relation": cr.relation,
-                            "evidence_strength": cr.evidence_strength,
-                            "has_evidence": cr.has_evidence,
-                            "duration_result": cr.duration_result,
-                        }
-                    )
-                    if cr.relation in relation_counts:
-                        relation_counts[cr.relation] += 1
-
-            except Exception as error:
+        for req_idx, item in enumerate(raw_results):
+            if isinstance(item, Exception):
+                requirement = requirements[req_idx]
                 logger.warning(
                     "claim_matching_failed_for_requirement",
                     requirement_id=requirement.id,
-                    error_type=type(error).__name__,
+                    error_type=type(item).__name__,
                 )
                 metrics.increment("claim_matching_requirement_failures")
                 assessments.append(
                     RequirementAssessment(
                         requirement_id=requirement.id,
-                        requirement_type=RequirementType(requirement.requirement_type),
-                        importance=RequirementImportance(requirement.importance),
+                        requirement_type=RequirementType(
+                            requirement.requirement_type,
+                        ),
+                        importance=RequirementImportance(
+                            requirement.importance,
+                        ),
                         weight=requirement.weight,
                         is_blocker=requirement.is_blocker,
                         match_level=MatchLevel.EVALUATION_ERROR,
-                        entailment_relation=EntailmentRelation.EVALUATION_ERROR,
+                        entailment_relation=(
+                            EntailmentRelation.EVALUATION_ERROR
+                        ),
                     )
                 )
-            finally:
-                if self._on_progress is not None:
-                    self._on_progress(req_idx, len(requirements))
+            else:
+                req_result, assessment, local_gaps, local_counts = item
+                requirement_results.append(req_result)
+                if assessment is not None:
+                    assessments.append(assessment)
+                gap_inputs.extend(local_gaps)
+                for rel, cnt in local_counts.items():
+                    relation_counts[rel] = (
+                        relation_counts.get(rel, 0) + cnt
+                    )
 
         for relation, count in relation_counts.items():
-            metrics.set_gauge(f"claims_{relation}", float(count))
-        metrics.set_gauge("claims_total", float(sum(relation_counts.values())))
+            metrics.set_gauge(
+                f"claims_{relation}", float(count),
+            )
+        metrics.set_gauge(
+            "claims_total", float(sum(relation_counts.values())),
+        )
 
-        gap_analysis = analyze_gaps(gap_inputs) if gap_inputs else None
+        gap_analysis = (
+            analyze_gaps(gap_inputs) if gap_inputs else None
+        )
 
         return ClaimPipelineResult(
             assessments=assessments,

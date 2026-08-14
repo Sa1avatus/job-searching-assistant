@@ -102,6 +102,7 @@ class MatchingPipeline:
         reranker_top_k: int = 5,
         shadow_mode: bool = True,
         fallback_enabled: bool = True,
+        llm_concurrency: int = 10,
     ) -> None:
         self._session = session
         self._vacancy_extractor = vacancy_extractor
@@ -131,6 +132,7 @@ class MatchingPipeline:
                 retrieval_top_k=retrieval_top_k,
                 reranker_top_k=reranker_top_k,
                 fallback_enabled=fallback_enabled,
+                llm_concurrency=llm_concurrency,
             )
 
     async def match(

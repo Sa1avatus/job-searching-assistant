@@ -11,6 +11,7 @@ from app.domain.resume_text import extract_resume_text
 from app.llm.preferences import LlmPreferenceService
 from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
+from app.llm.providers.openai_compatible import OpenAICompatibleProvider
 from app.llm.router import ModelProvider, ModelRouter
 from app.matching.cache import MatchingCache
 from app.matching.http_models import HttpEmbeddingClient, HttpReranker, UnavailableReranker
@@ -64,7 +65,11 @@ class MatchingRuntime:
             timeout = httpx.Timeout(self._settings.matching_model_timeout_seconds)
             async with AsyncExitStack() as stack:
                 llm_http = await stack.enter_async_context(
-                    httpx.AsyncClient(timeout=60, follow_redirects=False, trust_env=False)
+                    httpx.AsyncClient(
+                        timeout=timeout,
+                        follow_redirects=False,
+                        trust_env=False,
+                    )
                 )
                 model_http = await stack.enter_async_context(
                     httpx.AsyncClient(
@@ -129,10 +134,16 @@ class MatchingRuntime:
                 # Create claim decomposer and evidence evaluator
                 matching_cache = MatchingCache()
                 claim_decomposer = RouterRequirementDecomposer(
-                    router, prompt_registry, cache=matching_cache
+                    router,
+                    prompt_registry,
+                    cache=matching_cache,
+                    timeout_seconds=self._settings.matching_model_timeout_seconds,
                 )
                 evidence_evaluator = RouterEvidenceEvaluator(
-                    router, prompt_registry, cache=matching_cache
+                    router,
+                    prompt_registry,
+                    cache=matching_cache,
+                    timeout_seconds=self._settings.matching_model_timeout_seconds,
                 )
                 rag_client = create_rag_client(
                     service_url=self._settings.rag_service_url,
@@ -163,8 +174,16 @@ class MatchingRuntime:
                 )
                 pipeline = MatchingPipeline(
                     session,
-                    RouterVacancyRequirementExtractor(router, prompt_registry),
-                    RouterCandidateEvidenceExtractor(router, prompt_registry),
+                    RouterVacancyRequirementExtractor(
+                        router,
+                        prompt_registry,
+                        timeout_seconds=self._settings.matching_model_timeout_seconds,
+                    ),
+                    RouterCandidateEvidenceExtractor(
+                        router,
+                        prompt_registry,
+                        timeout_seconds=self._settings.matching_model_timeout_seconds,
+                    ),
                     retriever,
                     reranker,
                     DeterministicMatchScorer(),
@@ -180,6 +199,7 @@ class MatchingRuntime:
                     reranker_top_k=self._settings.matching_reranker_top_k,
                     shadow_mode=self._settings.matching_v2_shadow_mode,
                     fallback_enabled=self._settings.matching_v2_fallback_enabled,
+                    llm_concurrency=self._settings.matching_llm_concurrency,
                 )
                 await pipeline.match(
                     application.id,
@@ -210,11 +230,22 @@ def _build_user_model_providers(
                         model=preference.model,
                     ),
                 )
+            if preference.provider == "gemini":
+                return (
+                    GeminiProvider(
+                        http_client,
+                        api_key=preference.api_key,
+                        model=preference.model,
+                    ),
+                )
+            if preference.base_url is None:
+                raise ValueError("OpenAI-compatible base URL is required")
             return (
-                GeminiProvider(
+                OpenAICompatibleProvider(
                     http_client,
                     api_key=preference.api_key,
                     model=preference.model,
+                    base_url=preference.base_url,
                 ),
             )
     providers: list[ModelProvider] = []
