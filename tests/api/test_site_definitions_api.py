@@ -86,9 +86,7 @@ def test_site_definition_crud_and_dynamic_session_status(monkeypatch, tmp_path) 
             assert archived.json()["is_archived"] is True
 
             assert client.get("/v1/users/user-1/site-definitions").json() == []
-            archived_list = client.get(
-                "/v1/users/user-1/site-definitions?include_archived=true"
-            )
+            archived_list = client.get("/v1/users/user-1/site-definitions?include_archived=true")
             assert archived_list.json()[0]["is_archived"] is True
     finally:
         app.dependency_overrides.pop(session_scope, None)

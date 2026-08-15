@@ -37,6 +37,11 @@ from app.storage.tables import CandidateEvidenceRow, VacancyRequirementRow
 
 logger = structlog.get_logger(__name__)
 
+# A claim is considered conclusively confirmed when the best candidate is directly
+# entailed at this coverage, so the entailment loop can stop early instead of
+# evaluating every retrieved candidate.
+_EARLY_EXIT_COVERAGE = 0.8
+
 
 class ClaimRetriever(Protocol):
     async def retrieve(
@@ -85,7 +90,7 @@ _RELATION_LABELS_EN: dict[str, str] = {
 
 def _is_cyrillic(text: str) -> bool:
     """Check if text contains significant Cyrillic content."""
-    cyrillic = sum(1 for ch in text if 'Ѐ' <= ch <= 'ӿ')
+    cyrillic = sum(1 for ch in text if "Ѐ" <= ch <= "ӿ")
     return cyrillic > len(text) * 0.1
 
 
@@ -151,6 +156,7 @@ class ClaimMatchPipeline:
         fallback_enabled: bool = True,
         on_progress: Callable[[int, int], None] | None = None,
         llm_concurrency: int = 10,
+        entailment_max_candidates: int = 2,
     ) -> None:
         self._session = session
         self._llm_concurrency = llm_concurrency
@@ -160,6 +166,7 @@ class ClaimMatchPipeline:
         self._reranker = reranker
         self._retrieval_top_k = retrieval_top_k
         self._reranker_top_k = reranker_top_k
+        self._entailment_max_candidates = entailment_max_candidates
         self._fallback_enabled = fallback_enabled
         self._on_progress = on_progress
         self._llm_call_count = 0
@@ -188,24 +195,26 @@ class ClaimMatchPipeline:
         ]:
             async with semaphore:
                 result = await self._match_single_requirement(
-                    user_id, cv_file_id, requirement,
+                    user_id,
+                    cv_file_id,
+                    requirement,
                 )
             assessment = self._build_assessment(requirement, result)
             local_gaps = []
             local_counts: dict[str, int] = {}
             for cr in result.claim_results:
-                local_gaps.append({
-                    "claim_id": cr.claim.id,
-                    "claim_subject": cr.claim.subject,
-                    "claim_type": cr.claim.claim_type.value,
-                    "relation": cr.relation,
-                    "evidence_strength": cr.evidence_strength,
-                    "has_evidence": cr.has_evidence,
-                    "duration_result": cr.duration_result,
-                })
-                local_counts[cr.relation] = (
-                    local_counts.get(cr.relation, 0) + 1
+                local_gaps.append(
+                    {
+                        "claim_id": cr.claim.id,
+                        "claim_subject": cr.claim.subject,
+                        "claim_type": cr.claim.claim_type.value,
+                        "relation": cr.relation,
+                        "evidence_strength": cr.evidence_strength,
+                        "has_evidence": cr.has_evidence,
+                        "duration_result": cr.duration_result,
+                    }
                 )
+                local_counts[cr.relation] = local_counts.get(cr.relation, 0) + 1
             nonlocal completed_count
             async with progress_lock:
                 completed_count += 1
@@ -214,11 +223,11 @@ class ClaimMatchPipeline:
             return result, assessment, local_gaps, local_counts
 
         tasks = [
-            asyncio.create_task(_process_one(idx, req))
-            for idx, req in enumerate(requirements)
+            asyncio.create_task(_process_one(idx, req)) for idx, req in enumerate(requirements)
         ]
         raw_results = await asyncio.gather(
-            *tasks, return_exceptions=True,
+            *tasks,
+            return_exceptions=True,
         )
 
         assessments: list[RequirementAssessment] = []
@@ -255,9 +264,7 @@ class ClaimMatchPipeline:
                         weight=requirement.weight,
                         is_blocker=requirement.is_blocker,
                         match_level=MatchLevel.EVALUATION_ERROR,
-                        entailment_relation=(
-                            EntailmentRelation.EVALUATION_ERROR
-                        ),
+                        entailment_relation=(EntailmentRelation.EVALUATION_ERROR),
                     )
                 )
             else:
@@ -267,21 +274,19 @@ class ClaimMatchPipeline:
                     assessments.append(assessment)
                 gap_inputs.extend(local_gaps)
                 for rel, cnt in local_counts.items():
-                    relation_counts[rel] = (
-                        relation_counts.get(rel, 0) + cnt
-                    )
+                    relation_counts[rel] = relation_counts.get(rel, 0) + cnt
 
         for relation, count in relation_counts.items():
             metrics.set_gauge(
-                f"claims_{relation}", float(count),
+                f"claims_{relation}",
+                float(count),
             )
         metrics.set_gauge(
-            "claims_total", float(sum(relation_counts.values())),
+            "claims_total",
+            float(sum(relation_counts.values())),
         )
 
-        gap_analysis = (
-            analyze_gaps(gap_inputs) if gap_inputs else None
-        )
+        gap_analysis = analyze_gaps(gap_inputs) if gap_inputs else None
 
         return ClaimPipelineResult(
             assessments=assessments,
@@ -389,7 +394,7 @@ class ClaimMatchPipeline:
                 )
             )
 
-        top_candidates = reranked[: self._reranker_top_k]
+        top_candidates = reranked[: min(self._reranker_top_k, self._entailment_max_candidates)]
         best_entailment: EntailmentResult | None = None
         all_entailments: list[EntailmentResult] = []
         supporting_evidence_ids: list[str] = []
@@ -426,6 +431,14 @@ class ClaimMatchPipeline:
                     or eval_result.evidence_strength > best_entailment.evidence_strength
                 ):
                     best_entailment = eval_result
+
+                # Early exit: a strong, direct confirmation is conclusive. Evaluating
+                # the remaining candidates only adds latency, not better evidence.
+                if (
+                    eval_result.relation is EntailmentRelation.ENTAILED
+                    and eval_result.coverage >= _EARLY_EXIT_COVERAGE
+                ):
+                    break
             except Exception as error:
                 had_eval_errors = True
                 logger.warning(

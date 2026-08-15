@@ -4,7 +4,6 @@ Verifies that User A cannot access, modify, or use data belonging to User B.
 Tests cover: CV files, facts, applications, matching, evidence, browser sessions.
 """
 
-
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool

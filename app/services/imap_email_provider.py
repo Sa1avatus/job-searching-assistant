@@ -55,7 +55,7 @@ class ImapApplicationEmailProvider:
                 "IMAP mailbox cannot be opened",
             )
             _, search_data = _require_ok(
-                client.search(None, "UNSEEN"),
+                client.search(None, "ALL"),
                 "IMAP search failed",
             )
             message_ids = search_data[0].split()[-self._max_messages :] if search_data else []
@@ -68,7 +68,7 @@ class ImapApplicationEmailProvider:
                 raw_message = _raw_message_bytes(fetch_data)
                 if raw_message is None:
                     continue
-                message = cast(EmailMessage, message_from_bytes(raw_message, policy=policy.default))
+                message = message_from_bytes(raw_message, policy=policy.default)
                 messages.append(
                     ApplicationEmailMessage(
                         subject=_decode_header_value(message.get("Subject", "")),
@@ -83,14 +83,14 @@ class ImapApplicationEmailProvider:
 
 def _open_imap_client(host: str, port: int, use_ssl: bool) -> ImapClient:
     if use_ssl:
-        return imaplib.IMAP4_SSL(host, port)
-    return imaplib.IMAP4(host, port)
+        return cast(ImapClient, imaplib.IMAP4_SSL(host, port))
+    return cast(ImapClient, imaplib.IMAP4(host, port))
 
 
-def _require_ok(
-    response: tuple[str, list[bytes]] | tuple[str, list[object]],
+def _require_ok[ResponseData](
+    response: tuple[str, ResponseData],
     message: str,
-) -> tuple[str, list[bytes]] | tuple[str, list[object]]:
+) -> tuple[str, ResponseData]:
     if response[0] != "OK":
         raise imaplib.IMAP4.error(message)
     return response

@@ -24,6 +24,10 @@ _COMPANY_PATTERNS = (
 
 _VACANCY_PATTERNS = (
     re.compile(
+        r"^(.{5,80}?)\s+(?:position|role|vacancy)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
         r"(?:re|for|по вакансии|на позицию)\s*[:\-]?\s*(.{5,80}?)(?:\s*[-–—|]|\s*$)",
         re.IGNORECASE,
     ),
@@ -52,9 +56,7 @@ def extract_email_entities(subject: str, body: str = "") -> EmailEntities:
     )
 
 
-def _extract_first(
-    patterns: tuple[re.Pattern[str], ...], text: str
-) -> str | None:
+def _extract_first(patterns: tuple[re.Pattern[str], ...], text: str) -> str | None:
     for pattern in patterns:
         match = pattern.search(text)
         if match:

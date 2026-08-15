@@ -86,7 +86,6 @@ def test_matching_foreign_keys_and_uniqueness_are_explicit() -> None:
     assert not any(column.foreign_keys for column in embedding_table.columns)
     assert any(
         isinstance(constraint, UniqueConstraint)
-        and {column.name for column in constraint.columns}
-        == {"application_id", "requirement_id"}
+        and {column.name for column in constraint.columns} == {"application_id", "requirement_id"}
         for constraint in match_table.constraints
     )

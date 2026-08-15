@@ -88,21 +88,20 @@ class ResumeRagJobService:
         task = tasks[0]
         failure_code = None
         if task.state in {TaskState.FAILED.value, TaskState.RETRY_SCHEDULED.value}:
-            transition = self._session.scalar(
+            transitions = self._session.scalars(
                 select(TaskTransitionRow)
                 .where(TaskTransitionRow.task_id == task.id)
                 .order_by(TaskTransitionRow.occurred_at.desc(), TaskTransitionRow.id.desc())
-                .limit(1)
+            ).all()
+            failure_code = next(
+                (
+                    item.removeprefix("failure_code:")
+                    for transition in transitions
+                    for item in transition.evidence
+                    if item.startswith("failure_code:")
+                ),
+                None,
             )
-            if transition is not None:
-                failure_code = next(
-                    (
-                        item.removeprefix("failure_code:")
-                        for item in transition.evidence
-                        if item.startswith("failure_code:")
-                    ),
-                    None,
-                )
         return ResumeRagJobStatus(
             task_id=task.id,
             status=task.state,

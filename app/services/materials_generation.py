@@ -86,12 +86,8 @@ def _matches_language(text: str, language: str) -> bool:
     cyrillic_count = len(re.findall(r"[А-Яа-яЁё]", text))
     latin_count = len(re.findall(r"[A-Za-z]", text))
     if language == "ru":
-        return _is_russian_text(text) or (
-            cyrillic_count >= 3 and cyrillic_count >= latin_count / 3
-        )
-    return latin_count >= 10 and (
-        cyrillic_count < 3 or latin_count >= cyrillic_count * 3
-    )
+        return _is_russian_text(text) or (cyrillic_count >= 3 and cyrillic_count >= latin_count / 3)
+    return latin_count >= 10 and (cyrillic_count < 3 or latin_count >= cyrillic_count * 3)
 
 
 def cover_letter_matches_vacancy_language(vacancy: VacancyRow, text: str) -> bool:

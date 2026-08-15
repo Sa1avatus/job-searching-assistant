@@ -10,7 +10,7 @@ from app.services.recruitment import EntityNotFoundError
 from app.storage.tables import ApplicationRow, UserRow, VacancyRow
 
 _SYNC_ADAPTERS = frozenset({"headhunter", "linkedin-reference"})
-_TERMINAL_STATUSES = frozenset({"submitted", "interview"})
+_TERMINAL_STATUSES = frozenset({"submitted", "interview", "rejected", "employer_rejected"})
 
 
 class ApplicationSubmissionProbe(Protocol):

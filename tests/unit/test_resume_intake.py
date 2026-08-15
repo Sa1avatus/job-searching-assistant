@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from app.api.schemas import ConfirmResumeProfileRequest
 from app.llm.router import ModelRequest
 from app.prompts.resume_profile import build_resume_profile_prompt, select_resume_text
 from app.services.resume_intake import (
@@ -96,3 +97,20 @@ def test_skill_inventory_rejects_more_than_160_entries() -> None:
 
     with pytest.raises(ValidationError):
         asyncio.run(ResumeIntakeService(router).draft_profile("resume"))
+
+
+def test_search_keywords_accept_same_length_as_experience_summary() -> None:
+    long_text = "keyword " * 240
+
+    draft = ExtractedProfileDraft(
+        experience_summary=long_text,
+        search_keywords=long_text,
+    )
+    request = ConfirmResumeProfileRequest(
+        experience_summary=long_text,
+        search_keywords=long_text,
+    )
+
+    assert len(long_text) > 500
+    assert draft.search_keywords == long_text
+    assert request.search_keywords == long_text

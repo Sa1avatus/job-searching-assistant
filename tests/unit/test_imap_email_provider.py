@@ -23,7 +23,7 @@ class FakeImapClient:
 
     def search(self, charset: str | None, *criteria: str) -> tuple[str, list[bytes]]:
         assert charset is None
-        assert criteria == ("UNSEEN",)
+        assert criteria == ("ALL",)
         return "OK", [b"1 2"]
 
     def fetch(self, message_set: bytes, message_parts: str) -> tuple[str, list[object]]:
@@ -42,7 +42,7 @@ def _raw_email(subject: str, body: str) -> bytes:
     return message.as_bytes()
 
 
-def test_imap_provider_reads_unseen_messages_without_marking_them_seen() -> None:
+def test_imap_provider_reads_recent_messages_without_marking_them_seen() -> None:
     client = FakeImapClient(
         {
             b"1": _raw_email("Application update", "We will not be moving forward."),

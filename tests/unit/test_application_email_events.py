@@ -1,3 +1,5 @@
+import hashlib
+
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -179,7 +181,7 @@ def test_ingest_applies_rejection_to_explicit_application() -> None:
             )
 
             assert result.event.status_applied is True
-            assert session.get(ApplicationRow, "application-1").status == "rejected"
+            assert session.get(ApplicationRow, "application-1").status == "employer_rejected"
     finally:
         engine.dispose()
 
@@ -252,9 +254,7 @@ def test_ingest_does_not_auto_update_when_disabled() -> None:
             )
             session.commit()
 
-            service = ApplicationEmailEventService(
-                session, auto_update_enabled=False
-            )
+            service = ApplicationEmailEventService(session, auto_update_enabled=False)
             result = service.ingest(
                 "user-1",
                 "Rejection",
@@ -287,5 +287,154 @@ def test_list_review_items_returns_unknown_and_unmatched_events() -> None:
             assert len(review_items) >= 1
             outcomes = {item.outcome for item in review_items}
             assert "unknown" in outcomes
+    finally:
+        engine.dispose()
+
+
+def test_ingest_applies_nobleprog_rejection_to_unique_title_with_same_company() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add(UserRow(id="user-1", display_name="Candidate"))
+            session.add_all(
+                (
+                    VacancyRow(
+                        id="vacancy-target",
+                        source_url="https://example.test/jobs/solutions-architect",
+                        title="Solutions Architect & Technical Consultant",
+                        company="NobleProg",
+                    ),
+                    VacancyRow(
+                        id="vacancy-other",
+                        source_url="https://example.test/jobs/trainer",
+                        title="Technical Trainer",
+                        company="NobleProg",
+                    ),
+                )
+            )
+            session.add_all(
+                (
+                    ApplicationRow(
+                        id="application-target",
+                        user_id="user-1",
+                        vacancy_id="vacancy-target",
+                        status="submitted",
+                        match_score=80,
+                    ),
+                    ApplicationRow(
+                        id="application-other",
+                        user_id="user-1",
+                        vacancy_id="vacancy-other",
+                        status="submitted",
+                        match_score=75,
+                    ),
+                )
+            )
+            session.commit()
+
+            result = ApplicationEmailEventService(session).ingest(
+                "user-1",
+                "Solutions Architect & Technical Consultant position",
+                (
+                    "I regret to inform you that your skillset does not match our "
+                    "qualifications for the position. NobleProg"
+                ),
+            )
+
+            assert result.event.outcome == "rejected"
+            assert result.event.application_id == "application-target"
+            assert result.status_updated is True
+            assert session.get(ApplicationRow, "application-target").status == "employer_rejected"
+            assert session.get(ApplicationRow, "application-other").status == "submitted"
+    finally:
+        engine.dispose()
+
+
+def test_ingest_matches_sender_company_after_removing_recruiting_suffix() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add(UserRow(id="user-1", display_name="Candidate"))
+            session.add(
+                VacancyRow(
+                    id="vacancy-1",
+                    source_url="https://example.test/jobs/engineer",
+                    title="Platform Engineer",
+                    company="Example Corp",
+                )
+            )
+            session.add(
+                ApplicationRow(
+                    id="application-1",
+                    user_id="user-1",
+                    vacancy_id="vacancy-1",
+                    status="submitted",
+                    match_score=80,
+                )
+            )
+            session.commit()
+
+            result = ApplicationEmailEventService(session).ingest(
+                "user-1",
+                "Your application status",
+                "We have decided not to proceed with your application.",
+                company="Example Corp Recruiting Team",
+            )
+
+            assert result.event.outcome == "rejected"
+            assert result.event.application_id == "application-1"
+            assert result.status_updated is True
+            assert session.get(ApplicationRow, "application-1").status == "employer_rejected"
+    finally:
+        engine.dispose()
+
+
+def test_ingest_reclassifies_and_applies_previously_unknown_duplicate() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    subject = "Solutions Architect & Technical Consultant position"
+    body = "I regret to inform you that your skillset does not match our qualifications."
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add(UserRow(id="user-1", display_name="Candidate"))
+            session.add(
+                VacancyRow(
+                    id="vacancy-1",
+                    source_url="https://example.test/jobs/solutions-architect",
+                    title="Solutions Architect & Technical Consultant",
+                    company="NobleProg",
+                )
+            )
+            session.add(
+                ApplicationRow(
+                    id="application-1",
+                    user_id="user-1",
+                    vacancy_id="vacancy-1",
+                    status="submitted",
+                    match_score=80,
+                )
+            )
+            session.add(
+                ApplicationEmailEventRow(
+                    user_id="user-1",
+                    message_fingerprint=hashlib.sha256(f"{subject}\n{body}".encode()).hexdigest(),
+                    outcome="unknown",
+                )
+            )
+            session.commit()
+
+            result = ApplicationEmailEventService(session).ingest(
+                "user-1",
+                subject,
+                body,
+            )
+
+            assert result.created is False
+            assert result.event.outcome == "rejected"
+            assert result.event.application_id == "application-1"
+            assert result.status_updated is True
+            assert session.get(ApplicationRow, "application-1").status == "employer_rejected"
     finally:
         engine.dispose()

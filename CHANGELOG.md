@@ -5,6 +5,36 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ## [Unreleased]
 
+### Performance
+
+- Matching recalculation now distinguishes a **smart recalculation** (reuses cached LLM
+  results; unchanged content returns the existing completed result immediately) from a
+  **full recalculation** (discards cached extraction and recomputes from scratch; use
+  after changing the LLM model). The dashboard exposes both actions separately.
+- Decomposition and entailment LLM results are cached in Redis with content-based,
+  model-aware keys. Repeated matching over unchanged or lightly changed content reuses
+  prior LLM work instead of re-invoking the model hundreds of times. Cached
+  decompositions are rebound to the current requirement row on a cache hit.
+- Entailment evaluation stops early after a strong entailed result and evaluates at most
+  `APP_MATCHING_ENTAILMENT_MAX_CANDIDATES` candidates per claim (default 3), down from
+  the previous full top-k evaluation.
+- Simple single-skill requirements (e.g. "Docker", "PostgreSQL") are decomposed
+  deterministically without an LLM call.
+- Entailment and decomposition requests use per-task output/context budgets
+  (`APP_MATCHING_ENTAILMENT_MAX_TOKENS`, `APP_MATCHING_ENTAILMENT_CONTEXT_SIZE`,
+  `APP_MATCHING_DECOMPOSE_MAX_TOKENS`, `APP_MATCHING_DECOMPOSE_CONTEXT_SIZE`) instead of
+  the previous 16k-output/8k-context defaults, cutting local-model latency. The
+  decompose and entailment contexts must match so Ollama does not reload the model
+  between stages.
+- Matching cache keys and the matching content version include the resolved LLM model, so
+  switching the model invalidates prior LLM-derived work automatically.
+- Extraction grounding now accepts source fragments whose content words all appear in the
+  source text (function-word and punctuation drift tolerated), keeping the
+  no-hallucination invariant while allowing weaker local models to pass extraction.
+- Extraction prompts now require character-for-character source fragments.
+- Version markers are now consistent: `VERSION`, `README`, `README.ru`, and
+  `pyproject.toml` all report 1.5.1.
+
 ## [1.5.1] — 2026-08-14
 
 ### Quality

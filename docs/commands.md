@@ -47,7 +47,7 @@ Manual lifecycle and diagnostics:
 ```powershell
 docker compose --profile browser up --build -d --wait
 docker compose --profile browser ps
-docker compose logs --tail 200 api dispatcher browser-worker
+docker compose logs --tail 200 api dispatcher matching-worker browser-worker
 Invoke-RestMethod http://127.0.0.1:8000/ready
 docker compose down
 ```

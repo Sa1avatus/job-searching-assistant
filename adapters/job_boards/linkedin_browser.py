@@ -383,9 +383,7 @@ class LinkedInBrowserAdapter:
                     if not isinstance(snapshot, dict):
                         continue
                     href = str(snapshot.get("href", ""))
-                    job_id_match = re.search(
-                        r"/jobs/view/(?:[^/?#-]+-)*(\d{5,})", href or ""
-                    )
+                    job_id_match = re.search(r"/jobs/view/(?:[^/?#-]+-)*(\d{5,})", href or "")
                     if job_id_match is None or job_id_match.group(1) in seen_job_ids:
                         continue
                     job_id = job_id_match.group(1)
@@ -406,17 +404,13 @@ class LinkedInBrowserAdapter:
                     artifact_directory=self._browser_engine.artifact_directory,
                     action_name="search",
                     target="linkedin-result-identifiers-not-parsed",
-                    error=RuntimeError(
-                        "LinkedIn result elements did not expose parseable job ids"
-                    ),
+                    error=RuntimeError("LinkedIn result elements did not expose parseable job ids"),
                 )
             return hits
         finally:
             await page.close()
 
-    async def _navigate_search_with_retry(
-        self, page: Page, search_url: str
-    ) -> BrowserActionResult:
+    async def _navigate_search_with_retry(self, page: Page, search_url: str) -> BrowserActionResult:
         navigation = await self._browser_engine.navigate(page, search_url)
         if (
             not navigation.is_successful

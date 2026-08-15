@@ -38,29 +38,64 @@ SEMANTIC_TERMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("resume", ("resume", "cv", "curriculum vitae")),
     ("salary", ("salary", "compensation", "pay", "expected salary")),
     ("experience", ("experience", "years worked", "years of work")),
-    ("work_authorization", (
-        "work authorization", "authorized to work", "visa",
-        "sponsorship", "legally authorized",
-    )),
+    (
+        "work_authorization",
+        (
+            "work authorization",
+            "authorized to work",
+            "visa",
+            "sponsorship",
+            "legally authorized",
+        ),
+    ),
     ("linkedin", ("linkedin", "linkedin profile", "linkedin url")),
     ("github", ("github", "github profile", "github url", "portfolio")),
     ("website", ("website", "personal website", "portfolio url")),
-    ("location", (
-        "location", "city", "address", "country", "state",
-        "willing to relocate", "preferred location",
-    )),
-    ("education", (
-        "education", "degree", "university", "college", "school",
-        "field of study", "major", "gpa",
-    )),
-    ("start_date", (
-        "start date", "available date", "earliest start",
-        "availability", "notice period",
-    )),
-    ("cover_letter", (
-        "cover letter", "motivation letter", "additional information",
-        "why do you want", "tell us about",
-    )),
+    (
+        "location",
+        (
+            "location",
+            "city",
+            "address",
+            "country",
+            "state",
+            "willing to relocate",
+            "preferred location",
+        ),
+    ),
+    (
+        "education",
+        (
+            "education",
+            "degree",
+            "university",
+            "college",
+            "school",
+            "field of study",
+            "major",
+            "gpa",
+        ),
+    ),
+    (
+        "start_date",
+        (
+            "start date",
+            "available date",
+            "earliest start",
+            "availability",
+            "notice period",
+        ),
+    ),
+    (
+        "cover_letter",
+        (
+            "cover letter",
+            "motivation letter",
+            "additional information",
+            "why do you want",
+            "tell us about",
+        ),
+    ),
     ("gender", ("gender", "sex", "pronouns")),
     ("ethnicity", ("ethnicity", "race", "ethnic background")),
     ("disability", ("disability", "disabled", "handicap")),
@@ -195,11 +230,7 @@ def _to_form_field(observation: FieldObservation, index: int) -> FormField:
             candidate
             for candidate in (
                 f"label:{observation['label']}" if observation["label"] else "",
-                (
-                    f"placeholder:{observation['placeholder']}"
-                    if observation["placeholder"]
-                    else ""
-                ),
+                (f"placeholder:{observation['placeholder']}" if observation["placeholder"] else ""),
                 f"id:{observation['element_id']}" if observation["element_id"] else "",
                 f"name:{observation['name']}" if observation["name"] else "",
                 f"nth:{index}",
@@ -237,10 +268,7 @@ def form_fingerprint(fields: tuple[FormField, ...]) -> str:
 
     parts = []
     for field in sorted(fields, key=lambda f: f.field_id):
-        parts.append(
-            f"{field.field_id}:{field.field_type.value}:"
-            f"{field.label}:{field.is_required}"
-        )
+        parts.append(f"{field.field_id}:{field.field_type.value}:{field.label}:{field.is_required}")
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 

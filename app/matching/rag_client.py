@@ -307,10 +307,9 @@ class RagHttpClient:
             response.raise_for_status()
             documents = response.json()
             for document in documents:
-                if (
-                    str(document.get("external_document_id", "")) == external_document_id
-                    and document.get("id")
-                ):
+                if str(
+                    document.get("external_document_id", "")
+                ) == external_document_id and document.get("id"):
                     return dict(document)
             if len(documents) < limit:
                 return None

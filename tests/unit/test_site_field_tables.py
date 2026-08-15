@@ -34,8 +34,7 @@ def test_site_field_mapping_is_one_to_one_and_typed() -> None:
     assert isinstance(table.c.transformation.type, JSON)
     assert isinstance(table.c.review_required.type, Boolean)
     assert any(
-        isinstance(item, UniqueConstraint)
-        and item.name == "uq_site_field_mappings_site_field_id"
+        isinstance(item, UniqueConstraint) and item.name == "uq_site_field_mappings_site_field_id"
         for item in table.constraints
     )
 

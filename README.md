@@ -7,9 +7,15 @@ vacancies, analyses resumes, calculates explainable matches, drafts application 
 prepares supported browser forms for human review. Real HeadHunter and LinkedIn submission is
 disabled by default and requires explicit configuration and user confirmation.
 
-Current version: **1.4.1**.
+Current version: **1.5.1**.
 
 ## Current release
+
+- Matching recalculation is split into a fast **smart recalculation** (reuses cached LLM
+  results; unchanged content returns immediately) and a **full recalculation** for after
+  changing the LLM model. Decomposition/entailment results are cached in Redis with
+  model-aware keys, entailment stops early after a strong confirmation, and simple skills
+  skip the LLM entirely — cutting cold-run time and making repeated runs near-instant.
 
 - Matching v2.3 decomposes vacancy requirements into claims and distinguishes confirmed,
   partial, insufficient, failed, and missing evidence.
@@ -76,6 +82,19 @@ OpenSearch, and model data.
 4. Capture user-owned site sessions in **Site sessions** where a connector requires authentication.
 5. Select a resume and start vacancy discovery.
 6. Review generated data and every external action before approval.
+
+### Manual email import
+
+The **All vacancies** panel can import application correspondence without connecting an IMAP
+mailbox. Select up to 100 `.eml` files, an `.mbox` mailbox export, ZIP archives containing EML
+files, or a mixture of these formats. The combined upload is limited to 50 MB and processing is
+bounded to 500 messages per import. Attached EML messages are classified separately, so a forwarded
+or exported rejection can update the matching application without its text being merged into the
+outer message. Plain-text and HTML-only bodies are supported; the sender display name may be used as
+a conservative company hint when linking a message. The completion summary distinguishes unknown
+messages from recognized messages that could not be linked safely. Uploaded source files are
+processed in memory (with a temporary file only while reading mbox data) and are not retained by the
+application.
 
 HeadHunter dashboard discovery uses the saved user session. The lower-level read-only adapter can
 also inspect public vacancy pages without a session, but this is not the dashboard workflow.

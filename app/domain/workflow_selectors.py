@@ -4,9 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-type WorkflowSelectorKind = Literal[
-    "role", "label", "placeholder", "test_id", "id", "name", "css"
-]
+type WorkflowSelectorKind = Literal["role", "label", "placeholder", "test_id", "id", "name", "css"]
 
 
 class WorkflowSelectorCandidate(BaseModel):

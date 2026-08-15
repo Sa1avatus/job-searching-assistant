@@ -4,10 +4,7 @@ import ast
 from pathlib import Path
 
 MIGRATION_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "migrations"
-    / "versions"
-    / "0022_site_definitions.py"
+    Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0022_site_definitions.py"
 )
 
 
@@ -28,7 +25,7 @@ def test_site_definition_migration_revision_and_operations() -> None:
     assert 'name="uq_site_definitions_user_site_key"' in source
     assert '"ix_site_definitions_user_id"' in source
     assert "users.id" in source
-    assert "ondelete=\"CASCADE\"" in source
+    assert 'ondelete="CASCADE"' in source
 
 
 def test_site_definition_migration_downgrade_order() -> None:

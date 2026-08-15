@@ -3,9 +3,11 @@
 The API container uses this client to delegate all Playwright-based browser
 operations to the browser-worker, so the API no longer needs Playwright
 or browser binaries installed."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import httpx
 import structlog
@@ -68,9 +70,7 @@ class BrowserWorkerClient:
             for hit in data.get("hits", [])
         ]
 
-    async def extract_headhunter(
-        self, *, user_id: str, url: str
-    ) -> dict[str, object]:
+    async def extract_headhunter(self, *, user_id: str, url: str) -> dict[str, object]:
         async with httpx.AsyncClient(
             timeout=self._timeout, follow_redirects=False, trust_env=False
         ) as client:
@@ -79,11 +79,9 @@ class BrowserWorkerClient:
                 json={"user_id": user_id, "url": url},
             )
             response.raise_for_status()
-        return response.json()
+        return cast(dict[str, object], response.json())
 
-    async def extract_linkedin(
-        self, *, user_id: str, url: str
-    ) -> dict[str, object]:
+    async def extract_linkedin(self, *, user_id: str, url: str) -> dict[str, object]:
         async with httpx.AsyncClient(
             timeout=self._timeout, follow_redirects=False, trust_env=False
         ) as client:
@@ -92,14 +90,10 @@ class BrowserWorkerClient:
                 json={"user_id": user_id, "url": url},
             )
             response.raise_for_status()
-        return response.json()
+        return cast(dict[str, object], response.json())
 
-    async def probe(
-        self, *, user_id: str, site_key: str
-    ) -> BrowserProbeResult:
-        async with httpx.AsyncClient(
-            timeout=30, follow_redirects=False, trust_env=False
-        ) as client:
+    async def probe(self, *, user_id: str, site_key: str) -> BrowserProbeResult:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=False, trust_env=False) as client:
             response = await client.post(
                 f"{self._base_url}/v1/browser/probe",
                 json={"user_id": user_id, "site_key": site_key},
@@ -110,3 +104,21 @@ class BrowserWorkerClient:
             valid=data["valid"],
             details=data.get("details", ""),
         )
+
+    async def has_submitted_application(
+        self,
+        *,
+        source: str,
+        user_id: str,
+        url: str,
+    ) -> bool:
+        async with httpx.AsyncClient(
+            timeout=self._timeout, follow_redirects=False, trust_env=False
+        ) as client:
+            response = await client.post(
+                f"{self._base_url}/v1/browser/submission-probe",
+                json={"source": source, "user_id": user_id, "url": url},
+            )
+            response.raise_for_status()
+        data = response.json()
+        return bool(data["submitted"])

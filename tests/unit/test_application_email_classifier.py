@@ -11,6 +11,25 @@ from app.services.application_email_classifier import (
     ("subject", "body"),
     [
         ("Application update", "Unfortunately, we will not be moving forward."),
+        (
+            "Solutions Architect & Technical Consultant position",
+            (
+                "I regret to inform you that your skillset does not match our "
+                "qualifications for the position."
+            ),
+        ),
+        (
+            "Your application status",
+            "After careful consideration, we have decided not to proceed with your application.",
+        ),
+        (
+            "Application update",
+            "Your application has not been selected for this position.",
+        ),
+        (
+            "Recruiting update",
+            "We are moving forward with other candidates whose experience more closely matches.",
+        ),
         ("Ответ по вакансии", "К сожалению, мы не готовы продолжить общение."),
     ],
 )
@@ -93,9 +112,7 @@ def test_application_email_classifier_rejects_ambiguous_or_unrelated_messages() 
         ),
     ],
 )
-def test_classify_email_category(
-    subject: str, body: str, expected: EmailCategory
-) -> None:
+def test_classify_email_category(subject: str, body: str, expected: EmailCategory) -> None:
     assert classify_email_category(subject, body) is expected
 
 

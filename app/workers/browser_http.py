@@ -1,18 +1,16 @@
 """HTTP API for the browser-worker, exposing browser operations over HTTP
 so the API container no longer needs Playwright or browser binaries."""
+
 from __future__ import annotations
 
-import asyncio
 import dataclasses
-import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import AsyncIterator
 
 import structlog
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import select
 
 from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter
 from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
@@ -63,6 +61,16 @@ class ProbeResponse(StrictModel):
     details: str = ""
 
 
+class SubmissionProbeRequest(StrictModel):
+    source: str = Field(pattern=r"^(headhunter|linkedin)$")
+    user_id: str
+    url: str
+
+
+class SubmissionProbeResponse(StrictModel):
+    submitted: bool
+
+
 _settings: Settings | None = None
 _store: EncryptedBrowserStateStore | None = None
 _selector_library: SelectorLibrary | None = None
@@ -89,7 +97,7 @@ def _get_selector_library() -> SelectorLibrary:
     return _selector_library
 
 
-def _restore_session(user_id: str, site_key: str) -> dict | None:
+def _restore_session(user_id: str, site_key: str) -> dict[str, object] | None:
     with SessionFactory() as session:
         row = session.scalar(
             select(BrowserSessionRow).where(
@@ -101,19 +109,14 @@ def _restore_session(user_id: str, site_key: str) -> dict | None:
         if row is None:
             return None
         try:
-            _restored_row, state = BrowserSessionService(
-                session, _get_store()
-            ).restore(row.id)
+            _restored_row, state = BrowserSessionService(session, _get_store()).restore(row.id)
             return state
         except Exception:
             return None
 
 
-from sqlalchemy import select
-
-
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
     yield
 
@@ -152,8 +155,8 @@ async def browser_search(request: SearchRequest) -> SearchResponse:
         selector_library=_get_selector_library(),
     ) as browser_engine:
         if request.source == "headhunter":
-            adapter = HeadHunterBrowserAdapter(browser_engine)
-            raw_hits = await adapter.search(
+            headhunter_adapter = HeadHunterBrowserAdapter(browser_engine)
+            headhunter_hits = await headhunter_adapter.search(
                 text=request.search_text or "",
                 location_names=request.locations or None,
                 limit=request.limit,
@@ -165,11 +168,11 @@ async def browser_search(request: SearchRequest) -> SearchResponse:
                     company=hit.company,
                     vacancy_id=hit.vacancy_id,
                 )
-                for hit in raw_hits
+                for hit in headhunter_hits
             ]
         else:
-            adapter = LinkedInBrowserAdapter(browser_engine)
-            raw_hits = await adapter.search(
+            linkedin_adapter = LinkedInBrowserAdapter(browser_engine)
+            linkedin_hits = await linkedin_adapter.search(
                 text=request.search_text or "",
                 location_names=request.locations or None,
                 limit=request.limit,
@@ -179,8 +182,9 @@ async def browser_search(request: SearchRequest) -> SearchResponse:
                     source_url=hit.source_url,
                     title=hit.title,
                     company=hit.company,
+                    vacancy_id=hit.job_id,
                 )
-                for hit in raw_hits
+                for hit in linkedin_hits
             ]
 
     return SearchResponse(hits=hits)
@@ -189,7 +193,7 @@ async def browser_search(request: SearchRequest) -> SearchResponse:
 @app.post("/v1/browser/extract-headhunter")
 async def extract_headhunter_vacancy(
     request: ExtractHeadhunterRequest,
-) -> dict:
+) -> dict[str, object]:
     settings = _get_settings()
     state = _restore_session(request.user_id, "headhunter")
     if state is None:
@@ -209,8 +213,12 @@ async def extract_headhunter_vacancy(
         extracted = await adapter.extract_vacancy(request.url)
         if dataclasses.is_dataclass(extracted):
             return dataclasses.asdict(extracted)
-        return {"title": extracted.title, "company": extracted.company,
-                "description_text": extracted.description_text, "source_url": extracted.source_url}
+        return {
+            "title": extracted.title,
+            "company": extracted.company,
+            "description_text": extracted.description_text,
+            "source_url": extracted.source_url,
+        }
 
 
 class ExtractHeadhunterRequest(StrictModel):
@@ -226,7 +234,7 @@ class ExtractLinkedinRequest(StrictModel):
 @app.post("/v1/browser/extract-linkedin")
 async def extract_linkedin_vacancy(
     request: ExtractLinkedinRequest,
-) -> dict:
+) -> dict[str, object]:
     settings = _get_settings()
     state = _restore_session(request.user_id, "linkedin")
     if state is None:
@@ -246,8 +254,12 @@ async def extract_linkedin_vacancy(
         extracted = await adapter.extract_vacancy(request.url)
         if dataclasses.is_dataclass(extracted):
             return dataclasses.asdict(extracted)
-        return {"title": extracted.title, "company": extracted.company,
-                "description_text": extracted.description_text, "source_url": extracted.source_url}
+        return {
+            "title": extracted.title,
+            "company": extracted.company,
+            "description_text": extracted.description_text,
+            "source_url": extracted.source_url,
+        }
 
 
 @app.post("/v1/browser/probe", response_model=ProbeResponse)
@@ -260,10 +272,40 @@ async def browser_probe(request: ProbeRequest) -> ProbeResponse:
     try:
         result = await probe_browser_session(
             site_key=request.site_key,
-            storage_state=state,
+            state=state,
             headless=settings.browser_headless,
             timeout_ms=settings.browser_timeout_ms,
+            artifact_directory=settings.artifact_directory,
         )
-        return ProbeResponse(valid=result.is_valid, details=result.status_detail)
+        return ProbeResponse(valid=result.is_live is True, details=result.error or "")
     except Exception as error:
-        return ProbeResponse(valid=False, details=f"{type(error).__name__}: {error}")
+        return ProbeResponse(valid=False, details=type(error).__name__)
+
+
+@app.post("/v1/browser/submission-probe", response_model=SubmissionProbeResponse)
+async def submission_probe(request: SubmissionProbeRequest) -> SubmissionProbeResponse:
+    settings = _get_settings()
+    state = _restore_session(request.user_id, request.source)
+    if state is None:
+        raise HTTPException(status_code=422, detail="No active browser session")
+    artifact_directory = (
+        settings.artifact_directory
+        / "browser-worker"
+        / f"submission-probe-{request.source}-{request.user_id}"
+    )
+    async with PlaywrightEngine(
+        headless=settings.browser_headless,
+        timeout_ms=settings.browser_timeout_ms,
+        artifact_directory=artifact_directory,
+        storage_state=state,
+        selector_library=_get_selector_library(),
+    ) as browser_engine:
+        if request.source == "headhunter":
+            submitted = await HeadHunterBrowserAdapter(browser_engine).has_submitted_application(
+                request.url
+            )
+        else:
+            submitted = await LinkedInBrowserAdapter(browser_engine).has_submitted_application(
+                request.url
+            )
+    return SubmissionProbeResponse(submitted=submitted)

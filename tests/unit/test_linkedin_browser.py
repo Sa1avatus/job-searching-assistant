@@ -118,9 +118,7 @@ async def test_linkedin_description_waits_for_meaningful_semantic_container() ->
     page.get_by_text.return_value = markers
     page.wait_for_timeout = AsyncMock()
 
-    candidates = await LinkedInBrowserAdapter._semantic_description_candidates(
-        cast(Page, page)
-    )
+    candidates = await LinkedInBrowserAdapter._semantic_description_candidates(cast(Page, page))
 
     assert select_best_linkedin_description(candidates).startswith("Responsibilities")
     page.wait_for_timeout.assert_not_awaited()
@@ -237,9 +235,7 @@ async def test_search_closes_page_on_zero_results(
     cards = MagicMock()
     cards.count = AsyncMock(return_value=0)
     result_targets = MagicMock()
-    result_targets.first.wait_for = AsyncMock(
-        side_effect=PlaywrightTimeoutError("no results")
-    )
+    result_targets.first.wait_for = AsyncMock(side_effect=PlaywrightTimeoutError("no results"))
     page.locator.side_effect = [cards, result_targets]
     engine = MagicMock()
     engine.artifact_directory = Path(".artifacts")

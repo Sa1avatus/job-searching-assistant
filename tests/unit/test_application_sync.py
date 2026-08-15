@@ -33,6 +33,7 @@ def test_application_sync_updates_only_confirmed_submissions() -> None:
             ("linkedin-reference", "https://www.linkedin.com/jobs/view/2", "approved"),
             ("headhunter", "https://hh.ru/vacancy/3", "rejected"),
             ("linkedin-reference", "https://www.linkedin.com/jobs/view/4", "submitted"),
+            ("headhunter", "https://hh.ru/vacancy/5", "employer_rejected"),
         )
         application_ids: list[str] = []
         for index, (adapter_name, source_url, status) in enumerate(records):
@@ -76,16 +77,17 @@ def test_application_sync_updates_only_confirmed_submissions() -> None:
             )
         }
 
-    assert summary.checked == 3
+    assert summary.checked == 2
     assert summary.updated == 1
     assert summary.unchanged == 1
-    assert summary.skipped == 1
-    assert summary.failed == 1
+    assert summary.skipped == 3
+    assert summary.failed == 0
     assert [statuses[application_id] for application_id in application_ids] == [
         "submitted",
         "approved",
         "rejected",
         "submitted",
+        "employer_rejected",
     ]
-    assert set(headhunter.calls) == {"https://hh.ru/vacancy/1", "https://hh.ru/vacancy/3"}
+    assert headhunter.calls == ["https://hh.ru/vacancy/1"]
     assert linkedin.calls == ["https://www.linkedin.com/jobs/view/2"]

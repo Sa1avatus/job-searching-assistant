@@ -58,9 +58,7 @@ def test_create_autofill_value_api_encrypts_and_returns_value(monkeypatch) -> No
             assert row is not None
             assert "candidate@example.test" not in row.encrypted_value
             assert (
-                decrypt_autofill_value(
-                    row.encrypted_value, encryption_key=encryption_key
-                )
+                decrypt_autofill_value(row.encrypted_value, encryption_key=encryption_key)
                 == "candidate@example.test"
             )
     finally:
@@ -69,9 +67,7 @@ def test_create_autofill_value_api_encrypts_and_returns_value(monkeypatch) -> No
 
 
 def test_create_autofill_value_api_reports_domain_errors(monkeypatch) -> None:
-    monkeypatch.setenv(
-        "APP_BROWSER_STATE_ENCRYPTION_KEY", Fernet.generate_key().decode()
-    )
+    monkeypatch.setenv("APP_BROWSER_STATE_ENCRYPTION_KEY", Fernet.generate_key().decode())
     get_settings.cache_clear()
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -94,15 +90,11 @@ def test_create_autofill_value_api_reports_domain_errors(monkeypatch) -> None:
     }
     try:
         with TestClient(app) as client:
-            missing_user = client.post(
-                "/v1/users/missing/autofill-values", json=payload
-            )
+            missing_user = client.post("/v1/users/missing/autofill-values", json=payload)
             with factory() as setup_session:
                 setup_session.add(UserRow(id="user-1", display_name="Candidate"))
                 setup_session.commit()
-            invalid_key = client.post(
-                "/v1/users/user-1/autofill-values", json=payload
-            )
+            invalid_key = client.post("/v1/users/user-1/autofill-values", json=payload)
 
         assert missing_user.status_code == 404
         assert invalid_key.status_code == 422
@@ -157,9 +149,7 @@ def test_update_autofill_value_api_preserves_metadata(monkeypatch) -> None:
             row = verification_session.get(AutofillValueRow, "value-1")
             assert row is not None
             assert (
-                decrypt_autofill_value(
-                    row.encrypted_value, encryption_key=encryption_key
-                )
+                decrypt_autofill_value(row.encrypted_value, encryption_key=encryption_key)
                 == "Bangkok"
             )
     finally:
@@ -211,16 +201,12 @@ def test_delete_autofill_value_api_is_user_scoped() -> None:
     app.dependency_overrides[session_scope] = override_session_scope
     try:
         with TestClient(app) as client:
-            response = client.delete(
-                "/v1/users/user-1/autofill-values/contact.email"
-            )
+            response = client.delete("/v1/users/user-1/autofill-values/contact.email")
 
         assert response.status_code == 204
         assert response.content == b""
         with factory() as verification_session:
             rows = verification_session.scalars(select(AutofillValueRow)).all()
-            assert [(row.user_id, row.key) for row in rows] == [
-                ("user-2", "contact.email")
-            ]
+            assert [(row.user_id, row.key) for row in rows] == [("user-2", "contact.email")]
     finally:
         app.dependency_overrides.pop(session_scope, None)

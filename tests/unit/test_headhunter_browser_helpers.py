@@ -109,9 +109,7 @@ def test_headhunter_apply_checks_cross_country_dialog_before_cover_letter() -> N
     source = HeadHunterBrowserAdapter.apply.__code__
     names = source.co_names
 
-    assert names.index("_handle_cross_country_dialog") < names.index(
-        "_find_cover_letter_field"
-    )
+    assert names.index("_handle_cross_country_dialog") < names.index("_find_cover_letter_field")
 
 
 @pytest.mark.asyncio
@@ -132,9 +130,7 @@ async def test_cross_country_dialog_clicks_continue_inside_dialog() -> None:
         already_ok=False,
     )
     dialog = page.locator.return_value.nth.return_value
-    dialog.locator.assert_called_once_with(
-        "[data-qa='relocation-warning-confirm']"
-    )
+    dialog.locator.assert_called_once_with("[data-qa='relocation-warning-confirm']")
     dialog.get_by_role.assert_not_called()
 
 
@@ -172,10 +168,6 @@ async def test_reveal_cover_letter_uses_current_headhunter_toggle() -> None:
     result = await adapter._reveal_cover_letter_field(page, actions)
 
     assert result is letter_field
-    page.locator.assert_called_once_with(
-        "[data-qa='vacancy-response-letter-toggle']"
-    )
-    adapter._click.assert_awaited_once_with(
-        page, toggle, "reveal-cover-letter", already_ok=False
-    )
+    page.locator.assert_called_once_with("[data-qa='vacancy-response-letter-toggle']")
+    adapter._click.assert_awaited_once_with(page, toggle, "reveal-cover-letter", already_ok=False)
     assert actions == [action]

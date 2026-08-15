@@ -8,6 +8,7 @@ class ApplicationStatisticsResponse(BaseModel):
     awaiting_review: int = Field(ge=0)
     approved: int = Field(ge=0)
     rejected: int = Field(ge=0)
+    employer_rejected: int = Field(ge=0)
     skipped: int = Field(ge=0)
     submitted: int = Field(ge=0)
     interview: int = Field(ge=0)

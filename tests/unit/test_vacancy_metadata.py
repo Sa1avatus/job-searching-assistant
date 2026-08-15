@@ -142,8 +142,7 @@ class TestDetectWorkFormat:
 
     def test_hybrid_english_description(self) -> None:
         assert (
-            detect_work_format("", "", "Hybrid work schedule, 3 days office 2 remote")
-            == "hybrid"
+            detect_work_format("", "", "Hybrid work schedule, 3 days office 2 remote") == "hybrid"
         )
 
     def test_hybrid_russian_gibridnyi(self) -> None:
@@ -207,16 +206,10 @@ class TestDetectWorkFormat:
         assert detect_work_format("", "", "Chief Executive Officer role") == "unspecified"
 
     def test_no_false_positive_udaleniye_russian(self) -> None:
-        assert (
-            detect_work_format("", "", "Удаление данных из базы данных")
-            == "unspecified"
-        )
+        assert detect_work_format("", "", "Удаление данных из базы данных") == "unspecified"
 
     def test_no_false_positive_administrator_russian(self) -> None:
-        assert (
-            detect_work_format("", "", "Администрация компании")
-            == "unspecified"
-        )
+        assert detect_work_format("", "", "Администрация компании") == "unspecified"
 
 
 def test_extract_key_skills_combines_declared_and_description_skills() -> None:

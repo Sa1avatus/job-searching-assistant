@@ -18,8 +18,79 @@ def _normalized_source(source_text: str) -> str:
     return " ".join(source_text.casefold().split())
 
 
+# Function words the model may freely add, drop, or reorder without breaking source
+# grounding. Content words (nouns, verbs, adjectives, numbers) must still appear in
+# the source text itself.
+_FUNCTION_WORDS = frozenset(
+    {
+        # English
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "in",
+        "is",
+        "it",
+        "its",
+        "of",
+        "on",
+        "or",
+        "that",
+        "the",
+        "this",
+        "to",
+        "was",
+        "were",
+        "with",
+        "we",
+        "you",
+        # Russian
+        "а",
+        "в",
+        "во",
+        "для",
+        "до",
+        "же",
+        "за",
+        "и",
+        "из",
+        "или",
+        "к",
+        "ко",
+        "на",
+        "не",
+        "но",
+        "о",
+        "об",
+        "от",
+        "по",
+        "при",
+        "с",
+        "со",
+        "у",
+    }
+)
+
+
 def _is_grounded(source_text: str, source_fragment: str) -> bool:
-    return _normalized_source(source_fragment) in _normalized_source(source_text)
+    """Check that every content word of the fragment appears in the source text.
+
+    The historical exact-substring check rejected valid extractions from weaker local
+    models that slightly paraphrase fragments (function-word changes, punctuation,
+    minor reordering). Grounding is still enforced: a fragment is accepted only when
+    all of its significant words exist in the source, so the model cannot introduce
+    skills or facts the source never mentions.
+    """
+    source_tokens = set(_normalized_source(source_text).split())
+    fragment_tokens = _normalized_source(source_fragment).split()
+    content_tokens = [token for token in fragment_tokens if token not in _FUNCTION_WORDS]
+    return bool(content_tokens) and all(token in source_tokens for token in content_tokens)
 
 
 class RouterVacancyRequirementExtractor:
@@ -27,9 +98,20 @@ class RouterVacancyRequirementExtractor:
     model_version = "provider-selected"
     schema_version = "1"
 
-    def __init__(self, router: ModelRouter, prompt_registry: PromptRegistry) -> None:
+    def __init__(
+        self,
+        router: ModelRouter,
+        prompt_registry: PromptRegistry,
+        *,
+        timeout_seconds: float = 60,
+        model_identity: str | None = None,
+    ) -> None:
         self._router = router
         self._prompt_registry = prompt_registry
+        self._timeout_seconds = timeout_seconds
+        # Instance attribute so extraction_run_id becomes model-aware: switching the
+        # resolved LLM model invalidates cached extraction rows instead of reusing them.
+        self.model_name = model_identity or self.model_name
 
     async def extract(self, *, vacancy_id: str, source_text: str) -> VacancyExtraction:
         prompt = self._prompt_registry.render(
@@ -45,7 +127,7 @@ class RouterVacancyRequirementExtractor:
                 task_class=ModelTaskClass.LOW_COST,
                 prompt=prompt,
                 max_cost_usd=0.05,
-                timeout_seconds=60,
+                timeout_seconds=self._timeout_seconds,
             ),
             VacancyExtraction,
         )
@@ -66,9 +148,19 @@ class RouterCandidateEvidenceExtractor:
     model_version = "provider-selected"
     schema_version = "1"
 
-    def __init__(self, router: ModelRouter, prompt_registry: PromptRegistry) -> None:
+    def __init__(
+        self,
+        router: ModelRouter,
+        prompt_registry: PromptRegistry,
+        *,
+        timeout_seconds: float = 60,
+        model_identity: str | None = None,
+    ) -> None:
         self._router = router
         self._prompt_registry = prompt_registry
+        self._timeout_seconds = timeout_seconds
+        # Instance attribute so extraction_run_id becomes model-aware (see above).
+        self.model_name = model_identity or self.model_name
 
     async def extract(
         self,
@@ -92,7 +184,7 @@ class RouterCandidateEvidenceExtractor:
                 task_class=ModelTaskClass.LOW_COST,
                 prompt=prompt,
                 max_cost_usd=0.05,
-                timeout_seconds=60,
+                timeout_seconds=self._timeout_seconds,
             ),
             CandidateEvidenceExtraction,
         )

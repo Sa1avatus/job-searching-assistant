@@ -6,6 +6,7 @@ candidate has experience but it isn't sufficiently documented.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -68,7 +69,12 @@ def analyze_gaps(
         claim_type = str(eval_data.get("claim_type", ""))
         relation = str(eval_data.get("relation", "unknown"))
         has_evidence = bool(eval_data.get("has_evidence", False))
-        evidence_strength = float(eval_data.get("evidence_strength", 0))
+        raw_evidence_strength = eval_data.get("evidence_strength", 0)
+        evidence_strength = (
+            float(raw_evidence_strength)
+            if isinstance(raw_evidence_strength, (str, int, float))
+            else 0.0
+        )
         duration_result = eval_data.get("duration_result")
 
         if relation == "entailed":
@@ -105,9 +111,11 @@ def analyze_gaps(
             continue
 
         # Duration claims
-        if claim_type == "experience_duration" and duration_result is not None:
-            actual = float(duration_result.get("actual_years", 0))
-            required = float(duration_result.get("required_years", 0))
+        if claim_type == "experience_duration" and isinstance(duration_result, Mapping):
+            raw_actual = duration_result.get("actual_years", 0)
+            raw_required = duration_result.get("required_years", 0)
+            actual = float(raw_actual) if isinstance(raw_actual, (str, int, float)) else 0.0
+            required = float(raw_required) if isinstance(raw_required, (str, int, float)) else 0.0
             if actual > 0 and actual < required:
                 gaps.append(
                     ProfileGap(

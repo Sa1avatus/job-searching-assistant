@@ -57,9 +57,7 @@ class ApplicationTimelineService:
         return list(
             self._session.scalars(
                 select(ApplicationTimelineEventRow)
-                .where(
-                    ApplicationTimelineEventRow.application_id == application_id
-                )
+                .where(ApplicationTimelineEventRow.application_id == application_id)
                 .order_by(ApplicationTimelineEventRow.occurred_at.desc())
                 .limit(limit)
             ).all()

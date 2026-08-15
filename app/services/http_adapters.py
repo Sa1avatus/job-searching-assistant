@@ -3,30 +3,21 @@
 These implement the same interface as HeadHunterBrowserAdapter /
 LinkedInBrowserAdapter but delegate all Playwright interactions to the
 browser-worker's HTTP API, so the API container doesn't need Playwright."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import cast
 
 import structlog
 
+from adapters.job_boards.headhunter_browser import (
+    ExtractedHeadHunterVacancy,
+    HeadHunterSearchHit,
+)
+from adapters.job_boards.linkedin_browser import ExtractedLinkedInVacancy, LinkedInSearchHit
 from app.services.browser_worker_client import BrowserWorkerClient
 
 logger = structlog.get_logger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class _HeadHunterSearchHit:
-    source_url: str
-    title: str
-    company: str
-    vacancy_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _LinkedInSearchHit:
-    source_url: str
-    title: str
-    company: str
 
 
 class HttpHeadHunterAdapter:
@@ -38,7 +29,7 @@ class HttpHeadHunterAdapter:
 
     async def search(
         self, *, text: str, location_names: list[str] | None = None, limit: int = 15
-    ) -> list[_HeadHunterSearchHit]:
+    ) -> list[HeadHunterSearchHit]:
         hits = await self._client.search(
             source="headhunter",
             user_id=self._user_id,
@@ -47,20 +38,24 @@ class HttpHeadHunterAdapter:
             limit=limit,
         )
         return [
-            _HeadHunterSearchHit(
+            HeadHunterSearchHit(
+                vacancy_id=h.vacancy_id,
                 source_url=h.source_url,
                 title=h.title,
                 company=h.company,
-                vacancy_id=h.vacancy_id,
             )
             for h in hits
+            if h.vacancy_id is not None
         ]
 
-    async def extract_vacancy(self, url: str) -> object:
-        data = await self._client.extract_headhunter(
-            user_id=self._user_id, url=url
+    async def extract_vacancy(self, url: str) -> ExtractedHeadHunterVacancy:
+        data = await self._client.extract_headhunter(user_id=self._user_id, url=url)
+        return cast(ExtractedHeadHunterVacancy, _ExtractedVacancy(data))
+
+    async def has_submitted_application(self, url: str) -> bool:
+        return await self._client.has_submitted_application(
+            source="headhunter", user_id=self._user_id, url=url
         )
-        return _ExtractedVacancy(data)
 
 
 class HttpLinkedInAdapter:
@@ -72,7 +67,7 @@ class HttpLinkedInAdapter:
 
     async def search(
         self, *, text: str, location_names: list[str] | None = None, limit: int = 15
-    ) -> list[_LinkedInSearchHit]:
+    ) -> list[LinkedInSearchHit]:
         hits = await self._client.search(
             source="linkedin",
             user_id=self._user_id,
@@ -81,19 +76,24 @@ class HttpLinkedInAdapter:
             limit=limit,
         )
         return [
-            _LinkedInSearchHit(
+            LinkedInSearchHit(
+                job_id=h.vacancy_id,
                 source_url=h.source_url,
                 title=h.title,
                 company=h.company,
             )
             for h in hits
+            if h.vacancy_id is not None
         ]
 
-    async def extract_vacancy(self, url: str) -> object:
-        data = await self._client.extract_linkedin(
-            user_id=self._user_id, url=url
+    async def extract_vacancy(self, url: str) -> ExtractedLinkedInVacancy:
+        data = await self._client.extract_linkedin(user_id=self._user_id, url=url)
+        return cast(ExtractedLinkedInVacancy, _ExtractedVacancy(data))
+
+    async def has_submitted_application(self, url: str) -> bool:
+        return await self._client.has_submitted_application(
+            source="linkedin", user_id=self._user_id, url=url
         )
-        return _ExtractedVacancy(data)
 
 
 class _ExtractedVacancy:

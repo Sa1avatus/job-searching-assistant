@@ -111,8 +111,8 @@ class HttpReranker:
         self,
         http_client: httpx.AsyncClient,
         *,
-        model_name: str = "Qwen/Qwen3-Reranker-0.6B",
-        model_revision: str = "main",
+        model_name: str = "external-reranker",
+        model_revision: str = "unresolved",
         api_key: SecretStr,
     ) -> None:
         self._http_client = http_client

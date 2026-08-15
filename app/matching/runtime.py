@@ -4,11 +4,12 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 
 import httpx
+import redis.asyncio as aioredis
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 from app.domain.resume_text import extract_resume_text
-from app.llm.preferences import LlmPreferenceService
+from app.llm.preferences import LlmPreferenceService, resolve_model_identity
 from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
 from app.llm.providers.openai_compatible import OpenAICompatibleProvider
@@ -41,9 +42,12 @@ class MatchingRuntime:
         self,
         session_factory: sessionmaker[Session],
         settings: Settings,
+        *,
+        redis_client: aioredis.Redis | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._settings = settings
+        self._redis_client = redis_client
 
     async def run(self, application_id: str) -> None:
         with self._session_factory() as session:
@@ -63,6 +67,12 @@ class MatchingRuntime:
             )
 
             timeout = httpx.Timeout(self._settings.matching_model_timeout_seconds)
+            encryption_key = (
+                self._settings.browser_state_encryption_key.get_secret_value()
+                if self._settings.browser_state_encryption_key is not None
+                else None
+            )
+            model_identity = resolve_model_identity(session, application.user_id, encryption_key)
             async with AsyncExitStack() as stack:
                 llm_http = await stack.enter_async_context(
                     httpx.AsyncClient(
@@ -132,18 +142,27 @@ class MatchingRuntime:
                 )
                 await search_index.ensure_index()
                 # Create claim decomposer and evidence evaluator
-                matching_cache = MatchingCache()
+                matching_cache = MatchingCache(
+                    redis=self._redis_client,
+                    ttl_seconds=self._settings.matching_cache_ttl_seconds,
+                )
                 claim_decomposer = RouterRequirementDecomposer(
                     router,
                     prompt_registry,
                     cache=matching_cache,
                     timeout_seconds=self._settings.matching_model_timeout_seconds,
+                    model_identity=model_identity,
+                    decompose_max_tokens=self._settings.matching_decompose_max_tokens,
+                    decompose_context_size=self._settings.matching_decompose_context_size,
                 )
                 evidence_evaluator = RouterEvidenceEvaluator(
                     router,
                     prompt_registry,
                     cache=matching_cache,
                     timeout_seconds=self._settings.matching_model_timeout_seconds,
+                    model_identity=model_identity,
+                    entailment_max_tokens=self._settings.matching_entailment_max_tokens,
+                    entailment_context_size=self._settings.matching_entailment_context_size,
                 )
                 rag_client = create_rag_client(
                     service_url=self._settings.rag_service_url,
@@ -178,11 +197,13 @@ class MatchingRuntime:
                         router,
                         prompt_registry,
                         timeout_seconds=self._settings.matching_model_timeout_seconds,
+                        model_identity=model_identity,
                     ),
                     RouterCandidateEvidenceExtractor(
                         router,
                         prompt_registry,
                         timeout_seconds=self._settings.matching_model_timeout_seconds,
+                        model_identity=model_identity,
                     ),
                     retriever,
                     reranker,
@@ -200,6 +221,7 @@ class MatchingRuntime:
                     shadow_mode=self._settings.matching_v2_shadow_mode,
                     fallback_enabled=self._settings.matching_v2_fallback_enabled,
                     llm_concurrency=self._settings.matching_llm_concurrency,
+                    entailment_max_candidates=self._settings.matching_entailment_max_candidates,
                 )
                 await pipeline.match(
                     application.id,

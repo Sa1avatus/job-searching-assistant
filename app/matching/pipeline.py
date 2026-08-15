@@ -103,6 +103,7 @@ class MatchingPipeline:
         shadow_mode: bool = True,
         fallback_enabled: bool = True,
         llm_concurrency: int = 10,
+        entailment_max_candidates: int = 2,
     ) -> None:
         self._session = session
         self._vacancy_extractor = vacancy_extractor
@@ -133,6 +134,7 @@ class MatchingPipeline:
                 reranker_top_k=reranker_top_k,
                 fallback_enabled=fallback_enabled,
                 llm_concurrency=llm_concurrency,
+                entailment_max_candidates=entailment_max_candidates,
             )
 
     async def match(

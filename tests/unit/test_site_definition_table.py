@@ -23,11 +23,7 @@ def test_site_definitions_table_has_exact_storage_contract() -> None:
     ]
     assert table.primary_key.columns.keys() == ["id"]
     assert table.columns["archived_at"].nullable is True
-    assert all(
-        not column.nullable
-        for column in table.columns
-        if column.name != "archived_at"
-    )
+    assert all(not column.nullable for column in table.columns if column.name != "archived_at")
 
 
 def test_site_definitions_columns_have_expected_types() -> None:

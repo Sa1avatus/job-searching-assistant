@@ -1,8 +1,16 @@
+import io
+import zipfile
+from email.message import EmailMessage
 from pathlib import Path
 
 import pytest
 
-from app.services.email_file_import import EmlImportProvider, ZipEmlImportProvider
+from app.services.email_file_import import (
+    EmlImportProvider,
+    UploadedEmailFile,
+    UploadedEmailImportProvider,
+    ZipEmlImportProvider,
+)
 
 _EML_CONTENT = b"""From: sender@example.com
 To: recipient@example.com
@@ -109,3 +117,87 @@ async def test_zip_import_handles_corrupted_zip(tmp_path: Path) -> None:
     messages = await provider.fetch_messages()
 
     assert messages == []
+
+
+@pytest.mark.asyncio
+async def test_uploaded_eml_extracts_attached_email_separately() -> None:
+    attached = EmailMessage()
+    attached["Subject"] = "Solutions Architect position"
+    attached.set_content("I regret to inform you that your skillset does not match.")
+    outer = EmailMessage()
+    outer["Subject"] = "Exported conversation"
+    outer.set_content("The original message is attached.")
+    outer.add_attachment(attached)
+
+    provider = UploadedEmailImportProvider(
+        [UploadedEmailFile(filename="conversation.eml", content=outer.as_bytes())]
+    )
+    messages = await provider.fetch_messages()
+
+    assert [message.subject for message in messages] == [
+        "Exported conversation",
+        "Solutions Architect position",
+    ]
+    assert "skillset does not match" not in messages[0].body
+    assert "skillset does not match" in messages[1].body
+
+
+@pytest.mark.asyncio
+async def test_uploaded_eml_reads_html_only_body_and_sender_company_hint() -> None:
+    message = EmailMessage()
+    message["From"] = "Example Corp Recruiting Team <jobs@example.test>"
+    message["Subject"] = "Your application status"
+    message.set_content(
+        "<html><body><p>We have decided not to proceed with your application.</p>"
+        "<script>ignored()</script></body></html>",
+        subtype="html",
+    )
+
+    provider = UploadedEmailImportProvider(
+        [UploadedEmailFile(filename="rejection.eml", content=message.as_bytes())]
+    )
+    messages = await provider.fetch_messages()
+
+    assert len(messages) == 1
+    assert messages[0].company == "Example Corp Recruiting Team"
+    assert "decided not to proceed" in messages[0].body
+    assert "ignored" not in messages[0].body
+
+
+@pytest.mark.asyncio
+async def test_uploaded_zip_extracts_all_eml_and_nested_messages() -> None:
+    nested = EmailMessage()
+    nested["Subject"] = "Nested rejection"
+    nested.set_content("Unfortunately, we will not proceed with your application.")
+    outer = EmailMessage()
+    outer["Subject"] = "Forwarded message"
+    outer.set_content("See attachment.")
+    outer.add_attachment(nested)
+    archive_bytes = io.BytesIO()
+    with zipfile.ZipFile(archive_bytes, "w") as archive:
+        archive.writestr("forwarded.eml", outer.as_bytes())
+        archive.writestr("plain.eml", _EML_CONTENT)
+
+    provider = UploadedEmailImportProvider(
+        [UploadedEmailFile(filename="mail.zip", content=archive_bytes.getvalue())]
+    )
+    messages = await provider.fetch_messages()
+
+    assert {message.subject for message in messages} == {
+        "Forwarded message",
+        "Nested rejection",
+        "Test email",
+    }
+
+
+def test_uploaded_email_import_rejects_unsupported_files() -> None:
+    with pytest.raises(ValueError, match="Unsupported email file type"):
+        UploadedEmailImportProvider([UploadedEmailFile(filename="mail.msg", content=b"data")])
+
+
+def test_uploaded_email_import_enforces_total_size_limit() -> None:
+    with pytest.raises(ValueError, match="total size limit"):
+        UploadedEmailImportProvider(
+            [UploadedEmailFile(filename="mail.eml", content=b"12345")],
+            max_total_bytes=4,
+        )

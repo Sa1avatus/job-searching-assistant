@@ -145,18 +145,18 @@
     const applicationStatusLabels = {
       ru: {
         draft: 'Черновик', saved: 'Сохранена', awaiting_review: 'Ожидает решения',
-        approved: 'Принята', rejected: 'Отклонена', skipped: 'Пропущена',
+        approved: 'Принята', rejected: 'Отклонена мной', employer_rejected: 'Отказ работодателя', skipped: 'Пропущена',
         submitted: 'Отправлена', interview: 'Собеседование'
       },
       en: {
         draft: 'Draft', saved: 'Saved', awaiting_review: 'Awaiting decision',
-        approved: 'Accepted', rejected: 'Rejected', skipped: 'Skipped',
+        approved: 'Accepted', rejected: 'Rejected by me', employer_rejected: 'Employer rejection', skipped: 'Skipped',
         submitted: 'Submitted', interview: 'Interview'
       }
     };
     const editableApplicationStatuses = [
       'draft', 'saved', 'awaiting_review', 'approved',
-      'rejected', 'skipped', 'submitted', 'interview'
+      'rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'
     ];
 
     function createKeySkillTags(skills) {

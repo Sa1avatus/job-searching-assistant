@@ -65,9 +65,7 @@ def test_record_status_change_shortcut() -> None:
         application_id, _ = _setup(session)
         service = ApplicationTimelineService(session)
 
-        event = service.record_status_change(
-            application_id, "draft", "submitted", source="user"
-        )
+        event = service.record_status_change(application_id, "draft", "submitted", source="user")
 
         assert event.event_type == "status_change"
         assert event.previous_value == "draft"

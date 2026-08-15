@@ -23,6 +23,34 @@ class LlmPreferenceNotFound(LookupError):
     pass
 
 
+def resolve_model_identity(
+    session: Session,
+    user_id: str,
+    encryption_key: str | None,
+) -> str | None:
+    """Resolve a stable fingerprint of the user's selected LLM model.
+
+    Used to key matching caches and extraction results so that switching the model
+    invalidates prior LLM-derived work instead of silently reusing it. Returns
+    ``None`` when no per-user preference can be resolved (env-provided providers),
+    which preserves the historical ``model-router`` keying.
+    """
+    if encryption_key is None:
+        return None
+    try:
+        preference = LlmPreferenceService(session, encryption_key=encryption_key).load(user_id)
+    except InvalidLlmPreference:
+        return None
+    if preference is None:
+        return None
+    identity = f"{preference.provider}:{preference.model}"
+    if preference.base_url:
+        host = httpx.URL(preference.base_url).host or ""
+        if host:
+            identity = f"{identity}@{host}"
+    return identity
+
+
 class LlmModelDiscoveryError(RuntimeError):
     pass
 

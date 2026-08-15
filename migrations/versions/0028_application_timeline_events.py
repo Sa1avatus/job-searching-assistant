@@ -22,9 +22,7 @@ def upgrade() -> None:
         sa.Column("previous_value", sa.String(200), nullable=True),
         sa.Column("new_value", sa.String(200), nullable=True),
         sa.Column("detail_json", sa.JSON(), server_default=sa.text("'{}'"), nullable=False),
-        sa.Column(
-            "source", sa.String(100), server_default=sa.text("'system'"), nullable=False
-        ),
+        sa.Column("source", sa.String(100), server_default=sa.text("'system'"), nullable=False),
         sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint(
             "event_type IN ("

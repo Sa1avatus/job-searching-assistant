@@ -13,11 +13,12 @@ from __future__ import annotations
 import csv
 import io
 import json
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -134,7 +135,7 @@ class StructuredFactInput(StrictModel):
 
     @field_validator("category")
     @classmethod
-    def derive_category(cls, v: str, info) -> str:
+    def derive_category(cls, v: str, info: ValidationInfo) -> str:
         if v:
             return v
         # Derive from type
@@ -143,7 +144,7 @@ class StructuredFactInput(StrictModel):
 
     @field_validator("name")
     @classmethod
-    def derive_name(cls, v: str, info) -> str:
+    def derive_name(cls, v: str, info: ValidationInfo) -> str:
         if v:
             return v
         text = info.data.get("text", "")
@@ -417,7 +418,7 @@ class FactDeduplicator:
         return candidate_len > existing_len * 1.5
 
     def _find_near_duplicate(
-        self, candidate: CandidateFact, existing: list[ProfileFactRow]
+        self, candidate: CandidateFact, existing: Sequence[ProfileFactRow]
     ) -> ProfileFactRow | None:
         """Find near-duplicate by normalized name overlap."""
         candidate_tokens = set(candidate.name.casefold().split())

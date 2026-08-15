@@ -177,8 +177,8 @@ class OpenAICompatibleProvider(ModelProvider):
             "think": False,
             "options": {
                 "temperature": 0,
-                "num_predict": 16384,
-                "num_ctx": 8192,
+                "num_predict": request.max_output_tokens or 16384,
+                "num_ctx": request.context_size or 8192,
             },
         }
         if request.response_schema is not None:
@@ -202,8 +202,7 @@ class OpenAICompatibleProvider(ModelProvider):
 
         if not content or not content.strip():
             raise OpenAICompatibleResponseError(
-                f"Ollama native API returned empty content; "
-                f"done_reason={done_reason!r}"
+                f"Ollama native API returned empty content; done_reason={done_reason!r}"
             )
 
         return parse_model_json(content)
@@ -223,8 +222,7 @@ class OpenAICompatibleProvider(ModelProvider):
             "Return exactly one valid JSON object. "
             "Do not use Markdown code fences. "
             "Do not include explanations, comments, "
-            "headings, or text before or after the JSON."
-            + schema_instruction
+            "headings, or text before or after the JSON." + schema_instruction
         )
 
         # For Ollama: use native API with think=false to prevent reasoning token drain
@@ -255,7 +253,7 @@ class OpenAICompatibleProvider(ModelProvider):
             ],
             "temperature": 0,
             "stream": False,
-            "max_tokens": 16384,
+            "max_tokens": request.max_output_tokens or 16384,
             "response_format": response_format,
         }
         response = await self._http_client.post(

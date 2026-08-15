@@ -50,9 +50,10 @@ retains official Playwright, and ADR 0003 defines the intended safe declarative 
 ## Durable work
 
 Workflow tasks are persisted in SQL with a typed payload, target queue, attempt count, and transition
-history. The dispatcher atomically claims ordinary work with PostgreSQL locking, obtains a Redis
-lease, and does not hold a database session while a handler performs long external work. Browser
-tasks are claimed only by the browser worker.
+history. The dispatcher atomically claims ordinary work with PostgreSQL locking. A dedicated
+matching worker claims the priority-aware `matching` queue with configurable job concurrency, while
+browser tasks are claimed only by the browser worker. Long-running workers renew their Redis lease
+and SQL claim heartbeat without holding the claim transaction open.
 
 Before a potentially irreversible action, the workflow persists a checkpoint. Human-action states
 are resumed explicitly and at most once. Retries are bounded and must first determine whether the
@@ -75,8 +76,8 @@ evaluated rollout.
 
 ## Runtime topology
 
-Docker Compose defines PostgreSQL, Redis, OpenSearch, API, dispatcher, retention, an opt-in browser
-worker, and an opt-in GPU embedding service. API and infrastructure ports are published on
+Docker Compose defines PostgreSQL, Redis, OpenSearch, API, dispatcher, matching worker, retention,
+an opt-in browser worker, and an opt-in GPU embedding service. API and infrastructure ports are published on
 loopback. The independent reranker is configured as an external HTTP dependency and is not owned
 or started by JSA Compose. The API image includes the visible local browser used to capture site
 sessions; the browser worker owns background automation.

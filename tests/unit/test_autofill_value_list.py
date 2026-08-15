@@ -35,9 +35,7 @@ def test_list_autofill_values_decrypts_sorted_user_values(session: Session) -> N
                 key="location.city",
                 label="City",
                 value_type="text",
-                encrypted_value=encrypt_autofill_value(
-                    "Bangkok", encryption_key=encryption_key
-                ),
+                encrypted_value=encrypt_autofill_value("Bangkok", encryption_key=encryption_key),
                 is_sensitive=False,
             ),
             AutofillValueRow(
@@ -55,18 +53,14 @@ def test_list_autofill_values_decrypts_sorted_user_values(session: Session) -> N
                 key="custom.notes",
                 label="Notes",
                 value_type="text",
-                encrypted_value=encrypt_autofill_value(
-                    "other", encryption_key=encryption_key
-                ),
+                encrypted_value=encrypt_autofill_value("other", encryption_key=encryption_key),
                 is_sensitive=False,
             ),
         ]
     )
     session.commit()
 
-    values = list_autofill_values(
-        session, user_id="user-1", encryption_key=encryption_key
-    )
+    values = list_autofill_values(session, user_id="user-1", encryption_key=encryption_key)
 
     assert [value.key for value in values] == ["contact.email", "location.city"]
     assert [value.serialized_value for value in values] == [

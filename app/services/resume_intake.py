@@ -20,7 +20,7 @@ from app.prompts.resume_profile import build_resume_profile_prompt
 class ExtractedProfileDraft(BaseModel):
     skills: list[str] = Field(default_factory=list, max_length=160)
     experience_summary: str = Field(default="", max_length=2_000)
-    search_keywords: str = Field(default="", max_length=200)
+    search_keywords: str = Field(default="", max_length=2_000)
     years_of_experience: float | None = None
 
 

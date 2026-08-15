@@ -9,11 +9,12 @@ from sqlalchemy.orm import Session
 
 from app.services.application_email_classifier import classify_application_email
 from app.services.application_timeline import ApplicationTimelineService
+from app.services.email_entity_extraction import extract_email_entities
 from app.services.recruitment import EntityNotFoundError
 from app.storage.tables import ApplicationEmailEventRow, ApplicationRow, UserRow, VacancyRow
 
 _APPLICATION_STATUS_BY_OUTCOME = {
-    "rejected": "rejected",
+    "rejected": "employer_rejected",
     "next_stage": "interview",
     "offer": "offer",
 }
@@ -50,24 +51,31 @@ class ApplicationEmailEventService:
     ) -> ApplicationEmailEventResult:
         self._require_user(user_id)
         if application_id is None:
+            entities = extract_email_entities(subject, body)
             application_id = self.match_application(
                 user_id,
-                company=company,
-                vacancy_title=vacancy_title,
+                company=company or entities.company,
+                vacancy_title=vacancy_title or entities.vacancy_title,
             )
-        if application_id is None and company is None and vacancy_title is None:
+        if application_id is None:
             application_id = self.match_application_text(
                 user_id,
                 text=f"{subject}\n{body}",
             )
         self._require_owned_application(user_id, application_id)
         fingerprint = _message_fingerprint(subject, body)
+        classified_outcome = classify_application_email(subject, body).value
         existing = self._find_by_fingerprint(user_id, fingerprint)
         if existing is not None:
+            event_changed = False
             if existing.application_id is None and application_id is not None:
                 existing.application_id = application_id
+                event_changed = True
+            if existing.outcome == "unknown" and classified_outcome != "unknown":
+                existing.outcome = classified_outcome
+                event_changed = True
             status_updated = self._apply_outcome(existing)
-            if status_updated:
+            if event_changed or status_updated:
                 self._session.commit()
             return ApplicationEmailEventResult(
                 event=existing,
@@ -79,7 +87,7 @@ class ApplicationEmailEventService:
             user_id=user_id,
             application_id=application_id,
             message_fingerprint=fingerprint,
-            outcome=classify_application_email(subject, body).value,
+            outcome=classified_outcome,
         )
         self._session.add(event)
         if application_id is not None:
@@ -138,7 +146,7 @@ class ApplicationEmailEventService:
         company: str | None,
         vacancy_title: str | None,
     ) -> str | None:
-        normalized_company = _normalize_reference(company)
+        normalized_company = _normalize_company_reference(company)
         normalized_title = _normalize_reference(vacancy_title)
         if normalized_company is None and normalized_title is None:
             return None
@@ -152,7 +160,7 @@ class ApplicationEmailEventService:
             for application, vacancy in rows
             if (
                 normalized_company is None
-                or _normalize_reference(vacancy.company) == normalized_company
+                or _normalize_company_reference(vacancy.company) == normalized_company
             )
             and (
                 normalized_title is None or _normalize_reference(vacancy.title) == normalized_title
@@ -160,7 +168,7 @@ class ApplicationEmailEventService:
         ]
         if len(matches) != 1:
             return None
-        return matches[0]
+        return str(matches[0])
 
     def match_application_text(self, user_id: str, *, text: str) -> str | None:
         normalized_text = _normalize_reference(text)
@@ -171,7 +179,8 @@ class ApplicationEmailEventService:
             .join(VacancyRow, VacancyRow.id == ApplicationRow.vacancy_id)
             .where(ApplicationRow.user_id == user_id)
         ).all()
-        matches: list[str] = []
+        title_match_ids: list[str] = []
+        company_match_ids: list[str] = []
         for application, vacancy in rows:
             company = _normalize_reference(vacancy.company)
             title = _normalize_reference(vacancy.title)
@@ -179,11 +188,17 @@ class ApplicationEmailEventService:
             company_matches = (
                 company is not None and len(company) >= 5 and company in normalized_text
             )
-            if title_matches or company_matches:
-                matches.append(application.id)
-        if len(matches) != 1:
+            if title_matches:
+                title_match_ids.append(application.id)
+            if company_matches:
+                company_match_ids.append(application.id)
+        if len(title_match_ids) == 1:
+            return title_match_ids[0]
+        if title_match_ids:
             return None
-        return matches[0]
+        if len(company_match_ids) == 1:
+            return company_match_ids[0]
+        return None
 
     def _require_user(self, user_id: str) -> None:
         if self._session.get(UserRow, user_id) is None:
@@ -217,11 +232,8 @@ class ApplicationEmailEventService:
                 select(ApplicationEmailEventRow)
                 .where(
                     ApplicationEmailEventRow.user_id == user_id,
-                    (
-                        ApplicationEmailEventRow.outcome == "unknown"
-                    ) | (
-                        ApplicationEmailEventRow.application_id.is_(None)
-                    ),
+                    (ApplicationEmailEventRow.outcome == "unknown")
+                    | (ApplicationEmailEventRow.application_id.is_(None)),
                 )
                 .order_by(ApplicationEmailEventRow.processed_at.desc())
             ).all()
@@ -238,3 +250,32 @@ def _normalize_reference(value: str | None) -> str | None:
         return None
     normalized = " ".join(value.split()).casefold()
     return normalized or None
+
+
+def _normalize_company_reference(value: str | None) -> str | None:
+    normalized = _normalize_reference(value)
+    if normalized is None:
+        return None
+    words = normalized.replace("&", " ").replace(".", " ").split()
+    ignored_words = {
+        "ag",
+        "careers",
+        "corp",
+        "corporation",
+        "gmbh",
+        "hr",
+        "inc",
+        "jobs",
+        "limited",
+        "llc",
+        "ltd",
+        "plc",
+        "recruiter",
+        "recruiting",
+        "recruitment",
+        "team",
+    }
+    company_words = [word for word in words if word not in ignored_words]
+    if company_words[-2:] == ["talent", "acquisition"]:
+        company_words = company_words[:-2]
+    return " ".join(company_words) or None

@@ -15,7 +15,7 @@ from app.storage.tables import UserRow
 
 def get_user_from_path(
     user_id: str = Path(...),
-    session: Session = Depends(session_scope)  # noqa: B008,
+    session: Session = Depends(session_scope),  # noqa: B008,
 ) -> UserRow:
     """Validate user exists and return them. Used as FastAPI dependency.
 
@@ -36,7 +36,7 @@ def get_user_from_path(
 
 def get_user_id_from_path(
     user_id: str = Path(...),
-    session: Session = Depends(session_scope)  # noqa: B008,
+    session: Session = Depends(session_scope),  # noqa: B008,
 ) -> str:
     """Validate user exists and return their ID. Lighter version.
 

@@ -490,6 +490,7 @@ def test_neuroengineer_regression():
                 retriever=Retriever(),
                 reranker=FakeReranker(),
                 reranker_top_k=20,
+                entailment_max_candidates=20,
             )
 
             req_tuple = tuple(req_rows.values())

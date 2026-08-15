@@ -81,9 +81,7 @@ class RagSyncService:
                 external_document_id=f"cv:{cv_file_id}",
                 collection=RESUME_COLLECTION,
             )
-            metrics.increment(
-                "rag_delete_success_total" if removed else "rag_delete_skipped_total"
-            )
+            metrics.increment("rag_delete_success_total" if removed else "rag_delete_skipped_total")
             return removed
         except Exception as error:
             metrics.increment("rag_delete_failures_total")

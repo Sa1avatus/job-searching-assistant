@@ -3406,18 +3406,16 @@
       const moreMenu = element('div', undefined, 'more-actions__menu');
       moreMenu.hidden = true;
       moreMenu.setAttribute('role', 'menu');
-      const recalcBtn = element('button', currentLanguage === 'en' ? 'Recalculate' : 'Пересчитать');
-      recalcBtn.type = 'button';
-      recalcBtn.addEventListener('click', async () => {
+      const runRecalculate = async (force, button, label) => {
         moreMenu.hidden = true;
-        recalcBtn.disabled = true;
-        recalcBtn.textContent = currentLanguage === 'en' ? 'Calculating…' : 'Рассчитываем…';
+        button.disabled = true;
+        button.textContent = currentLanguage === 'en' ? 'Calculating…' : 'Рассчитываем…';
         try {
-          const task = await asJson(await fetch(`/v1/applications/${item.application_id}/recalculate-match?force=true`, {
+          const task = await asJson(await fetch(`/v1/applications/${item.application_id}/recalculate-match${force ? '?force=true' : ''}`, {
             method: 'POST', headers: headers(false)
           }));
           await waitForMatchingTask(task, current => {
-            recalcBtn.textContent = matchingTaskStatusText(current);
+            button.textContent = matchingTaskStatusText(current);
           });
           const data = await asJson(await fetch(`/v1/applications/${item.application_id}/match-details`, {
             headers: headers(false)
@@ -3431,17 +3429,29 @@
             detailsButton.textContent = currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит';
             await loadMatchDetails(item.application_id, details, detailsButton);
           }
-          recalcBtn.textContent = '\u2713 ' + (currentLanguage === 'en' ? 'Done' : 'Готово');
+          button.textContent = '\u2713 ' + (currentLanguage === 'en' ? 'Done' : 'Готово');
           setTimeout(() => {
-            recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate' : 'Пересчитать';
-            recalcBtn.disabled = false;
+            button.textContent = label;
+            button.disabled = false;
           }, 2000);
         } catch (e) {
-          recalcBtn.textContent = currentLanguage === 'en' ? 'Recalculate' : 'Пересчитать'; recalcBtn.disabled = false;
+          button.textContent = label; button.disabled = false;
           showError(e);
         }
-      });
-      moreMenu.append(recalcBtn);
+      };
+      const recalcBtn = element('button', currentLanguage === 'en' ? 'Recalculate' : 'Пересчитать');
+      recalcBtn.type = 'button';
+      recalcBtn.title = currentLanguage === 'en'
+        ? 'Reuse cached calculations where possible'
+        : 'Пересчитать с переиспользованием кэша';
+      recalcBtn.addEventListener('click', () => runRecalculate(false, recalcBtn, currentLanguage === 'en' ? 'Recalculate' : 'Пересчитать'));
+      const fullRecalcBtn = element('button', currentLanguage === 'en' ? 'Full recalculate' : 'Полный перерасчёт');
+      fullRecalcBtn.type = 'button';
+      fullRecalcBtn.title = currentLanguage === 'en'
+        ? 'Discard cached results and recompute from scratch (use after changing the model)'
+        : 'Сбросить кэш и пересчитать с нуля (используйте после смены модели)';
+      fullRecalcBtn.addEventListener('click', () => runRecalculate(true, fullRecalcBtn, currentLanguage === 'en' ? 'Full recalculate' : 'Полный перерасчёт'));
+      moreMenu.append(recalcBtn, fullRecalcBtn);
       if (!['submitted', 'interview'].includes(item.status)) {
         const rejectBtn = element('button', currentLanguage === 'en' ? 'Reject' : 'Отклонить', 'danger');
         rejectBtn.type = 'button';

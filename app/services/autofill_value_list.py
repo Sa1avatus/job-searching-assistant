@@ -49,12 +49,8 @@ def list_autofill_values(
                 row.encrypted_value, encryption_key=encryption_key
             ),
             is_sensitive=row.is_sensitive,
-            requires_review=evaluate_autofill_usage(
-                is_sensitive=row.is_sensitive
-            ).requires_review,
-            may_send_to_llm=evaluate_autofill_usage(
-                is_sensitive=row.is_sensitive
-            ).may_send_to_llm,
+            requires_review=evaluate_autofill_usage(is_sensitive=row.is_sensitive).requires_review,
+            may_send_to_llm=evaluate_autofill_usage(is_sensitive=row.is_sensitive).may_send_to_llm,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )

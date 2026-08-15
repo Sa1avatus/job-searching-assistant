@@ -57,7 +57,11 @@ def test_matching_job_is_idempotent_and_contains_no_cv_text() -> None:
         second = MatchingJobService(session).schedule(application.id)
 
         assert first.id == second.id
+        forced = MatchingJobService(session).schedule(application.id, force=True)
+        assert forced.id == first.id
         assert session.query(WorkflowTaskRow).count() == 1
+        assert first.queue_name == "matching"
+        assert first.priority == 100
         assert "Python is required" not in str(first.task_payload)
         assert set(first.task_payload) == {
             "application_id",

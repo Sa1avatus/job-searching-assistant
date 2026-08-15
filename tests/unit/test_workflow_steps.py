@@ -34,22 +34,26 @@ def test_status_values():
 
 
 def test_set_expressions():
-    assert frozenset(
-        {WorkflowStepType.HUMAN_REVIEW, WorkflowStepType.SUBMIT}
-    ) == PRIVILEGED_WORKFLOW_STEP_TYPES
-    assert frozenset(
-        {
-            WorkflowStepType.NAVIGATE,
-            WorkflowStepType.FILL,
-            WorkflowStepType.UPLOAD,
-            WorkflowStepType.SELECT,
-            WorkflowStepType.CHECK,
-            WorkflowStepType.CLICK,
-            WorkflowStepType.WAIT,
-            WorkflowStepType.ASSERT,
-            WorkflowStepType.SUBMIT,
-        }
-    ) == BROWSER_WORKFLOW_STEP_TYPES
+    assert (
+        frozenset({WorkflowStepType.HUMAN_REVIEW, WorkflowStepType.SUBMIT})
+        == PRIVILEGED_WORKFLOW_STEP_TYPES
+    )
+    assert (
+        frozenset(
+            {
+                WorkflowStepType.NAVIGATE,
+                WorkflowStepType.FILL,
+                WorkflowStepType.UPLOAD,
+                WorkflowStepType.SELECT,
+                WorkflowStepType.CHECK,
+                WorkflowStepType.CLICK,
+                WorkflowStepType.WAIT,
+                WorkflowStepType.ASSERT,
+                WorkflowStepType.SUBMIT,
+            }
+        )
+        == BROWSER_WORKFLOW_STEP_TYPES
+    )
     assert WorkflowStepType.HUMAN_REVIEW not in BROWSER_WORKFLOW_STEP_TYPES
 
 

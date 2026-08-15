@@ -55,6 +55,7 @@ from app.storage.tables import (
 
 # ── Helpers ──────────────────────────────────────────────────────
 
+
 def _session_factory() -> sessionmaker:
     engine = create_engine(
         "sqlite://",
@@ -166,8 +167,16 @@ class _FakeEntailmentEvaluator:
         self._results = results or {}
 
     async def evaluate(
-        self, *, claim_id, claim_text, claim_type, evidence_id, evidence_text,
-        semantic_score=None, reranker_score=None, **kwargs,
+        self,
+        *,
+        claim_id,
+        claim_text,
+        claim_type,
+        evidence_id,
+        evidence_text,
+        semantic_score=None,
+        reranker_score=None,
+        **kwargs,
     ) -> EntailmentResult:
         key = f"{claim_id}:{evidence_id}"
         if key in self._results:
@@ -188,6 +197,7 @@ class _FakeEntailmentEvaluator:
 
 class _ErrorEvaluator:
     """Simulates evaluator that always raises (technical failure)."""
+
     model_name = "error-evaluator"
     model_version = "1"
 
@@ -197,6 +207,7 @@ class _ErrorEvaluator:
 
 # ── Regression Test 1: NLP ≠ production Python ──────────────────
 
+
 def test_regression_1_nlp_not_production_python():
     """NLP pipelines evidence should NOT entail production Python."""
 
@@ -205,59 +216,100 @@ def test_regression_1_nlp_not_production_python():
         with sf() as session:
             app = _create_application(session)
             nlp_ev = CandidateEvidenceRow(
-                user_id=app.user_id, cv_file_id=app.selected_cv_file_id,
-                evidence_text="Developed NLP classification pipelines using TensorFlow, Keras, PyTorch, LSTM / BiLSTM with attention, DistilBERT",
+                user_id=app.user_id,
+                cv_file_id=app.selected_cv_file_id,
+                evidence_text=(
+                    "Developed NLP classification pipelines using TensorFlow, Keras, PyTorch, "
+                    "LSTM / BiLSTM with attention, DistilBERT"
+                ),
                 normalized_text="nlp classification pipelines tensorflow pytorch",
-                evidence_type="work_experience", skill_name="ML/NLP",
-                experience_level="hands_on", is_verified=True,
+                evidence_type="work_experience",
+                skill_name="ML/NLP",
+                experience_level="hands_on",
+                is_verified=True,
                 source_fragment="NLP classification pipelines",
-                extraction_model="fake", extraction_model_version="1",
-                extraction_schema_version="1", extraction_run_id="run-1", confidence=0.9,
+                extraction_model="fake",
+                extraction_model_version="1",
+                extraction_schema_version="1",
+                extraction_run_id="run-1",
+                confidence=0.9,
             )
             session.add(nlp_ev)
             session.flush()
 
             req = VacancyRequirementRow(
-                vacancy_id=app.vacancy_id, requirement_text="Уверенный Python, умение писать прод-код",
-                normalized_text="production python", requirement_type="hard_skill",
-                importance="required", weight=1.0, is_blocker=False,
-                alternatives_json=[], source_fragment="Python production",
-                extraction_model="fake", extraction_model_version="1",
-                extraction_schema_version="1", extraction_run_id="run-1", confidence=0.95,
+                vacancy_id=app.vacancy_id,
+                requirement_text="Уверенный Python, умение писать прод-код",
+                normalized_text="production python",
+                requirement_type="hard_skill",
+                importance="required",
+                weight=1.0,
+                is_blocker=False,
+                alternatives_json=[],
+                source_fragment="Python production",
+                extraction_model="fake",
+                extraction_model_version="1",
+                extraction_schema_version="1",
+                extraction_run_id="run-1",
+                confidence=0.95,
             )
             session.add(req)
             session.flush()
 
-            decomposer = _FakeDecomposer({
-                req.id: RequirementDecomposition(
-                    requirement_id=req.id, requirement_text=req.requirement_text,
-                    requirement_criticality=RequirementCriticality.REQUIRED,
-                    claims=[AtomicClaim(
-                        id=f"{req.id}-prod-python", requirement_id=req.id,
-                        claim_type=ClaimType.PRODUCTION_EXPERIENCE, subject="Python",
-                        normalized_subject="python", criticality=Criticality.REQUIRED,
-                        logical_group=LogicalGroup.AND, source_text=req.requirement_text,
-                    )], is_composite=False,
-                )
-            })
+            decomposer = _FakeDecomposer(
+                {
+                    req.id: RequirementDecomposition(
+                        requirement_id=req.id,
+                        requirement_text=req.requirement_text,
+                        requirement_criticality=RequirementCriticality.REQUIRED,
+                        claims=[
+                            AtomicClaim(
+                                id=f"{req.id}-prod-python",
+                                requirement_id=req.id,
+                                claim_type=ClaimType.PRODUCTION_EXPERIENCE,
+                                subject="Python",
+                                normalized_subject="python",
+                                criticality=Criticality.REQUIRED,
+                                logical_group=LogicalGroup.AND,
+                                source_text=req.requirement_text,
+                            )
+                        ],
+                        is_composite=False,
+                    )
+                }
+            )
 
-            evaluator = _FakeEntailmentEvaluator({
-                f"{req.id}-prod-python:{nlp_ev.id}": EntailmentResult(
-                    claim_id=f"{req.id}-prod-python", evidence_id=nlp_ev.id,
-                    relation=EntailmentRelation.RELATED_BUT_INSUFFICIENT,
-                    confidence=0.85,
-                    reason="NLP/ML work confirmed but not production Python backend engineering.",
-                    semantic_score=0.7, reranker_score=0.8, entailment_score=0.3,
-                    evidence_strength=0.3, evidence_strength_category=EvidenceStrengthCategory.WEAK,
-                )
-            })
+            evaluator = _FakeEntailmentEvaluator(
+                {
+                    f"{req.id}-prod-python:{nlp_ev.id}": EntailmentResult(
+                        claim_id=f"{req.id}-prod-python",
+                        evidence_id=nlp_ev.id,
+                        relation=EntailmentRelation.RELATED_BUT_INSUFFICIENT,
+                        confidence=0.85,
+                        reason=(
+                            "NLP/ML work confirmed but not production Python backend engineering."
+                        ),
+                        semantic_score=0.7,
+                        reranker_score=0.8,
+                        entailment_score=0.3,
+                        evidence_strength=0.3,
+                        evidence_strength_category=EvidenceStrengthCategory.WEAK,
+                    )
+                }
+            )
 
             pipeline = ClaimMatchPipeline(
-                session=session, decomposer=decomposer, evaluator=evaluator,
-                retriever=_SessionRetriever(session), reranker=FakeReranker(),
+                session=session,
+                decomposer=decomposer,
+                evaluator=evaluator,
+                retriever=_SessionRetriever(session),
+                reranker=FakeReranker(),
             )
             result = await pipeline.match_requirements(
-                app.id, app.user_id, app.selected_cv_file_id, (req,),
+                app.id,
+                app.user_id,
+                app.selected_cv_file_id,
+                (req,),
             )
 
             assessment = result.assessments[0]
@@ -270,6 +322,7 @@ def test_regression_1_nlp_not_production_python():
 
 # ── Regression Test 2: LLM integration ≠ RAG ───────────────────
 
+
 def test_regression_2_llm_integration_not_rag():
     """Generic LLM integration should NOT entail practical RAG."""
 
@@ -278,58 +331,98 @@ def test_regression_2_llm_integration_not_rag():
         with sf() as session:
             app = _create_application(session)
             llm_ev = CandidateEvidenceRow(
-                user_id=app.user_id, cv_file_id=app.selected_cv_file_id,
-                evidence_text="Designed and implemented an asynchronous, provider-independent integration architecture for AI and LLM services",
+                user_id=app.user_id,
+                cv_file_id=app.selected_cv_file_id,
+                evidence_text=(
+                    "Designed and implemented an asynchronous, provider-independent integration "
+                    "architecture for AI and LLM services"
+                ),
                 normalized_text="async provider-independent llm integration",
-                evidence_type="work_experience", skill_name="LLM",
-                experience_level="hands_on", is_verified=True,
+                evidence_type="work_experience",
+                skill_name="LLM",
+                experience_level="hands_on",
+                is_verified=True,
                 source_fragment="LLM integration architecture",
-                extraction_model="fake", extraction_model_version="1",
-                extraction_schema_version="1", extraction_run_id="run-1", confidence=0.9,
+                extraction_model="fake",
+                extraction_model_version="1",
+                extraction_schema_version="1",
+                extraction_run_id="run-1",
+                confidence=0.9,
             )
             session.add(llm_ev)
             session.flush()
 
             req = VacancyRequirementRow(
-                vacancy_id=app.vacancy_id, requirement_text="Практический опыт с RAG",
-                normalized_text="practical rag experience", requirement_type="hard_skill",
-                importance="required", weight=1.0, is_blocker=False,
-                alternatives_json=[], source_fragment="RAG",
-                extraction_model="fake", extraction_model_version="1",
-                extraction_schema_version="1", extraction_run_id="run-1", confidence=0.9,
+                vacancy_id=app.vacancy_id,
+                requirement_text="Практический опыт с RAG",
+                normalized_text="practical rag experience",
+                requirement_type="hard_skill",
+                importance="required",
+                weight=1.0,
+                is_blocker=False,
+                alternatives_json=[],
+                source_fragment="RAG",
+                extraction_model="fake",
+                extraction_model_version="1",
+                extraction_schema_version="1",
+                extraction_run_id="run-1",
+                confidence=0.9,
             )
             session.add(req)
             session.flush()
 
-            decomposer = _FakeDecomposer({
-                req.id: RequirementDecomposition(
-                    requirement_id=req.id, requirement_text=req.requirement_text,
-                    requirement_criticality=RequirementCriticality.REQUIRED,
-                    claims=[AtomicClaim(
-                        id=f"{req.id}-rag", requirement_id=req.id,
-                        claim_type=ClaimType.PRACTICAL_EXPERIENCE, subject="RAG",
-                        normalized_subject="rag", criticality=Criticality.REQUIRED,
-                        logical_group=LogicalGroup.AND, source_text=req.requirement_text,
-                    )], is_composite=False,
-                )
-            })
+            decomposer = _FakeDecomposer(
+                {
+                    req.id: RequirementDecomposition(
+                        requirement_id=req.id,
+                        requirement_text=req.requirement_text,
+                        requirement_criticality=RequirementCriticality.REQUIRED,
+                        claims=[
+                            AtomicClaim(
+                                id=f"{req.id}-rag",
+                                requirement_id=req.id,
+                                claim_type=ClaimType.PRACTICAL_EXPERIENCE,
+                                subject="RAG",
+                                normalized_subject="rag",
+                                criticality=Criticality.REQUIRED,
+                                logical_group=LogicalGroup.AND,
+                                source_text=req.requirement_text,
+                            )
+                        ],
+                        is_composite=False,
+                    )
+                }
+            )
 
-            evaluator = _FakeEntailmentEvaluator({
-                f"{req.id}-rag:{llm_ev.id}": EntailmentResult(
-                    claim_id=f"{req.id}-rag", evidence_id=llm_ev.id,
-                    relation=EntailmentRelation.RELATED_BUT_INSUFFICIENT,
-                    confidence=0.9, reason="LLM integration is not RAG.",
-                    semantic_score=0.75, reranker_score=0.85, entailment_score=0.25,
-                    evidence_strength=0.25, evidence_strength_category=EvidenceStrengthCategory.WEAK,
-                )
-            })
+            evaluator = _FakeEntailmentEvaluator(
+                {
+                    f"{req.id}-rag:{llm_ev.id}": EntailmentResult(
+                        claim_id=f"{req.id}-rag",
+                        evidence_id=llm_ev.id,
+                        relation=EntailmentRelation.RELATED_BUT_INSUFFICIENT,
+                        confidence=0.9,
+                        reason="LLM integration is not RAG.",
+                        semantic_score=0.75,
+                        reranker_score=0.85,
+                        entailment_score=0.25,
+                        evidence_strength=0.25,
+                        evidence_strength_category=EvidenceStrengthCategory.WEAK,
+                    )
+                }
+            )
 
             pipeline = ClaimMatchPipeline(
-                session=session, decomposer=decomposer, evaluator=evaluator,
-                retriever=_SessionRetriever(session), reranker=FakeReranker(),
+                session=session,
+                decomposer=decomposer,
+                evaluator=evaluator,
+                retriever=_SessionRetriever(session),
+                reranker=FakeReranker(),
             )
             result = await pipeline.match_requirements(
-                app.id, app.user_id, app.selected_cv_file_id, (req,),
+                app.id,
+                app.user_id,
+                app.selected_cv_file_id,
+                (req,),
             )
             assessment = result.assessments[0]
             assert assessment.entailment_relation is EntailmentRelation.RELATED_BUT_INSUFFICIENT
@@ -340,6 +433,7 @@ def test_regression_2_llm_integration_not_rag():
 
 # ── Regression Test 3: FastAPI backend IS production Python ─────
 
+
 def test_regression_3_fastapi_entails_production_python():
     """FastAPI backend services DO entail production Python."""
 
@@ -348,58 +442,98 @@ def test_regression_3_fastapi_entails_production_python():
         with sf() as session:
             app = _create_application(session)
             fastapi_ev = CandidateEvidenceRow(
-                user_id=app.user_id, cv_file_id=app.selected_cv_file_id,
-                evidence_text="Developed asynchronous Python/FastAPI backend services integrated with PostgreSQL, Redis and external APIs, deployed using Docker.",
+                user_id=app.user_id,
+                cv_file_id=app.selected_cv_file_id,
+                evidence_text=(
+                    "Developed asynchronous Python/FastAPI backend services integrated with "
+                    "PostgreSQL, Redis and external APIs, deployed using Docker."
+                ),
                 normalized_text="python fastapi async backend postgresql docker",
-                evidence_type="work_experience", skill_name="Python",
-                experience_level="production", is_verified=True,
+                evidence_type="work_experience",
+                skill_name="Python",
+                experience_level="production",
+                is_verified=True,
                 source_fragment="FastAPI backend services",
-                extraction_model="fake", extraction_model_version="1",
-                extraction_schema_version="1", extraction_run_id="run-1", confidence=0.95,
+                extraction_model="fake",
+                extraction_model_version="1",
+                extraction_schema_version="1",
+                extraction_run_id="run-1",
+                confidence=0.95,
             )
             session.add(fastapi_ev)
             session.flush()
 
             req = VacancyRequirementRow(
-                vacancy_id=app.vacancy_id, requirement_text="Уверенный Python, умение писать прод-код",
-                normalized_text="production python", requirement_type="hard_skill",
-                importance="required", weight=1.0, is_blocker=False,
-                alternatives_json=[], source_fragment="Python production",
-                extraction_model="fake", extraction_model_version="1",
-                extraction_schema_version="1", extraction_run_id="run-1", confidence=0.95,
+                vacancy_id=app.vacancy_id,
+                requirement_text="Уверенный Python, умение писать прод-код",
+                normalized_text="production python",
+                requirement_type="hard_skill",
+                importance="required",
+                weight=1.0,
+                is_blocker=False,
+                alternatives_json=[],
+                source_fragment="Python production",
+                extraction_model="fake",
+                extraction_model_version="1",
+                extraction_schema_version="1",
+                extraction_run_id="run-1",
+                confidence=0.95,
             )
             session.add(req)
             session.flush()
 
-            decomposer = _FakeDecomposer({
-                req.id: RequirementDecomposition(
-                    requirement_id=req.id, requirement_text=req.requirement_text,
-                    requirement_criticality=RequirementCriticality.REQUIRED,
-                    claims=[AtomicClaim(
-                        id=f"{req.id}-prod-py", requirement_id=req.id,
-                        claim_type=ClaimType.PRODUCTION_EXPERIENCE, subject="Python",
-                        normalized_subject="python", criticality=Criticality.REQUIRED,
-                        logical_group=LogicalGroup.AND, source_text=req.requirement_text,
-                    )], is_composite=False,
-                )
-            })
+            decomposer = _FakeDecomposer(
+                {
+                    req.id: RequirementDecomposition(
+                        requirement_id=req.id,
+                        requirement_text=req.requirement_text,
+                        requirement_criticality=RequirementCriticality.REQUIRED,
+                        claims=[
+                            AtomicClaim(
+                                id=f"{req.id}-prod-py",
+                                requirement_id=req.id,
+                                claim_type=ClaimType.PRODUCTION_EXPERIENCE,
+                                subject="Python",
+                                normalized_subject="python",
+                                criticality=Criticality.REQUIRED,
+                                logical_group=LogicalGroup.AND,
+                                source_text=req.requirement_text,
+                            )
+                        ],
+                        is_composite=False,
+                    )
+                }
+            )
 
-            evaluator = _FakeEntailmentEvaluator({
-                f"{req.id}-prod-py:{fastapi_ev.id}": EntailmentResult(
-                    claim_id=f"{req.id}-prod-py", evidence_id=fastapi_ev.id,
-                    relation=EntailmentRelation.ENTAILED,
-                    confidence=0.95, reason="FastAPI backend = production Python.",
-                    semantic_score=0.85, reranker_score=0.9, entailment_score=0.95,
-                    evidence_strength=0.9, evidence_strength_category=EvidenceStrengthCategory.STRONG,
-                )
-            })
+            evaluator = _FakeEntailmentEvaluator(
+                {
+                    f"{req.id}-prod-py:{fastapi_ev.id}": EntailmentResult(
+                        claim_id=f"{req.id}-prod-py",
+                        evidence_id=fastapi_ev.id,
+                        relation=EntailmentRelation.ENTAILED,
+                        confidence=0.95,
+                        reason="FastAPI backend = production Python.",
+                        semantic_score=0.85,
+                        reranker_score=0.9,
+                        entailment_score=0.95,
+                        evidence_strength=0.9,
+                        evidence_strength_category=EvidenceStrengthCategory.STRONG,
+                    )
+                }
+            )
 
             pipeline = ClaimMatchPipeline(
-                session=session, decomposer=decomposer, evaluator=evaluator,
-                retriever=_SessionRetriever(session), reranker=FakeReranker(),
+                session=session,
+                decomposer=decomposer,
+                evaluator=evaluator,
+                retriever=_SessionRetriever(session),
+                reranker=FakeReranker(),
             )
             result = await pipeline.match_requirements(
-                app.id, app.user_id, app.selected_cv_file_id, (req,),
+                app.id,
+                app.user_id,
+                app.selected_cv_file_id,
+                (req,),
             )
             assessment = result.assessments[0]
             assert assessment.entailment_relation is EntailmentRelation.ENTAILED
@@ -410,6 +544,7 @@ def test_regression_3_fastapi_entails_production_python():
 
 
 # ── Regression Test 4: Duration with union intervals ────────────
+
 
 def test_regression_4_duration_union_intervals():
     """Overlapping intervals should be merged, not summed."""
@@ -427,6 +562,7 @@ def test_regression_4_duration_union_intervals():
 
 # ── Regression Test 5: No dates → insufficient_evidence ─────────
 
+
 def test_regression_5_no_dates_insufficient_evidence():
     """Strong ML facts without dates should be insufficient_evidence, not missing."""
     from datetime import date
@@ -437,6 +573,7 @@ def test_regression_5_no_dates_insufficient_evidence():
 
 
 # ── Regression Test 6: True missing ─────────────────────────────
+
 
 def test_regression_6_true_missing():
     """No evidence at all should be 'missing', not 'insufficient_evidence'."""
@@ -456,6 +593,7 @@ def test_regression_6_true_missing():
 
 
 # ── Regression Test 7: Evaluator failure → EVALUATION_ERROR ─────
+
 
 def test_regression_7_evaluator_failure():
     """Technical evaluator failure should be EVALUATION_ERROR, not UNKNOWN or MISSING."""
@@ -527,6 +665,7 @@ def test_evaluator_failure_diagnostics_do_not_persist_provider_body():
 
 # ── Regression Test 8: Hard blocker confirmed ───────────────────
 
+
 def test_regression_8_hard_blocker_confirmed():
     """Confirmed contradiction of a true hard blocker → score = 0."""
     scorer = DeterministicMatchScorer()
@@ -546,6 +685,7 @@ def test_regression_8_hard_blocker_confirmed():
 
 
 # ── Regression Test 9: Unresolved blocker ────────────────────────
+
 
 def test_regression_9_unresolved_blocker():
     """Insufficient evidence for a hard blocker → needs_confirmation, not ineligible."""
@@ -571,6 +711,7 @@ def test_regression_9_unresolved_blocker():
 
 # ── EntailmentRelation has INSUFFICIENT_EVIDENCE ────────────────
 
+
 def test_entailment_relation_has_insufficient_evidence():
     """New relation states exist."""
     assert EntailmentRelation.INSUFFICIENT_EVIDENCE == "insufficient_evidence"
@@ -578,6 +719,7 @@ def test_entailment_relation_has_insufficient_evidence():
 
 
 # ── Scoring: INSUFFICIENT_EVIDENCE not zeroed ───────────────────
+
 
 def test_scoring_insufficient_evidence_not_zeroed():
     """INSUFFICIENT_EVIDENCE gets some credit, not 0."""
@@ -612,19 +754,22 @@ def test_scoring_insufficient_evidence_not_zeroed():
 
 # ── Gap analysis: evaluation_error vs skill_gap ─────────────────
 
+
 def test_gap_analysis_evaluation_error_not_skill_gap():
     """Evaluation errors should be EVALUATION_ERROR gap type, not SKILL_GAP."""
-    gaps = analyze_gaps([
-        {
-            "claim_id": "c1",
-            "claim_subject": "Python production",
-            "claim_type": "production_experience",
-            "relation": "evaluation_error",
-            "evidence_strength": 0.0,
-            "has_evidence": True,
-            "duration_result": None,
-        }
-    ])
+    gaps = analyze_gaps(
+        [
+            {
+                "claim_id": "c1",
+                "claim_subject": "Python production",
+                "claim_type": "production_experience",
+                "relation": "evaluation_error",
+                "evidence_strength": 0.0,
+                "has_evidence": True,
+                "duration_result": None,
+            }
+        ]
+    )
     assert gaps.total_gaps == 1
     assert gaps.gaps[0].gap_type == GapType.EVALUATION_ERROR
     assert gaps.evaluation_errors == 1
@@ -633,19 +778,22 @@ def test_gap_analysis_evaluation_error_not_skill_gap():
 
 # ── Gap analysis: insufficient_evidence vs skill_gap ────────────
 
+
 def test_gap_analysis_insufficient_evidence_not_skill_gap():
     """Insufficient evidence should be EVIDENCE_GAP, not SKILL_GAP."""
-    gaps = analyze_gaps([
-        {
-            "claim_id": "c1",
-            "claim_subject": "RAG experience",
-            "claim_type": "practical_experience",
-            "relation": "insufficient_evidence",
-            "evidence_strength": 0.0,
-            "has_evidence": False,
-            "duration_result": None,
-        }
-    ])
+    gaps = analyze_gaps(
+        [
+            {
+                "claim_id": "c1",
+                "claim_subject": "RAG experience",
+                "claim_type": "practical_experience",
+                "relation": "insufficient_evidence",
+                "evidence_strength": 0.0,
+                "has_evidence": False,
+                "duration_result": None,
+            }
+        ]
+    )
     assert gaps.total_gaps == 1
     assert gaps.gaps[0].gap_type == GapType.EVIDENCE_GAP
     assert gaps.skill_gaps == 0

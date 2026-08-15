@@ -198,6 +198,41 @@ extraction. Matching results are invalidated when facts change.
 
 See `matching-data-model.md` for persistence and `matching-local-development.md` for local checks.
 
+## Performance model
+
+Matching cost is dominated by LLM calls, not by retrieval or scoring. One cold run of a
+typical vacancy issues roughly 2 extraction calls + 1 decompose call per requirement +
+up to 3 entailment calls per atomic claim. On a local model this is GPU-bound: the wall
+time equals the total GPU-seconds of inference, and concurrency (`matching_llm_concurrency`)
+only changes how that compute is distributed, not its total.
+
+Measures already in place:
+
+- **Persistent Redis cache** (`MatchingCache`, keys `jsa:match:dec:*`/`jsa:match:ent:*`):
+  decomposition keys are content-based (requirement text/type/importance/blocker + model +
+  prompt version) and cached decompositions are rebound to the current requirement row on a
+  hit; entailment keys are `claim_text + evidence_text + claim_type + model + prompt
+  version + source_requirement`. Both include the resolved model identity, so switching the
+  model invalidates prior work automatically. TTL: `APP_MATCHING_CACHE_TTL_SECONDS`.
+- **Smart vs full recalculation**: `/recalculate-match` (dashboard «Пересчитать») is
+  idempotent — unchanged content returns the existing completed result immediately, and
+  changed content re-runs only what the content version says changed. `?force=true`
+  (dashboard «Полный перерасчёт») clears extraction rows and recomputes from scratch; use
+  it after changing the LLM model. The matching content version includes the model
+  identity, so a model change alone already triggers re-extraction on the smart path.
+- **Early exit**: entailment stops after a strong `entailed` result (coverage ≥ 0.8) and
+  evaluates at most `APP_MATCHING_ENTAILMENT_MAX_CANDIDATES` candidates per claim.
+- **Deterministic decomposition**: single-skill requirements (no conjunctions, quantifiers,
+  or duration markers) decompose into one atomic claim without an LLM call.
+- **Per-task inference budgets**: entailment uses
+  `APP_MATCHING_ENTAILMENT_MAX_TOKENS`/`APP_MATCHING_ENTAILMENT_CONTEXT_SIZE` and
+  decomposition uses `APP_MATCHING_DECOMPOSE_MAX_TOKENS`/`APP_MATCHING_DECOMPOSE_CONTEXT_SIZE`.
+  The two context sizes must match — Ollama reloads the model on every `num_ctx` change,
+  and reloading a multi-GB model between stages dominated local latency.
+- **Extraction grounding tolerance**: a `source_fragment` is accepted when every content
+  word (function words excluded) appears in the source text, so weaker local models that
+  slightly paraphrase fragments still pass while invented content is still rejected.
+
 ## Scoring v3.0 — Coverage-Based Matching
 
 Scoring v3.0 shifts from semantic-similarity-based scoring to coverage-based scoring where the

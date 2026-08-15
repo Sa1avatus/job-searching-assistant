@@ -4,11 +4,11 @@ This is the entry point for the browser-worker container. It starts:
 1. The HTTP API (browser operations proxy) on port 8080
 2. The background task loop (apply/session-probe workers) via asyncio
 """
+
 from __future__ import annotations
 
 import asyncio
 import signal
-import sys
 
 import uvicorn
 

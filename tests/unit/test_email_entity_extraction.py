@@ -15,10 +15,15 @@ def test_extracts_vacancy_title_from_subject() -> None:
     assert "Python" in result.vacancy_title or "Developer" in result.vacancy_title
 
 
+def test_extracts_vacancy_before_position_suffix() -> None:
+    result = extract_email_entities("Solutions Architect & Technical Consultant position")
+
+    assert result.vacancy_title == "Solutions Architect & Technical Consultant"
+    assert result.confidence == 0.5
+
+
 def test_extracts_both_company_and_vacancy() -> None:
-    result = extract_email_entities(
-        "From Yandex: Re: Backend Engineer vacancy"
-    )
+    result = extract_email_entities("From Yandex: Re: Backend Engineer vacancy")
 
     assert result.company is not None
     assert result.vacancy_title is not None

@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol, TypeVar
 
+import httpx
 import structlog
 from pydantic import BaseModel
 
@@ -27,6 +28,11 @@ class ModelRequest:
     max_cost_usd: float
     timeout_seconds: float = 30
     response_schema: dict[str, object] | None = None
+    # Per-task inference bounds. Providers apply provider-appropriate defaults when unset.
+    # Keep entailment/decompose small: their outputs are tiny JSON objects, and oversized
+    # context/prediction budgets dominate local-CPU inference latency.
+    max_output_tokens: int | None = None
+    context_size: int | None = None
 
 
 class ModelProvider(Protocol):
@@ -40,7 +46,17 @@ class ModelProvider(Protocol):
 
 
 class NoModelAvailableError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+def _is_retryable_provider_error(error: Exception) -> bool:
+    if isinstance(error, TimeoutError | ConnectionError | httpx.TimeoutException):
+        return True
+    if isinstance(error, httpx.HTTPStatusError):
+        return error.response.status_code == 429 or error.response.status_code >= 500
+    return isinstance(error, httpx.NetworkError | httpx.RemoteProtocolError)
 
 
 class ModelRouter:
@@ -53,12 +69,14 @@ class ModelRouter:
         if request.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         provider_errors: list[str] = []
+        retryable_results: list[bool] = []
         for provider in self._providers:
             if not provider.supports(request.task_class):
                 continue
             estimated_cost_usd = provider.estimate_cost_usd(request)
             if estimated_cost_usd < 0 or estimated_cost_usd > request.max_cost_usd:
                 provider_errors.append(f"{provider.name}:budget_exceeded")
+                retryable_results.append(False)
                 continue
             try:
                 provider_request = replace(
@@ -78,5 +96,9 @@ class ModelRouter:
                     error=str(error),
                 )
                 provider_errors.append(f"{provider.name}:{type(error).__name__}: {error}")
+                retryable_results.append(_is_retryable_provider_error(error))
         details = ", ".join(provider_errors) or "no compatible provider"
-        raise NoModelAvailableError(details)
+        raise NoModelAvailableError(
+            details,
+            retryable=bool(retryable_results) and all(retryable_results),
+        )

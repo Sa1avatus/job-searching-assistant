@@ -117,23 +117,17 @@ def test_site_field_mapping_override_and_effective_value_api(monkeypatch) -> Non
                 },
             )
             assert field_override.status_code == 200
-            effective = client.get(
-                f"/v1/users/user-1/site-fields/{field['id']}/effective-value"
-            )
+            effective = client.get(f"/v1/users/user-1/site-fields/{field['id']}/effective-value")
             assert effective.status_code == 200
             assert effective.json()["value"] == "field@example.test"
             assert effective.json()["source"] == "site_field_override"
 
-            listed = client.get(
-                f"/v1/users/user-1/site-definitions/{site['id']}/fields"
-            )
+            listed = client.get(f"/v1/users/user-1/site-definitions/{site['id']}/fields")
             assert listed.status_code == 200
             assert listed.json()[0]["has_site_override"] is True
             assert listed.json()[0]["has_field_override"] is True
 
-            cross_user = client.get(
-                f"/v1/users/user-2/site-fields/{field['id']}/effective-value"
-            )
+            cross_user = client.get(f"/v1/users/user-2/site-fields/{field['id']}/effective-value")
             assert cross_user.status_code == 404
     finally:
         app.dependency_overrides.pop(session_scope, None)
@@ -199,12 +193,9 @@ def test_sensitive_effective_value_requires_explicit_permission(monkeypatch) -> 
                 },
             )
 
-            blocked = client.get(
-                f"/v1/users/user-1/site-fields/{field['id']}/effective-value"
-            )
+            blocked = client.get(f"/v1/users/user-1/site-fields/{field['id']}/effective-value")
             allowed = client.get(
-                f"/v1/users/user-1/site-fields/{field['id']}/effective-value"
-                "?allow_sensitive=true"
+                f"/v1/users/user-1/site-fields/{field['id']}/effective-value?allow_sensitive=true"
             )
 
             assert blocked.status_code == 403

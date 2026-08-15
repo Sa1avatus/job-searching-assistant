@@ -83,9 +83,7 @@ async def probe_active_browser_sessions(
     """Check live authentication for all usable sessions without performing site actions."""
     with session_factory() as session:
         session_rows = session.scalars(
-            select(BrowserSessionRow).where(
-                BrowserSessionRow.status.in_(("available", "active"))
-            )
+            select(BrowserSessionRow).where(BrowserSessionRow.status.in_(("available", "active")))
         ).all()
 
     live_count = 0

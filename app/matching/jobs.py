@@ -5,7 +5,9 @@ import hashlib
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.domain.models import TaskState
+from app.llm.preferences import resolve_model_identity
 from app.matching.vacancy_source import build_vacancy_matching_source
 from app.storage.tables import (
     ApplicationMatchResultRow,
@@ -68,12 +70,23 @@ class MatchingJobService:
             raise LookupError("Vacancy not found")
 
         vacancy_source = build_vacancy_matching_source(vacancy)
+        # Include the resolved LLM model in the content version so that switching the
+        # model invalidates the idempotency key and triggers re-extraction/re-evaluation
+        # even on a smart recalculation (which reuses work for unchanged content).
+        settings = get_settings()
+        encryption_key = (
+            settings.browser_state_encryption_key.get_secret_value()
+            if settings.browser_state_encryption_key is not None
+            else None
+        )
+        model_identity = resolve_model_identity(self._session, application.user_id, encryption_key)
         content_version = hashlib.sha256(
             "\n".join(
                 (
                     vacancy_source,
                     cv_file.sha256,
                     cv_file.analyzed_at.isoformat() if cv_file.analyzed_at else "not-analyzed",
+                    model_identity or "",
                 )
             ).encode("utf-8")
         ).hexdigest()[:20]
@@ -97,6 +110,19 @@ class MatchingJobService:
         # second click cannot delete a claim that a worker is currently executing.
         if force and existing is not None:
             self._clear_extraction_cache(vacancy.id)
+            self._session.execute(
+                delete(TaskTransitionRow).where(TaskTransitionRow.task_id == existing.id)
+            )
+            self._session.delete(existing)
+            self._session.flush()
+        elif existing is not None:
+            # Smart recalculation with unchanged content (and model). A completed result is
+            # already correct — return it immediately. A terminal-but-not-completed task is
+            # replaced with a fresh attempt while KEEPING extraction rows and the persistent
+            # LLM cache, so the retry is fast but still re-runs the scoring work.
+            if existing.state == TaskState.COMPLETED.value:
+                self._session.commit()
+                return existing
             self._session.execute(
                 delete(TaskTransitionRow).where(TaskTransitionRow.task_id == existing.id)
             )
@@ -141,18 +167,14 @@ class MatchingJobService:
     def _clear_extraction_cache(self, vacancy_id: str) -> None:
         """Clear cached extraction results so pipeline re-extracts from scratch."""
         self._session.execute(
-            delete(VacancyRequirementRow).where(
-                VacancyRequirementRow.vacancy_id == vacancy_id
-            )
+            delete(VacancyRequirementRow).where(VacancyRequirementRow.vacancy_id == vacancy_id)
         )
         self._session.execute(
             delete(RequirementMatchRow).where(
                 RequirementMatchRow.application_id.in_(
                     select(ApplicationMatchResultRow.application_id).where(
                         ApplicationMatchResultRow.application_id.in_(
-                            select(ApplicationRow.id).where(
-                                ApplicationRow.vacancy_id == vacancy_id
-                            )
+                            select(ApplicationRow.id).where(ApplicationRow.vacancy_id == vacancy_id)
                         )
                     )
                 )

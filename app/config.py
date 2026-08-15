@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     worker_max_attempts: int = Field(default=3, ge=1, le=20)
     matching_worker_concurrency: int = Field(default=2, ge=1, le=8)
     matching_llm_concurrency: int = Field(default=10, ge=1, le=50)
+    matching_cache_ttl_seconds: int = Field(default=604_800, ge=60, le=31_536_000)
+    matching_entailment_max_candidates: int = Field(default=3, ge=1, le=10)
+    matching_entailment_max_tokens: int = Field(default=512, ge=64, le=8192)
+    matching_entailment_context_size: int = Field(default=4096, ge=512, le=32768)
+    matching_decompose_max_tokens: int = Field(default=2048, ge=64, le=8192)
+    # MUST match matching_entailment_context_size: Ollama reloads the model whenever
+    # num_ctx changes, and reloading a 3GB model between every decompose/entailment
+    # group dominated local-model matching latency.
+    matching_decompose_context_size: int = Field(default=4096, ge=512, le=32768)
     max_document_bytes: int = Field(default=5_242_880, ge=1_024, le=20_971_520)
     max_evidence_bytes: int = Field(default=10_485_760, ge=1_024, le=52_428_800)
     retention_days: int = Field(default=30, ge=1, le=3650)

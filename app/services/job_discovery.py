@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,8 +26,11 @@ from adapters.job_boards.greenhouse_api import (
     GreenhouseJobBoardApi,
     GreenhouseSearchHit,
 )
-from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter, HeadHunterSearchHit
-from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter, LinkedInSearchHit
+from adapters.job_boards.headhunter_browser import (
+    ExtractedHeadHunterVacancy,
+    HeadHunterSearchHit,
+)
+from adapters.job_boards.linkedin_browser import ExtractedLinkedInVacancy, LinkedInSearchHit
 from app.config import get_settings
 from app.domain.vacancy_attributes import detect_employment_types
 from app.matching.jobs import MatchingJobService
@@ -47,10 +51,11 @@ class LinkedInSessionRequiredError(RuntimeError):
 _DEFAULT_LIMIT = 15
 _MAX_LIMIT = 50
 _MAX_SEARCH_QUERIES = 8
+_MAX_SITE_QUERY_CHARS = 200
 _MAX_CANDIDATES = 200
 _PER_QUERY_LIMIT = 50
 _TERMINAL_DISCOVERY_STATUSES = frozenset(
-    {"rejected", "skipped", "submitted", "interview"}
+    {"rejected", "employer_rejected", "skipped", "submitted", "interview"}
 )
 
 
@@ -107,7 +112,32 @@ class DiscoveryOutcome:
     employment_types: tuple[str, ...] = ()
     key_skills: tuple[str, ...] = ()
 
+
 DiscoveryOutcomeCallback = Callable[[DiscoveryOutcome], Awaitable[None]]
+
+
+class HeadHunterDiscoveryAdapter(Protocol):
+    async def search(
+        self,
+        *,
+        text: str,
+        location_names: list[str] | None = None,
+        limit: int = 15,
+    ) -> list[HeadHunterSearchHit]: ...
+
+    async def extract_vacancy(self, url: str) -> ExtractedHeadHunterVacancy: ...
+
+
+class LinkedInDiscoveryAdapter(Protocol):
+    async def search(
+        self,
+        *,
+        text: str,
+        location_names: list[str] | None = None,
+        limit: int = 15,
+    ) -> list[LinkedInSearchHit]: ...
+
+    async def extract_vacancy(self, url: str) -> ExtractedLinkedInVacancy: ...
 
 
 def build_search_queries(search_text: str) -> list[str]:
@@ -119,7 +149,10 @@ def build_search_queries(search_text: str) -> list[str]:
     phrases = [
         " ".join(phrase.split()) for phrase in re.split(r"[,;|\n]+", search_text) if phrase.strip()
     ]
-    candidates = [normalized_text, *phrases]
+    candidates: list[str] = []
+    if len(normalized_text) <= _MAX_SITE_QUERY_CHARS:
+        candidates.append(normalized_text)
+    candidates.extend(phrase for phrase in phrases if len(phrase) <= _MAX_SITE_QUERY_CHARS)
     for phrase in phrases:
         words = re.findall(r"[\w#+.-]{2,}", phrase, flags=re.UNICODE)
         candidates.extend(words)
@@ -129,7 +162,11 @@ def build_search_queries(search_text: str) -> list[str]:
     for candidate in candidates:
         normalized_candidate = candidate.strip(" ,;|")
         key = normalized_candidate.casefold()
-        if not normalized_candidate or key in seen:
+        if (
+            not normalized_candidate
+            or len(normalized_candidate) > _MAX_SITE_QUERY_CHARS
+            or key in seen
+        ):
             continue
         seen.add(key)
         queries.append(normalized_candidate)
@@ -146,7 +183,7 @@ class JobDiscoveryService:
         self,
         user_id: str,
         *,
-        headhunter_adapter: HeadHunterBrowserAdapter,
+        headhunter_adapter: HeadHunterDiscoveryAdapter,
         locations: list[str],
         limit: int = _DEFAULT_LIMIT,
         search_text: str | None = None,
@@ -205,7 +242,7 @@ class JobDiscoveryService:
     async def _stage_one(
         self,
         recruitment: RecruitmentService,
-        headhunter_adapter: HeadHunterBrowserAdapter,
+        headhunter_adapter: HeadHunterDiscoveryAdapter,
         user_id: str,
         source_url: str,
         cv_file_id: str | None,
@@ -213,9 +250,7 @@ class JobDiscoveryService:
         vacancy: VacancyRow | None = self._session.scalar(
             select(VacancyRow).where(VacancyRow.source_url == source_url)
         )
-        if vacancy is not None and (
-            vacancy.work_format == "unspecified" or not vacancy.location
-        ):
+        if vacancy is not None and (vacancy.work_format == "unspecified" or not vacancy.location):
             try:
                 refreshed = await headhunter_adapter.extract_vacancy(source_url)
             except Exception:  # noqa: BLE001 - keep the previously saved vacancy available
@@ -303,7 +338,7 @@ class JobDiscoveryService:
             )
         )
         if existing_application is not None:
-            if existing_application.status in {"rejected", "skipped", "submitted", "interview"}:
+            if existing_application.status in _TERMINAL_DISCOVERY_STATUSES:
                 return None
             existing_application.selected_cv_file_id = cv_file_id
             self._rescore_from_text(existing_application, vacancy, cv_file_id)
@@ -345,16 +380,14 @@ class JobDiscoveryService:
             work_format=vacancy.work_format,
             salary_text=vacancy.salary_text,
             employment_types=tuple(vacancy.employment_types or ()),
-            key_skills=extract_key_skills(
-                vacancy.description_text, vacancy.required_skills or ()
-            ),
+            key_skills=extract_key_skills(vacancy.description_text, vacancy.required_skills or ()),
         )
 
     async def discover_linkedin_vacancies(
         self,
         user_id: str,
         *,
-        linkedin_adapter: LinkedInBrowserAdapter,
+        linkedin_adapter: LinkedInDiscoveryAdapter,
         locations: list[str],
         limit: int = _DEFAULT_LIMIT,
         search_text: str | None = None,
@@ -416,7 +449,7 @@ class JobDiscoveryService:
     async def _stage_linkedin(
         self,
         recruitment: RecruitmentService,
-        linkedin_adapter: LinkedInBrowserAdapter,
+        linkedin_adapter: LinkedInDiscoveryAdapter,
         user_id: str,
         source_url: str,
         cv_file_id: str | None,
@@ -505,7 +538,7 @@ class JobDiscoveryService:
             )
         )
         if existing_application is not None:
-            if existing_application.status in {"rejected", "skipped", "submitted", "interview"}:
+            if existing_application.status in _TERMINAL_DISCOVERY_STATUSES:
                 return None
             if application_submitted:
                 existing_application.status = "submitted"
@@ -555,9 +588,7 @@ class JobDiscoveryService:
             work_format=vacancy.work_format,
             salary_text=vacancy.salary_text,
             employment_types=tuple(vacancy.employment_types or ()),
-            key_skills=extract_key_skills(
-                vacancy.description_text, vacancy.required_skills or ()
-            ),
+            key_skills=extract_key_skills(vacancy.description_text, vacancy.required_skills or ()),
         )
 
     def _mark_linkedin_duplicates_submitted(
@@ -740,7 +771,7 @@ class JobDiscoveryService:
             )
         )
         if existing_application is not None:
-            if existing_application.status in {"rejected", "skipped", "submitted", "interview"}:
+            if existing_application.status in _TERMINAL_DISCOVERY_STATUSES:
                 return None
             existing_application.selected_cv_file_id = cv_file_id
             self._rescore_from_text(existing_application, vacancy, cv_file_id)
@@ -781,9 +812,7 @@ class JobDiscoveryService:
             work_format=vacancy.work_format,
             salary_text=vacancy.salary_text,
             employment_types=tuple(vacancy.employment_types or ()),
-            key_skills=extract_key_skills(
-                vacancy.description_text, vacancy.required_skills or ()
-            ),
+            key_skills=extract_key_skills(vacancy.description_text, vacancy.required_skills or ()),
         )
 
     def known_greenhouse_board_urls(self) -> list[str]:
@@ -838,66 +867,40 @@ class JobDiscoveryService:
                 else [
                     fact.name
                     for fact in user.facts
-                    if (
-                        fact.category == "skill"
-                        and fact.is_verified
-                        and fact.name.strip()
-                    )
+                    if (fact.category == "skill" and fact.is_verified and fact.name.strip())
                 ]
             )
             if skill.strip()
         }
 
         required_skills = {
-            _normalize_skill(skill)
-            for skill in (vacancy.required_skills or [])
-            if skill.strip()
+            _normalize_skill(skill) for skill in (vacancy.required_skills or []) if skill.strip()
         }
 
         preferred_skills = {
-            _normalize_skill(skill)
-            for skill in (vacancy.preferred_skills or [])
-            if skill.strip()
+            _normalize_skill(skill) for skill in (vacancy.preferred_skills or []) if skill.strip()
         }
 
-        vacancy_text = (
-            f"{vacancy.title}\n"
-            f"{vacancy.description_text or ''}"
-        ).casefold()
+        vacancy_text = (f"{vacancy.title}\n{vacancy.description_text or ''}").casefold()
 
         if not required_skills:
             required_skills = {
-                skill
-                for skill in candidate_skills
-                if _contains_skill(vacancy_text, skill)
+                skill for skill in candidate_skills if _contains_skill(vacancy_text, skill)
             }
 
         matched_required = candidate_skills & required_skills
         matched_preferred = candidate_skills & preferred_skills
 
-        required_coverage = (
-            len(matched_required) / len(required_skills)
-            if required_skills
-            else 0.0
-        )
+        required_coverage = len(matched_required) / len(required_skills) if required_skills else 0.0
 
         preferred_coverage = (
-            len(matched_preferred) / len(preferred_skills)
-            if preferred_skills
-            else 0.0
+            len(matched_preferred) / len(preferred_skills) if preferred_skills else 0.0
         )
 
         title = vacancy.title.casefold()
-        title_match = any(
-            _contains_skill(title, skill)
-            for skill in matched_required
-        )
+        title_match = any(_contains_skill(title, skill) for skill in matched_required)
 
-        score = (
-            required_coverage * 70
-            + preferred_coverage * 15
-            + (15 if title_match else 0)
-        )
+        score = required_coverage * 70 + preferred_coverage * 15 + (15 if title_match else 0)
 
         if required_skills and required_coverage < 0.4:
             score = min(score, 35)

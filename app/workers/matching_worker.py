@@ -38,7 +38,6 @@ def _handle_refresh_requested(task_id: str, new_state: TaskState, worker_prefix:
         logger.info("matching_refresh_auto_rescheduled", task_id=task_id)
 
 
-
 async def _periodic_recovery(
     stopped: asyncio.Event,
     worker_prefix: str,
@@ -84,7 +83,7 @@ async def run_worker() -> None:
     settings = get_settings()
     redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
     coordinator = RedisCoordinator(cast(RedisCoordinationClient, redis_client))
-    runner = MatchingRuntime(SessionFactory, settings)
+    runner = MatchingRuntime(SessionFactory, settings, redis_client=redis_client)
     handler = MatchingTaskHandler(runner)
     worker_prefix = "matching-worker"
 
@@ -132,9 +131,7 @@ async def run_worker() -> None:
     # Periodic stale task recovery — catches orphaned tasks from crashed workers
     recovery_interval = max(settings.worker_lease_seconds, 120)
     tasks.append(
-        asyncio.create_task(
-            _periodic_recovery(stopped, worker_prefix, settings, recovery_interval)
-        )
+        asyncio.create_task(_periodic_recovery(stopped, worker_prefix, settings, recovery_interval))
     )
     try:
         await stopped.wait()

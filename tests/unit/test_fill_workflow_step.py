@@ -28,9 +28,7 @@ def test_valid_fill_workflow_step() -> None:
             "parameters": {"value_key": "contact.email"},
         },
         {
-            "selector_candidates": [
-                {"kind": "id", "value": str(index)} for index in range(21)
-            ],
+            "selector_candidates": [{"kind": "id", "value": str(index)} for index in range(21)],
             "parameters": {"value_key": "contact.email"},
         },
         {

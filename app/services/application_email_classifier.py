@@ -9,8 +9,44 @@ from app.domain.application_email import (
 
 _REJECTION_PATTERNS = (
     re.compile(r"\b(?:not moving forward|will not be moving forward)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:will not|won't|cannot|can't|unable to|not able to)\s+"
+        r"(?:move forward|proceed|progress|continue)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:decided|chosen|elected)\s+(?:not to|to not)\s+"
+        r"(?:move forward|proceed|progress|continue)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b(?:other candidates|another candidate)\b", re.IGNORECASE),
     re.compile(r"\b(?:application was unsuccessful|unable to offer you)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:application|candidacy|profile)\s+(?:has\s+)?(?:not been|was not|is not)\s+"
+        r"(?:selected|successful|shortlisted)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:not selected|unsuccessful)\s+(?:for|in)\s+"
+        r"(?:this|the|our)\s+(?:position|role|vacancy)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:pursu(?:e|ing)|proceed(?:ing)?|mov(?:e|ing) forward)\s+with\s+"
+        r"(?:other|another)\s+candidate",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bregret to inform you\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:your )?(?:skill ?set|experience|profile) does not match "
+        r"(?:our |the )?(?:qualifications?|requirements?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:you|your (?:skill ?set|experience|profile)) do(?:es)? not meet "
+        r"(?:our |the )?(?:qualifications?|requirements?)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\bк сожалению\b", re.IGNORECASE),
     re.compile(r"\bне готовы продолжить\b", re.IGNORECASE),
     re.compile(r"\b(?:отказ|отклонена|не прошли)\b", re.IGNORECASE),
@@ -32,16 +68,12 @@ _CATEGORY_PATTERNS: dict[EmailCategory, tuple[re.Pattern[str], ...]] = {
             r"\binvit(?:e|ed|ation) (?:you )?(?:to|for) (?:an? ?)interview\b",
             re.IGNORECASE,
         ),
-        re.compile(
-            r"\b(?:schedule|book) (?:an? )?(?:interview|call)\b", re.IGNORECASE
-        ),
+        re.compile(r"\b(?:schedule|book) (?:an? )?(?:interview|call)\b", re.IGNORECASE),
         re.compile(
             r"\bприглашаем (?:вас )?(?:на|к) (?:интервью|собеседованию)\b",
             re.IGNORECASE,
         ),
-        re.compile(
-            r"\bназначить (?:интервью|собеседование|звонок)\b", re.IGNORECASE
-        ),
+        re.compile(r"\bназначить (?:интервью|собеседование|звонок)\b", re.IGNORECASE),
     ),
     EmailCategory.INTERVIEW_RESCHEDULE: (
         re.compile(r"\breschedul(?:e|ing)\b", re.IGNORECASE),
@@ -61,9 +93,7 @@ _CATEGORY_PATTERNS: dict[EmailCategory, tuple[re.Pattern[str], ...]] = {
             r"|thank you for (?:your )?applying)\b",
             re.IGNORECASE,
         ),
-        re.compile(
-            r"\b(?:ваше резюме получено|заявка принята)\b", re.IGNORECASE
-        ),
+        re.compile(r"\b(?:ваше резюме получено|заявка принята)\b", re.IGNORECASE),
     ),
     EmailCategory.RECRUITER_CONTACT: (
         re.compile(r"\b(?:sourcing|talent acquisition|recruiting team)\b", re.IGNORECASE),

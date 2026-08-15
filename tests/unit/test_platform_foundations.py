@@ -7,7 +7,7 @@ from adapters.job_boards.contracts import detect_ats
 from adapters.job_boards.greenhouse import GreenhouseAdapter
 from app.config import Settings
 from app.domain.forms import FormField, FormFieldType
-from app.llm.router import ModelRequest, ModelRouter, ModelTaskClass
+from app.llm.router import ModelRequest, ModelRouter, ModelTaskClass, NoModelAvailableError
 from app.observability.metrics import MetricsRegistry
 
 
@@ -41,6 +41,11 @@ class WorkingProvider:
         return {"decision": "review"}
 
 
+class InvalidProvider(FailingProvider):
+    async def complete(self, request: ModelRequest) -> dict[str, object]:
+        raise ValueError("invalid structured response")
+
+
 def test_ats_detection_uses_exact_hostname_boundary() -> None:
     assert detect_ats("https://boards.greenhouse.io/acme/jobs/1").adapter_name == "greenhouse"
     assert detect_ats("https://evilboards.greenhouse.io.example.test/1").adapter_name == "generic"
@@ -65,6 +70,18 @@ def test_model_router_falls_back_and_validates_typed_output() -> None:
     output = asyncio.run(router.route(request, RoutedOutput))
 
     assert output.decision == "review"
+
+
+def test_model_router_classifies_transient_and_deterministic_failures() -> None:
+    request = ModelRequest("classify", ModelTaskClass.LOW_COST, "Classify", 0.01)
+
+    with pytest.raises(NoModelAvailableError) as transient:
+        asyncio.run(ModelRouter((FailingProvider(),)).route(request, RoutedOutput))
+    with pytest.raises(NoModelAvailableError) as deterministic:
+        asyncio.run(ModelRouter((InvalidProvider(),)).route(request, RoutedOutput))
+
+    assert transient.value.retryable is True
+    assert deterministic.value.retryable is False
 
 
 def test_metrics_registry_renders_prometheus_counter() -> None:

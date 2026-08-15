@@ -157,10 +157,13 @@
       <div id="application-statistics" class="statistics-grid" aria-live="polite"></div>
       <button id="sync-application-statuses" type="button">Синхронизировать отклики</button>
       <button id="sync-application-emails" type="button">Синхронизировать почту</button>
+      <button id="import-application-emails" type="button">Импортировать письма</button>
+      <input id="application-email-files" type="file" accept=".eml,.mbox,.zip,message/rfc822,application/zip" multiple hidden>
+      <div class="hint">Можно выбрать несколько EML, почтовый ящик mbox или ZIP-архив. Вложенные письма будут обработаны отдельно.</div>
       <div class="vacancy-filters">
         <div><label for="vacancy-query">Текст</label><input id="vacancy-query" placeholder="должность, компания или описание"></div>
         <div><label for="vacancy-source">Источник</label><select id="vacancy-source"><option value="all">Все</option><option value="headhunter">hh.ru</option><option value="linkedin">LinkedIn</option><option value="greenhouse">Greenhouse</option><option value="registry">Реестр</option><option value="other">Другие</option></select></div>
-        <div><label for="vacancy-status">Статус</label><select id="vacancy-status"><option value="all">Все</option><option value="saved">Сохранена</option><option value="awaiting_review">Ожидает решения</option><option value="approved">Принята</option><option value="rejected">Отклонена</option><option value="skipped">Пропущена</option><option value="submitted">Отправлена</option><option value="interview">Собеседование</option></select></div>
+        <div><label for="vacancy-status">Статус</label><select id="vacancy-status"><option value="all">Все</option><option value="saved">Сохранена</option><option value="awaiting_review">Ожидает решения</option><option value="approved">Принята</option><option value="rejected">Отклонена мной</option><option value="employer_rejected">Отказ работодателя</option><option value="skipped">Пропущена</option><option value="submitted">Отправлена</option><option value="interview">Собеседование</option></select></div>
         <div><label for="vacancy-location">Локация</label><input id="vacancy-location" placeholder="например, Москва"></div>
         <div><label for="vacancy-score">Соответствие от</label><input id="vacancy-score" type="number" min="0" max="100" value="0"></div>
         <div><label for="vacancy-published-from">Опубликована с</label><input id="vacancy-published-from" type="date"></div>
@@ -331,11 +334,11 @@
           <button id="add-manual-skill" type="button">Добавить</button>
         </div>
         <label style="margin-top:14px;">Краткое summary опыта</label>
-        <textarea id="summary-text"></textarea>
+        <textarea id="summary-text" maxlength="2000"></textarea>
         <label style="margin-top:14px;">Суммарный опыт, лет</label>
         <input id="experience-years" type="number" min="0" max="80" step="0.5">
         <label style="margin-top:14px;">Ключевые слова для поиска</label>
-        <input id="keywords-text">
+        <textarea id="keywords-text" maxlength="2000"></textarea>
         <div class="row" style="margin-top:14px;">
           <div style="flex:0"><button id="confirm-facts" type="button" class="primary">Подтвердить и сохранить</button></div>
         </div>
@@ -420,6 +423,8 @@
       'Все сохранённые вакансии': 'All saved vacancies',
       'Синхронизировать отклики': 'Sync applications',
       'Синхронизировать почту': 'Sync email',
+      'Импортировать письма': 'Import email files',
+      'Можно выбрать несколько EML, почтовый ящик mbox или ZIP-архив. Вложенные письма будут обработаны отдельно.': 'Select multiple EML files, an mbox mailbox, or a ZIP archive. Attached emails are processed separately.',
       'Подключение почты по IMAP': 'Connect email over IMAP',
       'Используйте отдельный пароль приложения. Пароль сохраняется только в зашифрованном виде, содержимое писем не сохраняется.': 'Use a dedicated app password. The password is stored only in encrypted form, and email contents are not stored.',
       'IMAP-хост': 'IMAP host',
@@ -516,6 +521,7 @@
       'Ожидает решения': 'Awaiting decision',
       'Принята': 'Accepted',
       'Отклонена': 'Rejected',
+      'Отказ работодателя': 'Employer rejection',
       'Пропущена': 'Skipped',
       'Отправлена': 'Submitted',
       'Собеседование': 'Interview',
@@ -1786,7 +1792,7 @@
 
     const editableApplicationStatuses = [
       'draft', 'saved', 'awaiting_review', 'approved',
-      'rejected', 'skipped', 'submitted', 'interview'
+      'rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'
     ];
 
     async function setApplicationStatus(applicationId, newStatus) {
@@ -1812,10 +1818,10 @@
         {headers: headers(false)}
       ));
       const labels = currentLanguage === 'en'
-        ? {total: 'Total', approved: 'Accepted', rejected: 'Rejected', submitted: 'Submitted', interview: 'Interviews', email_events: 'Emails processed', email_rejections: 'Email rejections', email_next_stages: 'Email next stages'}
-        : {total: 'Всего', approved: 'Принято', rejected: 'Отклонено', submitted: 'Отправлено', interview: 'Собеседования', email_events: 'Обработано писем', email_rejections: 'Отказы из почты', email_next_stages: 'Этапы из почты'};
+        ? {total: 'Total', approved: 'Accepted', rejected: 'Rejected by me', employer_rejected: 'Employer rejections', submitted: 'Submitted', interview: 'Interviews', email_events: 'Emails processed', email_rejections: 'Email rejections', email_next_stages: 'Email next stages'}
+        : {total: 'Всего', approved: 'Принято', rejected: 'Отклонено мной', employer_rejected: 'Отказы работодателей', submitted: 'Отправлено', interview: 'Собеседования', email_events: 'Обработано писем', email_rejections: 'Отказы из почты', email_next_stages: 'Этапы из почты'};
       container.replaceChildren();
-      ['total', 'approved', 'rejected', 'submitted', 'interview', 'email_events', 'email_rejections', 'email_next_stages'].forEach(key => {
+      ['total', 'approved', 'rejected', 'employer_rejected', 'submitted', 'interview', 'email_events', 'email_rejections', 'email_next_stages'].forEach(key => {
         const card = element('div', labels[key], 'statistic-card');
         card.append(element('strong', String(statistics[key] || 0)));
         container.append(card);
@@ -1871,6 +1877,42 @@
         showError(error);
       } finally {
         button.disabled = false;
+      }
+    });
+
+    const applicationEmailFiles = document.querySelector('#application-email-files');
+    document.querySelector('#import-application-emails').addEventListener('click', () => {
+      applicationEmailFiles.click();
+    });
+    applicationEmailFiles.addEventListener('change', async event => {
+      const selectedFiles = Array.from(event.currentTarget.files || []);
+      if (!selectedFiles.length) return;
+      const userId = userIdInput.value.trim();
+      if (!userId) {
+        event.currentTarget.value = '';
+        showError(new Error(currentLanguage === 'en' ? 'Set User ID first' : 'Сначала укажите User ID'));
+        return;
+      }
+      const button = document.querySelector('#import-application-emails');
+      const form = new FormData();
+      selectedFiles.forEach(file => form.append('files', file, file.name));
+      button.disabled = true;
+      showStatus(currentLanguage === 'en' ? 'Importing email files…' : 'Импортируем файлы писем…');
+      try {
+        const summary = await asJson(await fetchWithTimeout(
+          `/v1/users/${userId}/application-email-import`,
+          {method: 'POST', headers: headers(false), body: form},
+          120000
+        ));
+        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1)]);
+        showStatus(currentLanguage === 'en'
+          ? `Email import complete: ${summary.processed} processed, ${summary.created} new, ${summary.status_updated} statuses updated, ${summary.unknown} unknown, ${summary.unmatched} unmatched, ${summary.failed} failed.`
+          : `Импорт писем завершён: обработано ${summary.processed}, новых событий ${summary.created}, обновлено статусов ${summary.status_updated}, не распознано ${summary.unknown}, не привязано к вакансиям ${summary.unmatched}, ошибок ${summary.failed}.`);
+      } catch (error) {
+        showError(error);
+      } finally {
+        button.disabled = false;
+        event.currentTarget.value = '';
       }
     });
 
@@ -2158,7 +2200,7 @@
           item.vacancy_summary = materials.vacancy_summary;
           item.employment_types = materials.employment_types || [];
           item.key_skills = materials.key_skills || [];
-          if (['rejected', 'skipped', 'submitted', 'interview'].includes(materials.application_status)) {
+          if (['rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'].includes(materials.application_status)) {
             item.application_status = materials.application_status;
             updateCachedSearchResults(
               candidate => candidate.application_id !== item.application_id
@@ -2224,7 +2266,7 @@
         !normalized.application_id || !normalized.vacancy_id || !normalized.title
         || !normalized.source_url || !Number.isFinite(normalized.match_score)
         || !['headhunter', 'linkedin', 'greenhouse'].includes(source)
-        || ['rejected', 'skipped', 'submitted', 'interview'].includes(normalized.application_status)
+        || ['rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'].includes(normalized.application_status)
       ) return null;
       normalized.match_score = Math.max(0, Math.min(100, normalized.match_score));
       return normalized;
@@ -2273,7 +2315,7 @@
             return { ...item, application_status: newStatus };
           }
           return item;
-        }).filter(item => !['rejected', 'skipped', 'submitted', 'interview'].includes(
+        }).filter(item => !['rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'].includes(
           item.application_status
         ));
         localStorage.setItem(storageKey, JSON.stringify(cached));
@@ -2322,12 +2364,12 @@
     const vacancyStatusLabels = {
       ru: {
         saved: 'Сохранена', awaiting_review: 'Ожидает решения', approved: 'Принята',
-        rejected: 'Отклонена', skipped: 'Пропущена', submitted: 'Отправлена',
+        rejected: 'Отклонена мной', employer_rejected: 'Отказ работодателя', skipped: 'Пропущена', submitted: 'Отправлена',
         interview: 'Собеседование', draft: 'Черновик'
       },
       en: {
         saved: 'Saved', awaiting_review: 'Awaiting decision', approved: 'Accepted',
-        rejected: 'Rejected', skipped: 'Skipped', submitted: 'Submitted',
+        rejected: 'Rejected by me', employer_rejected: 'Employer rejection', skipped: 'Skipped', submitted: 'Submitted',
         interview: 'Interview', draft: 'Draft'
       }
     };
@@ -2708,7 +2750,7 @@
               matching_status: 'processing',
               materials_status: 'processing'
             };
-            if (['rejected', 'skipped', 'submitted', 'interview'].includes(
+            if (['rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'].includes(
               item.application_status
             )) return;
             const resultKey = item.application_id || item.source_url;

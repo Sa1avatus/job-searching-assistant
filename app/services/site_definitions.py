@@ -60,8 +60,7 @@ def create_site_definition(
         raise InvalidSiteDefinition("Site key is invalid")
     normalized_site_key = site_key.strip().casefold()
     if not 1 <= len(normalized_site_key) <= 100 or not all(
-        character in "abcdefghijklmnopqrstuvwxyz0123456789._-"
-        for character in normalized_site_key
+        character in "abcdefghijklmnopqrstuvwxyz0123456789._-" for character in normalized_site_key
     ):
         raise InvalidSiteDefinition("Site key is invalid")
     if type(name) is not str:

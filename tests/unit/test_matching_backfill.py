@@ -72,7 +72,14 @@ def test_matching_backfill_is_owner_scoped_bounded_and_preserves_current_results
 
             scheduled: list[tuple[str, bool]] = []
 
-            def schedule(_service, application_id: str, *, force: bool = False):
+            def schedule(
+                _service,
+                application_id: str,
+                *,
+                force: bool = False,
+                priority: int = 100,
+            ):
+                assert priority == 10
                 if application_id == "app-3":
                     raise RuntimeError("provider response body must stay hidden")
                 scheduled.append((application_id, force))

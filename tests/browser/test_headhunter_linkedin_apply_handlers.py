@@ -370,9 +370,7 @@ def test_headhunter_blocked_apply_preserves_status(tmp_path: Path) -> None:
 def test_linkedin_apply_waits_for_user_without_captured_session(tmp_path: Path) -> None:
     async def run_handler() -> None:
         session_factory = _session_factory()
-        application_id = _seed_application(
-            session_factory, adapter_name="linkedin-reference"
-        )
+        application_id = _seed_application(session_factory, adapter_name="linkedin-reference")
         handler = LinkedInApplyHandler(
             Settings(_env_file=None, artifact_directory=tmp_path, enable_linkedin_apply=True),
             session_factory,
@@ -406,9 +404,7 @@ def test_linkedin_apply_rejects_invalid_payload_without_changing_status(
 ) -> None:
     async def run_handler() -> None:
         session_factory = _session_factory()
-        application_id = _seed_application(
-            session_factory, adapter_name="linkedin-reference"
-        )
+        application_id = _seed_application(session_factory, adapter_name="linkedin-reference")
         handler = LinkedInApplyHandler(
             Settings(_env_file=None, artifact_directory=tmp_path, enable_linkedin_apply=True),
             session_factory,
@@ -439,17 +435,13 @@ def test_linkedin_apply_rejects_invalid_payload_without_changing_status(
 def test_linkedin_blocked_apply_preserves_status(tmp_path: Path) -> None:
     async def run_handler() -> None:
         session_factory = _session_factory()
-        application_id = _seed_application(
-            session_factory, adapter_name="linkedin-reference"
-        )
+        application_id = _seed_application(session_factory, adapter_name="linkedin-reference")
 
         class BlockedLinkedInAdapter:
             def __init__(self, _engine: object) -> None:
                 pass
 
-            async def apply(
-                self, url: str, *, answers: dict[str, str | bool | None]
-            ) -> object:
+            async def apply(self, url: str, *, answers: dict[str, str | bool | None]) -> object:
                 raise ApplyBlocked("external application is required")
 
         handler = LinkedInApplyHandler(
@@ -488,17 +480,13 @@ def test_linkedin_blocked_apply_preserves_status(tmp_path: Path) -> None:
 def test_linkedin_successful_apply_marks_submitted(tmp_path: Path) -> None:
     async def run_handler() -> None:
         session_factory = _session_factory()
-        application_id = _seed_application(
-            session_factory, adapter_name="linkedin-reference"
-        )
+        application_id = _seed_application(session_factory, adapter_name="linkedin-reference")
 
         class SuccessfulLinkedInAdapter:
             def __init__(self, _engine: object) -> None:
                 pass
 
-            async def apply(
-                self, url: str, *, answers: dict[str, str | bool | None]
-            ) -> object:
+            async def apply(self, url: str, *, answers: dict[str, str | bool | None]) -> object:
                 class ApplyResult:
                     confirmation_url = url
 

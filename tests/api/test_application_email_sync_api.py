@@ -135,3 +135,53 @@ def test_application_email_sync_requires_configured_provider(monkeypatch) -> Non
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Email integration is not configured"}
+
+
+def test_application_email_import_accepts_multiple_eml_files() -> None:
+    session_factory = _session_factory()
+
+    def test_session_scope() -> Iterator[Session]:
+        with session_factory() as session:
+            yield session
+
+    with session_factory() as session:
+        session.add(UserRow(id="user-1", display_name="Candidate"))
+        session.commit()
+
+    app.dependency_overrides[session_scope] = test_session_scope
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/users/user-1/application-email-import",
+                files=[
+                    ("files", ("first.eml", b"Subject: First\n\nBody", "message/rfc822")),
+                    ("files", ("second.eml", b"Subject: Second\n\nBody", "message/rfc822")),
+                ],
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["processed"] == 2
+    assert response.json()["created"] == 2
+
+
+def test_application_email_import_rejects_unsupported_file_type() -> None:
+    session_factory = _session_factory()
+
+    def test_session_scope() -> Iterator[Session]:
+        with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[session_scope] = test_session_scope
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/users/user-1/application-email-import",
+                files={"files": ("message.msg", b"data", "application/octet-stream")},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert "Unsupported email file type" in response.json()["detail"]

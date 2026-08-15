@@ -102,9 +102,7 @@ class BrowserAuthorizationManager:
                 resolved_site,
             )
 
-    async def confirm(
-        self, *, user_id: str, site_key: str
-    ) -> tuple[dict[str, object], str]:
+    async def confirm(self, *, user_id: str, site_key: str) -> tuple[dict[str, object], str]:
         authorization_key = (user_id, site_key)
         async with self._lock:
             authorization = self._active.get(authorization_key)
@@ -116,15 +114,11 @@ class BrowserAuthorizationManager:
         path = parsed_url.path.casefold()
         is_expected_host = any(
             hostname == allowed_host
-            or (
-                authorization.site.allow_subdomains
-                and hostname.endswith(f".{allowed_host}")
-            )
+            or (authorization.site.allow_subdomains and hostname.endswith(f".{allowed_host}"))
             for allowed_host in authorization.site.allowed_hosts
         )
         is_login_page = any(
-            marker.casefold() in path
-            for marker in authorization.site.login_path_markers
+            marker.casefold() in path for marker in authorization.site.login_path_markers
         )
         if not is_expected_host or is_login_page:
             raise BrowserAuthorizationError(

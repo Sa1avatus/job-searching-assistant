@@ -45,11 +45,7 @@ class MetricsRegistry:
                 for name, value in sorted(self._gauges.items())
             )
             summaries = "".join(
-                (
-                    f"# TYPE {name} summary\n"
-                    f"{name}_count {count}\n"
-                    f"{name}_sum {total:g}\n"
-                )
+                (f"# TYPE {name} summary\n{name}_count {count}\n{name}_sum {total:g}\n")
                 for name, (count, total) in sorted(self._observations.items())
             )
             return counters + gauges + summaries

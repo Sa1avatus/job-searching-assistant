@@ -12,9 +12,7 @@ class ValidatedSiteAccess:
     allowed_hosts: tuple[str, ...]
 
 
-def validate_site_access(
-    *, login_url: str, allowed_hosts: list[str]
-) -> ValidatedSiteAccess:
+def validate_site_access(*, login_url: str, allowed_hosts: list[str]) -> ValidatedSiteAccess:
     """Validate and canonicalize an HTTPS login URL and exact host allowlist."""
 
     def invalid(message: str = "Invalid site access configuration") -> InvalidSiteAccess:
@@ -37,10 +35,7 @@ def validate_site_access(
         except (UnicodeError, ValueError):
             raise invalid() from None
         if any(
-            not label
-            or len(label) > 63
-            or label.startswith("-")
-            or label.endswith("-")
+            not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
             for label in labels
         ):
             raise invalid()
@@ -78,9 +73,7 @@ def validate_site_access(
         raise InvalidSiteAccess("Login URL host is not allowed")
 
     netloc = normalized_login_host if port is None else f"{normalized_login_host}:{port}"
-    canonical_url = urlunsplit(
-        ("https", netloc, parsed.path or "/", parsed.query, "")
-    )
+    canonical_url = urlunsplit(("https", netloc, parsed.path or "/", parsed.query, ""))
     return ValidatedSiteAccess(
         login_url=canonical_url,
         allowed_hosts=normalized_hosts,

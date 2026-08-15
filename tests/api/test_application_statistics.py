@@ -35,7 +35,14 @@ def test_application_statistics_counts_statuses_for_requested_user() -> None:
         session.add_all((user, other_user))
         session.flush()
         for index, status in enumerate(
-            ("approved", "approved", "rejected", "submitted", "interview")
+            (
+                "approved",
+                "approved",
+                "rejected",
+                "employer_rejected",
+                "submitted",
+                "interview",
+            )
         ):
             vacancy = VacancyRow(
                 source_url=f"https://example.test/jobs/{index}",
@@ -103,12 +110,13 @@ def test_application_statistics_counts_statuses_for_requested_user() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "total": 5,
+        "total": 6,
         "draft": 0,
         "saved": 0,
         "awaiting_review": 0,
         "approved": 2,
         "rejected": 1,
+        "employer_rejected": 1,
         "skipped": 0,
         "submitted": 1,
         "interview": 1,
@@ -174,8 +182,8 @@ def test_application_sync_skips_source_without_saved_session(
     )
     monkeypatch.setattr(api_main, "get_settings", lambda: settings)
     # Mock BrowserWorkerClient.probe to return invalid (no session)
+
     from app.services.browser_worker_client import BrowserProbeResult
-    import asyncio
 
     async def _fake_probe(self, **kw):
         return BrowserProbeResult(valid=False, details="no session")
