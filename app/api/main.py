@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 from urllib.parse import urlsplit
 
 # Playwright launches the browser as a subprocess. On Windows, asyncio's default
@@ -138,11 +138,14 @@ from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy
 from app.domain.resume_text import UnreadableResumeError, extract_resume_text
 from app.domain.vacancy_attributes import EMPLOYMENT_TYPE_ORDER
 from app.llm.preferences import (
+    DEFAULT_LLM_PURPOSE,
     InvalidLlmPreference,
     LlmModelDiscoveryError,
     LlmPreferenceNotFound,
+    LlmPreferencePurpose,
     LlmPreferenceService,
     fetch_available_models,
+    resolve_preference,
 )
 from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
@@ -496,11 +499,12 @@ def build_user_model_providers(
     session: Session,
     user_id: str,
     settings: Settings,
+    purpose: str | LlmPreferencePurpose = DEFAULT_LLM_PURPOSE,
 ) -> tuple[ModelProvider, ...]:
     encryption_key = _configured_secret(settings.browser_state_encryption_key)
     if encryption_key is None:
         return build_model_providers(http_client, settings)
-    preference = LlmPreferenceService(session, encryption_key=encryption_key).load(user_id)
+    preference = resolve_preference(session, user_id, encryption_key, purpose)
     if preference is None:
         return build_model_providers(http_client, settings)
     if preference.provider == "anthropic":
@@ -987,9 +991,11 @@ async def list_llm_models(
     response_model=LlmPreferenceResponse | None,
 )
 def get_llm_preference(
-    user_id: str, session: Annotated[Session, Depends(session_scope)]
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    purpose: str = "materials",
 ) -> LlmPreferenceResponse | None:
-    row = session.get(LlmPreferenceRow, user_id)
+    row = session.get(LlmPreferenceRow, (user_id, purpose))
     if row is None:
         return None
     return LlmPreferenceResponse.model_validate(row, from_attributes=True)
@@ -1168,6 +1174,7 @@ def update_llm_preference(
             model=request.model,
             api_key=request.api_key.get_secret_value() if request.api_key is not None else None,
             base_url=request.base_url,
+            purpose=request.purpose,
         )
     except LlmPreferenceNotFound as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -3193,16 +3200,14 @@ def application_match_details(
         bonus_score=aggregate.bonus_score,
         confidence=aggregate.confidence,
         raw_score_before_blockers=float(
-            aggregate.explanation_json.get("raw_score_before_blockers", 0)
+            cast(Any, aggregate.explanation_json.get("raw_score_before_blockers", 0))
         ),
-        blocker_penalty=float(aggregate.explanation_json.get("blocker_penalty", 0)),
-        calibration_version=str(
-            aggregate.explanation_json.get("calibration_version", "identity")
-        ),
-        recommendations=list(aggregate.explanation_json.get("recommendations", [])),
-        hard_blockers=list(aggregate.explanation_json.get("hard_blockers", [])),
+        blocker_penalty=float(cast(Any, aggregate.explanation_json.get("blocker_penalty", 0))),
+        calibration_version=str(aggregate.explanation_json.get("calibration_version", "identity")),
+        recommendations=list(cast(Any, aggregate.explanation_json.get("recommendations", []))),
+        hard_blockers=list(cast(Any, aggregate.explanation_json.get("hard_blockers", []))),
         hard_blockers_unresolved=list(
-            aggregate.explanation_json.get("hard_blockers_unresolved", [])
+            cast(Any, aggregate.explanation_json.get("hard_blockers_unresolved", []))
         ),
     )
 

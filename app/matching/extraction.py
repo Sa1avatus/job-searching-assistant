@@ -3,7 +3,8 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic_core import PydanticUndefined
 
 
 class RequirementType(StrEnum):
@@ -57,6 +58,28 @@ class EvidenceType(StrEnum):
 
 class StrictExtractionModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_explicit_nulls_for_defaulted_fields(cls, data: object) -> object:
+        """Tolerate models emitting ``null`` for fields that have defaults.
+
+        In json_object mode (no schema enforcement) models sometimes emit
+        explicit nulls; treat them as missing so the declared default applies
+        instead of failing the whole extraction with a ValidationError.
+        """
+        if not isinstance(data, dict):
+            return data
+        fields = cls.model_fields
+        return {
+            key: value
+            for key, value in data.items()
+            if not (
+                value is None
+                and key in fields
+                and fields[key].default is not PydanticUndefined
+            )
+        }
 
 
 class VacancyRequirement(StrictExtractionModel):

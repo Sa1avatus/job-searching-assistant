@@ -45,7 +45,7 @@ def test_llm_preference_base_url_is_optional_text() -> None:
         )
         session.commit()
 
-        assert session.get(LlmPreferenceRow, "user-1").base_url is None
-        assert session.get(LlmPreferenceRow, "user-2").base_url == (
+        assert session.get(LlmPreferenceRow, ("user-1", "materials")).base_url is None
+        assert session.get(LlmPreferenceRow, ("user-2", "materials")).base_url == (
             "https://models.example.test/v1"
         )

@@ -9,7 +9,7 @@ from typing import cast
 import redis.asyncio as redis
 import structlog
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.domain.models import TaskState
 from app.matching.jobs import MATCHING_QUEUE_NAME, RETRY_MATCHING_PRIORITY
 from app.matching.runtime import MatchingRuntime
@@ -41,7 +41,7 @@ def _handle_refresh_requested(task_id: str, new_state: TaskState, worker_prefix:
 async def _periodic_recovery(
     stopped: asyncio.Event,
     worker_prefix: str,
-    settings: object,
+    settings: Settings,
     interval_seconds: int,
 ) -> None:
     """Periodically recover stale running tasks from crashed workers."""

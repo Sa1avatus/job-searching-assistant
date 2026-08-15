@@ -324,18 +324,19 @@ class MatchingPipeline:
             and self._claim_decomposer is not None
             and self._evidence_evaluator is not None
         ):
+            claim_pipeline = self._claim_pipeline
             try:
                 # Wire up progress tracking
                 def _on_requirement_progress(processed: int, total: int) -> None:
                     self._set_progress(
                         application.id,
                         requirements_processed=processed,
-                        llm_calls_delta=self._claim_pipeline._llm_call_count,
+                        llm_calls_delta=claim_pipeline._llm_call_count,
                     )
-                    self._claim_pipeline._llm_call_count = 0
+                    claim_pipeline._llm_call_count = 0
 
-                self._claim_pipeline._on_progress = _on_requirement_progress
-                claim_result = await self._claim_pipeline.match_requirements(
+                claim_pipeline._on_progress = _on_requirement_progress
+                claim_result = await claim_pipeline.match_requirements(
                     application_id=application.id,
                     user_id=application.user_id,
                     cv_file_id=cv_file.id,
@@ -596,6 +597,28 @@ class MatchingPipeline:
             vacancy_id=vacancy.id,
             source_text=source_text,
         )
+        # The unique constraint is (vacancy_id, extraction_run_id, normalized_text,
+        # requirement_type); models can emit duplicate requirements (more often in
+        # json_object mode where the schema is not enforced), so deduplicate before
+        # persisting instead of failing the whole run with an IntegrityError.
+        seen_requirements: set[tuple[str, str]] = set()
+        unique_requirements = []
+        for requirement in extraction.requirements:
+            key = (
+                self._skill_normalizer.normalize(requirement.normalized_text).canonical,
+                requirement.requirement_type.value,
+            )
+            if key in seen_requirements:
+                continue
+            seen_requirements.add(key)
+            unique_requirements.append(requirement)
+        if len(unique_requirements) != len(extraction.requirements):
+            logger.warning(
+                "vacancy_requirement_extraction_deduplicated",
+                vacancy_id=vacancy.id,
+                removed=len(extraction.requirements) - len(unique_requirements),
+            )
+        extraction = extraction.model_copy(update={"requirements": unique_requirements})
         rows = [
             VacancyRequirementRow(
                 vacancy_id=vacancy.id,
@@ -725,6 +748,23 @@ class MatchingPipeline:
             source_text=source_text,
             source_is_verified=cv_file.analyzed_at is not None,
         )
+        # Same protection as requirements: the unique constraint is
+        # (cv_file_id, extraction_run_id, normalized_text, evidence_type).
+        seen_evidence: set[tuple[str, str]] = set()
+        unique_evidence = []
+        for evidence in extraction.evidence:
+            key = (evidence.normalized_text, evidence.evidence_type.value)
+            if key in seen_evidence:
+                continue
+            seen_evidence.add(key)
+            unique_evidence.append(evidence)
+        if len(unique_evidence) != len(extraction.evidence):
+            logger.warning(
+                "candidate_evidence_extraction_deduplicated",
+                cv_file_id=cv_file.id,
+                removed=len(extraction.evidence) - len(unique_evidence),
+            )
+        extraction = extraction.model_copy(update={"evidence": unique_evidence})
         rows = tuple(
             CandidateEvidenceRow(
                 user_id=application.user_id,

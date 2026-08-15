@@ -5,6 +5,14 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ## [Unreleased]
 
+### Features
+
+- LLM models are now configured **per purpose**: the Model tab has separate selectors for
+  **matching** (extraction, decomposition, entailment) and **materials generation**
+  (cover letters, screening answers, resume analysis). Each is stored as its own encrypted
+  per-user preference; matching falls back to the materials model until a matching-specific
+  model is saved, so existing single-model setups keep working unchanged.
+
 ### Performance
 
 - Matching recalculation now distinguishes a **smart recalculation** (reuses cached LLM

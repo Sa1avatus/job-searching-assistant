@@ -276,6 +276,73 @@ def test_pipeline_reuses_unchanged_versioned_extractions() -> None:
     asyncio.run(run())
 
 
+def test_pipeline_deduplicates_duplicate_extraction_rows() -> None:
+    """Duplicate requirements/evidence from the model must not fail the run.
+
+    In json_object mode the schema is not enforced and models can emit the same
+    (normalized_text, type) pair twice; the unique constraints would otherwise
+    raise an IntegrityError and kill the whole recalculation.
+    """
+
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            application = _application(session)
+            requirement = VacancyRequirement(
+                text="Production Python experience",
+                normalized_text="production python experience",
+                requirement_type=RequirementType.HARD_SKILL,
+                importance=RequirementImportance.REQUIRED,
+                is_blocker=False,
+                source_fragment="Production Python experience is required.",
+                confidence=0.95,
+            )
+            vacancy_extractor = FakeVacancyRequirementExtractor(
+                {
+                    application.vacancy_id: VacancyExtraction(
+                        requirements=[requirement, requirement.model_copy()],
+                        confidence=0.95,
+                    )
+                }
+            )
+            evidence = CandidateEvidence(
+                text="Built production Python services",
+                normalized_text="built production python services",
+                evidence_type=EvidenceType.SKILL_STATEMENT,
+                skill_name="Python",
+                experience_level=ExperienceLevel.PRODUCTION,
+                source_fragment="Built production Python services",
+                confidence=0.95,
+            )
+            evidence_extractor = FakeCandidateEvidenceExtractor(
+                {
+                    application.selected_cv_file_id or "": CandidateEvidenceExtraction(
+                        evidence=[evidence, evidence.model_copy()],
+                        confidence=0.95,
+                    )
+                }
+            )
+            pipeline = MatchingPipeline(
+                session,
+                vacancy_extractor,
+                evidence_extractor,
+                _SessionRetriever(session),
+                FakeReranker(),
+                DeterministicMatchScorer(),
+            )
+
+            await pipeline.match(
+                application.id,
+                vacancy_source_text="Production Python experience is required.",
+                cv_source_text="Built production Python services",
+            )
+
+            assert len(session.scalars(select(VacancyRequirementRow)).all()) == 1
+            assert len(session.scalars(select(CandidateEvidenceRow)).all()) == 1
+
+    asyncio.run(run())
+
+
 def test_pipeline_covers_every_structured_key_skill_in_explanation() -> None:
     async def run() -> None:
         session_factory = _session_factory()

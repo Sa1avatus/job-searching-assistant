@@ -353,3 +353,35 @@ async def test_openai_provider_does_not_fallback_on_unrelated_400() -> None:
         )
         with pytest.raises(OpenAICompatibleResponseError):
             await provider.complete(request)
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_sends_think_false_and_context_length() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        # Structured outputs need no reasoning tokens, and matching passes its
+        # tuned per-sequence context for the gateway to honor.
+        assert payload["think"] is False
+        assert payload["context_length"] == 4096
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"result": "ok"}'}}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="key",
+            model="local-code-worker/auto",
+            base_url="http://host.docker.internal:8765/v1",
+        )
+        request = ModelRequest(
+            task_name="evaluate_evidence_entailment",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="Evaluate",
+            max_cost_usd=0.03,
+            max_output_tokens=512,
+            context_size=4096,
+            response_schema={"type": "object"},
+        )
+        assert await provider.complete(request) == {"result": "ok"}

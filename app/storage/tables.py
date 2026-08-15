@@ -47,6 +47,7 @@ class LlmPreferenceRow(Base):
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
+    purpose: Mapped[str] = mapped_column(String(50), primary_key=True, default="materials")
     provider: Mapped[str] = mapped_column(String(50))
     model: Mapped[str] = mapped_column(String(200))
     base_url: Mapped[str | None] = mapped_column(Text, nullable=True)

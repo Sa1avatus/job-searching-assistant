@@ -314,6 +314,13 @@ class OpenAICompatibleProvider(ModelProvider):
             "max_tokens": request.max_output_tokens or 16384,
             "response_format": self._response_format_for(request),
         }
+        # Reasoning models (qwen3.x) drain the token budget on thinking; all
+        # structured outputs here need none, so disable it explicitly.
+        request_payload["think"] = False
+        if request.context_size is not None:
+            # Matching passes its tuned per-sequence context; the local-code-worker
+            # gateway honors it per request (winning over the routed tier default).
+            request_payload["context_length"] = request.context_size
         response = await self._http_client.post(
             self._completion_url,
             headers={

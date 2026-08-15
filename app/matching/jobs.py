@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.domain.models import TaskState
-from app.llm.preferences import resolve_model_identity
+from app.llm.preferences import LlmPreferencePurpose, resolve_model_identity
 from app.matching.vacancy_source import build_vacancy_matching_source
 from app.storage.tables import (
     ApplicationMatchResultRow,
@@ -37,7 +37,9 @@ _ACTIVE_TASK_STATES = {
 
 def retry_delay_seconds(attempt_number: int, base_seconds: int = 30) -> int:
     """Exponential backoff capped at 5 minutes: 30, 60, 120, 240, 300."""
-    return min(base_seconds * (2 ** max(attempt_number - 1, 0)), 300)
+    exponent = max(attempt_number - 1, 0)
+    delay = base_seconds * (1 << exponent)
+    return min(delay, 300)
 
 
 class MatchingJobNotReadyError(ValueError):
@@ -79,7 +81,12 @@ class MatchingJobService:
             if settings.browser_state_encryption_key is not None
             else None
         )
-        model_identity = resolve_model_identity(self._session, application.user_id, encryption_key)
+        model_identity = resolve_model_identity(
+            self._session,
+            application.user_id,
+            encryption_key,
+            purpose=LlmPreferencePurpose.MATCHING,
+        )
         content_version = hashlib.sha256(
             "\n".join(
                 (

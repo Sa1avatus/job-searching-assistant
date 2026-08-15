@@ -497,18 +497,35 @@
 
     <section class="step" data-panel="model">
       <h2>Языковая модель</h2>
-      <div class="hint">Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Получите список доступных моделей, выберите одну и сохраните.</div>
+      <div class="hint">Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Для матчинга и генерации материалов настраивается своя модель: получите список доступных моделей, выберите одну и сохраните.</div>
+
+      <h3>Матчинг</h3>
+      <div class="hint">Модель для извлечения требований, декомпозиции навыков и оценки соответствия резюме.</div>
       <div class="row">
-        <div><label>Провайдер</label><select id="llm-provider"><option value="gemini">Google Gemini</option><option value="anthropic">Anthropic Claude</option><option value="openai_compatible">OpenAI-compatible</option></select></div>
-        <div id="llm-base-url-field" hidden><label>Базовый URL API</label><input id="llm-base-url" type="url" placeholder="https://example.com/v1"></div>
-        <div><label>API-ключ провайдера</label><input id="llm-api-key" type="password" autocomplete="new-password" placeholder="вставьте ключ"></div>
-        <div style="flex:0"><button id="load-models" type="button">Получить модели</button></div>
+        <div><label>Провайдер</label><select id="llm-matching-provider"><option value="gemini">Google Gemini</option><option value="anthropic">Anthropic Claude</option><option value="openai_compatible">OpenAI-compatible</option></select></div>
+        <div id="llm-matching-base-url-field" hidden><label>Базовый URL API</label><input id="llm-matching-base-url" type="url" placeholder="https://example.com/v1"></div>
+        <div><label>API-ключ провайдера</label><input id="llm-matching-api-key" type="password" autocomplete="new-password" placeholder="вставьте ключ"></div>
+        <div style="flex:0"><button id="load-matching-models" type="button">Получить модели</button></div>
       </div>
       <div class="row" style="margin-top:12px;">
-        <div><label>Модель</label><select id="llm-model"><option value="">Сначала получите список моделей</option></select></div>
-        <div style="flex:0"><button id="save-llm" type="button" class="primary">Сохранить настройку</button></div>
+        <div><label>Модель</label><select id="llm-matching-model"><option value="">Сначала получите список моделей</option></select></div>
+        <div style="flex:0"><button id="save-matching-llm" type="button" class="primary">Сохранить настройку</button></div>
       </div>
-      <div id="llm-state" class="task-state"></div>
+      <div id="llm-matching-state" class="task-state"></div>
+
+      <h3 style="margin-top:20px;">Генерация материалов</h3>
+      <div class="hint">Модель для сопроводительных писем, ответов на скрининг и анализа резюме.</div>
+      <div class="row">
+        <div><label>Провайдер</label><select id="llm-materials-provider"><option value="gemini">Google Gemini</option><option value="anthropic">Anthropic Claude</option><option value="openai_compatible">OpenAI-compatible</option></select></div>
+        <div id="llm-materials-base-url-field" hidden><label>Базовый URL API</label><input id="llm-materials-base-url" type="url" placeholder="https://example.com/v1"></div>
+        <div><label>API-ключ провайдера</label><input id="llm-materials-api-key" type="password" autocomplete="new-password" placeholder="вставьте ключ"></div>
+        <div style="flex:0"><button id="load-materials-models" type="button">Получить модели</button></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label>Модель</label><select id="llm-materials-model"><option value="">Сначала получите список моделей</option></select></div>
+        <div style="flex:0"><button id="save-materials-llm" type="button" class="primary">Сохранить настройку</button></div>
+      </div>
+      <div id="llm-materials-state" class="task-state"></div>
     </section>
 
     <section class="step" data-panel="sessions">
@@ -742,7 +759,11 @@
       'Загрузить профиль': 'Load profile',
       'Создать пользователя': 'Create user',
       'Языковая модель': 'Language model',
-      'Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Получите список доступных моделей, выберите одну и сохраните.': 'The key is encrypted before storage and is never displayed again. Load available models, select one, and save it.',
+      'Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Для матчинга и генерации материалов настраивается своя модель: получите список доступных моделей, выберите одну и сохраните.': 'The key is encrypted before storage and is never displayed again. Matching and materials generation each get their own model: load available models, select one, and save it.',
+      'Матчинг': 'Matching',
+      'Модель для извлечения требований, декомпозиции навыков и оценки соответствия резюме.': 'Model for requirement extraction, skill decomposition, and resume match evaluation.',
+      'Генерация материалов': 'Materials generation',
+      'Модель для сопроводительных писем, ответов на скрининг и анализа резюме.': 'Model for cover letters, screening answers, and resume analysis.',
       'Провайдер': 'Provider',
       'API-ключ провайдера': 'Provider API key',
       'Получить модели': 'Load models',
@@ -2481,70 +2502,89 @@
       } catch (error) { showError(error); }
     });
 
-    async function loadSavedLlmPreference() {
+    const LLM_PURPOSES = [
+      {purpose: 'matching', prefix: 'llm-matching', label: 'Матчинг'},
+      {purpose: 'materials', prefix: 'llm-materials', label: 'Генерация материалов'},
+    ];
+
+    function llmEl(prefix, name) {
+      return document.querySelector('#' + prefix + '-' + name);
+    }
+
+    async function loadSavedLlmPreference(purpose, prefix) {
       const userId = userIdInput.value.trim();
       if (!userId) return;
-      const response = await fetch(`/v1/users/${userId}/llm-preference`, {headers: headers(false)});
+      const response = await fetch(`/v1/users/${userId}/llm-preference?purpose=${encodeURIComponent(purpose)}`, {headers: headers(false)});
       if (!response.ok) return;
       const preference = await response.json();
       if (!preference) return;
-      document.querySelector('#llm-provider').value = preference.provider;
-      const modelSelect = document.querySelector('#llm-model');
+      llmEl(prefix, 'provider').value = preference.provider;
+      const modelSelect = llmEl(prefix, 'model');
       modelSelect.replaceChildren(new Option(preference.model, preference.model));
       modelSelect.value = preference.model;
-      document.querySelector('#llm-base-url').value = preference.base_url || '';
-      updateLlmProviderFields();
-      document.querySelector('#llm-state').textContent = `Сохранено: ${preference.provider} / ${preference.model}. Ключ уже настроен.`;
+      llmEl(prefix, 'base-url').value = preference.base_url || '';
+      updateLlmProviderFields(prefix);
+      llmEl(prefix, 'state').textContent = `Сохранено: ${preference.provider} / ${preference.model}. Ключ уже настроен.`;
     }
 
-    function updateLlmProviderFields() {
-      const isCompatible = document.querySelector('#llm-provider').value === 'openai_compatible';
-      document.querySelector('#llm-base-url-field').hidden = !isCompatible;
+    function updateLlmProviderFields(prefix) {
+      const isCompatible = llmEl(prefix, 'provider').value === 'openai_compatible';
+      llmEl(prefix, 'base-url-field').hidden = !isCompatible;
     }
 
-    document.querySelector('#llm-provider').addEventListener('change', updateLlmProviderFields);
-    updateLlmProviderFields();
+    function loadLlmPreferences() {
+      for (const p of LLM_PURPOSES) loadSavedLlmPreference(p.purpose, p.prefix);
+    }
 
-    document.querySelector('#load-models').addEventListener('click', async () => {
-      try {
-        const provider = document.querySelector('#llm-provider').value;
-        const apiKey = document.querySelector('#llm-api-key').value.trim();
-        const baseUrl = document.querySelector('#llm-base-url').value.trim();
-        if (!apiKey) throw new Error('Введите API-ключ провайдера');
-        if (provider === 'openai_compatible' && !baseUrl) throw new Error('Введите базовый URL API');
-        showStatus('Получаем доступные модели…');
-        const payload = await asJson(await fetch('/v1/llm/models', {
-          method: 'POST', headers: headers(true), body: JSON.stringify({provider, api_key: apiKey, base_url: baseUrl || null})
-        }));
-        if (!payload.models.length) throw new Error('Провайдер не вернул подходящих моделей');
-        const modelSelect = document.querySelector('#llm-model');
-        const previousModel = modelSelect.value;
-        modelSelect.replaceChildren();
-        payload.models.forEach(model => modelSelect.append(new Option(model, model)));
-        modelSelect.value = payload.models.includes(previousModel) ? previousModel : payload.models[0];
-        showStatus(`Доступно моделей: ${payload.models.length}`);
-      } catch (error) { showError(error); }
-    });
+    async function loadModels(purpose, prefix) {
+      const provider = llmEl(prefix, 'provider').value;
+      const apiKey = llmEl(prefix, 'api-key').value.trim();
+      const baseUrl = llmEl(prefix, 'base-url').value.trim();
+      if (!apiKey) throw new Error('Введите API-ключ провайдера');
+      if (provider === 'openai_compatible' && !baseUrl) throw new Error('Введите базовый URL API');
+      showStatus('Получаем доступные модели…');
+      const payload = await asJson(await fetch('/v1/llm/models', {
+        method: 'POST', headers: headers(true), body: JSON.stringify({provider, api_key: apiKey, base_url: baseUrl || null})
+      }));
+      if (!payload.models.length) throw new Error('Провайдер не вернул подходящих моделей');
+      const modelSelect = llmEl(prefix, 'model');
+      const previousModel = modelSelect.value;
+      modelSelect.replaceChildren();
+      payload.models.forEach(model => modelSelect.append(new Option(model, model)));
+      modelSelect.value = payload.models.includes(previousModel) ? previousModel : payload.models[0];
+      showStatus(`Доступно моделей: ${payload.models.length}`);
+    }
 
-    document.querySelector('#save-llm').addEventListener('click', async () => {
-      try {
-        const userId = userIdInput.value.trim();
-        if (!userId) throw new Error('Сначала создайте пользователя');
-        const provider = document.querySelector('#llm-provider').value;
-        const model = document.querySelector('#llm-model').value;
-        if (!model) throw new Error('Выберите модель');
-        const apiKey = document.querySelector('#llm-api-key').value.trim();
-        const baseUrl = document.querySelector('#llm-base-url').value.trim();
-        if (provider === 'openai_compatible' && !baseUrl) throw new Error('Введите базовый URL API');
-        const body = {provider, model, base_url: baseUrl || null}; if (apiKey) body.api_key = apiKey;
-        const preference = await asJson(await fetch(`/v1/users/${userId}/llm-preference`, {
-          method: 'PUT', headers: headers(true), body: JSON.stringify(body)
-        }));
-        document.querySelector('#llm-api-key').value = '';
-        document.querySelector('#llm-state').textContent = `Сохранено: ${preference.provider} / ${preference.model}.`;
-        showStatus('Настройка LLM сохранена в зашифрованном виде.');
-      } catch (error) { showError(error); }
-    });
+    async function saveLlm(purpose, prefix, label) {
+      const userId = userIdInput.value.trim();
+      if (!userId) throw new Error('Сначала создайте пользователя');
+      const provider = llmEl(prefix, 'provider').value;
+      const model = llmEl(prefix, 'model').value;
+      if (!model) throw new Error('Выберите модель');
+      const apiKey = llmEl(prefix, 'api-key').value.trim();
+      const baseUrl = llmEl(prefix, 'base-url').value.trim();
+      if (provider === 'openai_compatible' && !baseUrl) throw new Error('Введите базовый URL API');
+      const body = {provider, model, base_url: baseUrl || null, purpose}; if (apiKey) body.api_key = apiKey;
+      const preference = await asJson(await fetch(`/v1/users/${userId}/llm-preference`, {
+        method: 'PUT', headers: headers(true), body: JSON.stringify(body)
+      }));
+      llmEl(prefix, 'api-key').value = '';
+      llmEl(prefix, 'state').textContent = `Сохранено: ${preference.provider} / ${preference.model}.`;
+      showStatus(`Настройка LLM (${label}) сохранена в зашифрованном виде.`);
+    }
+
+    for (const p of LLM_PURPOSES) {
+      llmEl(p.prefix, 'provider').addEventListener('change', () => updateLlmProviderFields(p.prefix));
+      updateLlmProviderFields(p.prefix);
+
+      document.querySelector('#load-' + p.purpose + '-models').addEventListener('click', async () => {
+        try { await loadModels(p.purpose, p.prefix); } catch (error) { showError(error); }
+      });
+
+      document.querySelector('#save-' + p.purpose + '-llm').addEventListener('click', async () => {
+        try { await saveLlm(p.purpose, p.prefix, p.label); } catch (error) { showError(error); }
+      });
+    }
 
     document.querySelector('#upload-resume').addEventListener('click', async () => {
       try {
@@ -4206,7 +4246,7 @@
 
     async function loadUserWorkspace() {
       localStorage.setItem('dashboardUserId', userIdInput.value.trim());
-      loadSavedLlmPreference();
+      loadLlmPreferences();
       await Promise.all([
         loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles(),
         loadAutofillValues(), loadSiteDefinitionsForFields(), loadApplicationStatistics(),
@@ -4231,7 +4271,7 @@
     collapseAllPanels();
     if (validPanels.includes(requestedPanel)) activatePanel(requestedPanel);
     restoreSearchResults();
-    loadSavedLlmPreference();
+    loadLlmPreferences();
     loadAutofillValues().catch(showError);
     loadSiteDefinitionsForFields().catch(showError);
     loadBrowserSessionStatuses(true).catch(showError);

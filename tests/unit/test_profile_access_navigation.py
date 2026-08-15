@@ -34,7 +34,8 @@ def test_dashboard_offers_custom_openai_compatible_provider() -> None:
     dashboard = (PROJECT_ROOT / "app" / "static" / "dashboard.html").read_text(encoding="utf-8")
 
     assert '<option value="openai_compatible">OpenAI-compatible</option>' in dashboard
-    assert 'id="llm-base-url"' in dashboard
+    assert 'id="llm-matching-base-url"' in dashboard
+    assert 'id="llm-materials-base-url"' in dashboard
     assert "provider === 'openai_compatible'" in dashboard
     assert "base_url: baseUrl || null" in dashboard
 

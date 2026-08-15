@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 from app.domain.resume_text import extract_resume_text
-from app.llm.preferences import LlmPreferenceService, resolve_model_identity
+from app.llm.preferences import LlmPreferencePurpose, resolve_model_identity, resolve_preference
 from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
 from app.llm.providers.openai_compatible import OpenAICompatibleProvider
@@ -72,7 +72,9 @@ class MatchingRuntime:
                 if self._settings.browser_state_encryption_key is not None
                 else None
             )
-            model_identity = resolve_model_identity(session, application.user_id, encryption_key)
+            model_identity = resolve_model_identity(
+                session, application.user_id, encryption_key, purpose=LlmPreferencePurpose.MATCHING
+            )
             async with AsyncExitStack() as stack:
                 llm_http = await stack.enter_async_context(
                     httpx.AsyncClient(
@@ -237,6 +239,7 @@ def _build_user_model_providers(
     session: Session,
     user_id: str,
     settings: Settings,
+    purpose: str | LlmPreferencePurpose = LlmPreferencePurpose.MATCHING,
 ) -> tuple[ModelProvider, ...]:
     encryption_key = (
         settings.browser_state_encryption_key.get_secret_value()
@@ -244,7 +247,7 @@ def _build_user_model_providers(
         else None
     )
     if encryption_key is not None:
-        preference = LlmPreferenceService(session, encryption_key=encryption_key).load(user_id)
+        preference = resolve_preference(session, user_id, encryption_key, purpose)
         if preference is not None:
             if preference.provider == "anthropic":
                 return (

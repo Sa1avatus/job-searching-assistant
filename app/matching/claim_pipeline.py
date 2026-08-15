@@ -200,7 +200,7 @@ class ClaimMatchPipeline:
                     requirement,
                 )
             assessment = self._build_assessment(requirement, result)
-            local_gaps = []
+            local_gaps: list[dict[str, object]] = []
             local_counts: dict[str, int] = {}
             for cr in result.claim_results:
                 local_gaps.append(
@@ -258,7 +258,7 @@ class ClaimMatchPipeline:
         }
 
         for req_idx, item in enumerate(raw_results):
-            if isinstance(item, Exception):
+            if isinstance(item, BaseException):
                 requirement = requirements[req_idx]
                 logger.warning(
                     "claim_matching_failed_for_requirement",

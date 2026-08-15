@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Literal
 
 import httpx
@@ -15,6 +16,33 @@ LlmProviderName = Literal["anthropic", "gemini", "openai_compatible"]
 SUPPORTED_LLM_PROVIDERS = frozenset({"anthropic", "gemini", "openai_compatible"})
 
 
+class LlmPreferencePurpose(StrEnum):
+    """Which LLM consumer a preference belongs to.
+
+    MATCHING powers the matching worker (extraction, decomposition, entailment);
+    MATERIALS powers everything else (cover letters, screening answers, resume and
+    profile extraction, job discovery). MATERIALS is the historical single-model
+    preference, so it is the default and the fallback for MATCHING.
+    """
+
+    MATCHING = "matching"
+    MATERIALS = "materials"
+
+
+DEFAULT_LLM_PURPOSE = LlmPreferencePurpose.MATERIALS
+
+# Resolution order when a purpose has no explicit row. Matching falls back to the
+# legacy single-model preference so existing users keep working until they save a
+# matching-specific model.
+_PURPOSE_FALLBACKS: dict[LlmPreferencePurpose, tuple[LlmPreferencePurpose, ...]] = {
+    LlmPreferencePurpose.MATCHING: (
+        LlmPreferencePurpose.MATCHING,
+        LlmPreferencePurpose.MATERIALS,
+    ),
+    LlmPreferencePurpose.MATERIALS: (LlmPreferencePurpose.MATERIALS,),
+}
+
+
 class InvalidLlmPreference(ValueError):
     pass
 
@@ -23,10 +51,39 @@ class LlmPreferenceNotFound(LookupError):
     pass
 
 
+def normalize_purpose(purpose: str | LlmPreferencePurpose) -> str:
+    """Validate and canonicalize a preference purpose to its storage value."""
+    value = (
+        purpose.value if isinstance(purpose, LlmPreferencePurpose) else purpose.strip().casefold()
+    )
+    try:
+        LlmPreferencePurpose(value)
+    except ValueError as error:
+        raise InvalidLlmPreference(f"Unsupported LLM preference purpose: {purpose!r}") from error
+    return value
+
+
+def resolve_preference(
+    session: Session,
+    user_id: str,
+    encryption_key: str,
+    purpose: str | LlmPreferencePurpose = DEFAULT_LLM_PURPOSE,
+) -> LlmPreference | None:
+    """Load the effective preference for a purpose, walking the fallback chain."""
+    service = LlmPreferenceService(session, encryption_key=encryption_key)
+    normalized = normalize_purpose(purpose)
+    for candidate in _PURPOSE_FALLBACKS[LlmPreferencePurpose(normalized)]:
+        preference = service.load(user_id, candidate.value)
+        if preference is not None:
+            return preference
+    return None
+
+
 def resolve_model_identity(
     session: Session,
     user_id: str,
     encryption_key: str | None,
+    purpose: str | LlmPreferencePurpose = DEFAULT_LLM_PURPOSE,
 ) -> str | None:
     """Resolve a stable fingerprint of the user's selected LLM model.
 
@@ -38,7 +95,7 @@ def resolve_model_identity(
     if encryption_key is None:
         return None
     try:
-        preference = LlmPreferenceService(session, encryption_key=encryption_key).load(user_id)
+        preference = resolve_preference(session, user_id, encryption_key, purpose)
     except InvalidLlmPreference:
         return None
     if preference is None:
@@ -79,9 +136,11 @@ class LlmPreferenceService:
         model: str,
         api_key: str | None,
         base_url: str | None = None,
+        purpose: str | LlmPreferencePurpose = DEFAULT_LLM_PURPOSE,
     ) -> LlmPreferenceRow:
         if self._session.get(UserRow, user_id) is None:
             raise LlmPreferenceNotFound("User not found")
+        normalized_purpose = normalize_purpose(purpose)
         normalized_provider = provider.strip().casefold()
         normalized_model = model.strip()
         if normalized_provider not in SUPPORTED_LLM_PROVIDERS:
@@ -96,7 +155,7 @@ class LlmPreferenceService:
                 normalized_base_url = normalize_openai_compatible_base_url(base_url)
             except ValueError as error:
                 raise InvalidLlmPreference(str(error)) from error
-        row = self._session.get(LlmPreferenceRow, user_id)
+        row = self._session.get(LlmPreferenceRow, (user_id, normalized_purpose))
         normalized_api_key = (api_key or "").strip()
         if not normalized_api_key and row is None:
             raise InvalidLlmPreference("API key is required")
@@ -108,7 +167,7 @@ class LlmPreferenceService:
             assert row is not None
             encrypted_api_key = row.encrypted_api_key
         now = datetime.now(UTC)
-        row = row or LlmPreferenceRow(user_id=user_id, created_at=now)
+        row = row or LlmPreferenceRow(user_id=user_id, purpose=normalized_purpose, created_at=now)
         row.provider = normalized_provider
         row.model = normalized_model
         row.base_url = normalized_base_url
@@ -118,8 +177,12 @@ class LlmPreferenceService:
         self._session.commit()
         return row
 
-    def load(self, user_id: str) -> LlmPreference | None:
-        row = self._session.get(LlmPreferenceRow, user_id)
+    def load(
+        self,
+        user_id: str,
+        purpose: str | LlmPreferencePurpose = DEFAULT_LLM_PURPOSE,
+    ) -> LlmPreference | None:
+        row = self._session.get(LlmPreferenceRow, (user_id, normalize_purpose(purpose)))
         if row is None:
             return None
         try:

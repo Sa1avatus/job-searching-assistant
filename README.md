@@ -19,7 +19,11 @@ Current version: **1.5.4**.
   skip the LLM entirely — cutting cold-run time and making repeated runs near-instant.
   Entailment classification can additionally be routed to a smaller local model via
   `APP_MATCHING_ENTAILMENT_MODEL` (e.g. `qwen3:1.5b`) while extraction and decomposition
-  keep using the model selected in the Model tab.
+  keep using the matching model selected in the Model tab.
+- LLM models are configured **per purpose** in the Model tab: a dedicated model for
+  **matching** (extraction, decomposition, entailment) and a separate one for **materials
+  generation** (cover letters, screening answers, resume analysis). Matching falls back to
+  the materials model until a matching-specific model is saved.
 - The LLM provider adapts to OpenAI-compatible endpoints that only accept `text` and
   `json_object` response formats (such as the local-code-worker gateway): structured
   matching requests automatically fall back to `json_object` when `json_schema` is
@@ -85,7 +89,8 @@ OpenSearch, and model data.
 ## First use
 
 1. Create a local user in **Access**.
-2. Select an LLM provider and model in **Model** if you want resume analysis or drafted materials.
+2. Select an LLM provider and model in **Model** — separately for matching and for materials
+   generation — if you want resume analysis or drafted materials.
 3. Upload and review one or more resumes.
 4. Capture user-owned site sessions in **Site sessions** where a connector requires authentication.
 5. Select a resume and start vacancy discovery.
