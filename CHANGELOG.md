@@ -32,8 +32,17 @@ semantic versioning for new releases; older historical version numbers are prese
   source text (function-word and punctuation drift tolerated), keeping the
   no-hallucination invariant while allowing weaker local models to pass extraction.
 - Extraction prompts now require character-for-character source fragments.
+- Entailment evaluation is **batched** (`APP_MATCHING_ENTAILMENT_BATCH_SIZE`, default 5):
+  concurrent (claim, evidence) pairs are coalesced by a background flusher and evaluated
+  in one LLM call per batch, cutting the actual request count ~5× (a 164-pair cold run
+  issues ~35 requests). Per-pair throughput improves ~18% on a local GPU; the pipeline
+  is GPU-compute-bound, so wall-time gains are modest while queue/gateway load drops
+  sharply. Batches are packed to fit the model context; results are aligned by
+  `claim_id` echo with an order fallback; a failed batch degrades per-item to
+  `evaluation_error`. Per-pair cache keys are unchanged, so cached results from prior
+  runs remain valid; `1` disables batching.
 - Version markers are now consistent: `VERSION`, `README`, `README.ru`, and
-  `pyproject.toml` all report 1.5.1.
+  `pyproject.toml` all report 1.5.2.
 
 ## [1.5.1] — 2026-08-14
 

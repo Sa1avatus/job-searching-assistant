@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     matching_entailment_max_candidates: int = Field(default=3, ge=1, le=10)
     matching_entailment_max_tokens: int = Field(default=512, ge=64, le=8192)
     matching_entailment_context_size: int = Field(default=4096, ge=512, le=32768)
+    # Pairs per batched entailment LLM call (1 disables batching). The batch prompt
+    # evaluates several (claim, evidence) pairs in one request, amortizing
+    # per-request overhead; batches are packed to fit the context window.
+    matching_entailment_batch_size: int = Field(default=5, ge=1, le=20)
     matching_decompose_max_tokens: int = Field(default=2048, ge=64, le=8192)
     # MUST match matching_entailment_context_size: Ollama reloads the model whenever
     # num_ctx changes, and reloading a 3GB model between every decompose/entailment

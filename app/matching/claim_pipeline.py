@@ -225,10 +225,24 @@ class ClaimMatchPipeline:
         tasks = [
             asyncio.create_task(_process_one(idx, req)) for idx, req in enumerate(requirements)
         ]
-        raw_results = await asyncio.gather(
-            *tasks,
-            return_exceptions=True,
-        )
+        try:
+            raw_results = await asyncio.gather(
+                *tasks,
+                return_exceptions=True,
+            )
+        finally:
+            # A batched evaluator keeps a background flusher task; it must be
+            # drained and stopped once every requirement finished. Non-batched
+            # evaluators have no close() and this is a no-op.
+            close_evaluator = getattr(self._evaluator, "close", None)
+            if close_evaluator is not None:
+                try:
+                    await close_evaluator()
+                except Exception as error:
+                    logger.warning(
+                        "entailment_evaluator_close_failed",
+                        error_type=type(error).__name__,
+                    )
 
         assessments: list[RequirementAssessment] = []
         requirement_results: list[RequirementClaimResults] = []

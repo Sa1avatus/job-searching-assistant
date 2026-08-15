@@ -163,6 +163,7 @@ class MatchingRuntime:
                     model_identity=model_identity,
                     entailment_max_tokens=self._settings.matching_entailment_max_tokens,
                     entailment_context_size=self._settings.matching_entailment_context_size,
+                    entailment_batch_size=self._settings.matching_entailment_batch_size,
                 )
                 rag_client = create_rag_client(
                     service_url=self._settings.rag_service_url,

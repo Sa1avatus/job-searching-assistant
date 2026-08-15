@@ -7,14 +7,15 @@ vacancies, analyses resumes, calculates explainable matches, drafts application 
 prepares supported browser forms for human review. Real HeadHunter and LinkedIn submission is
 disabled by default and requires explicit configuration and user confirmation.
 
-Current version: **1.5.1**.
+Current version: **1.5.2**.
 
 ## Current release
 
 - Matching recalculation is split into a fast **smart recalculation** (reuses cached LLM
   results; unchanged content returns immediately) and a **full recalculation** for after
   changing the LLM model. Decomposition/entailment results are cached in Redis with
-  model-aware keys, entailment stops early after a strong confirmation, and simple skills
+  model-aware keys, entailment stops early after a strong confirmation, entailment pairs
+  are evaluated in **batched LLM calls** (5 pairs per call by default), and simple skills
   skip the LLM entirely — cutting cold-run time and making repeated runs near-instant.
 
 - Matching v2.3 decomposes vacancy requirements into claims and distinguishes confirmed,

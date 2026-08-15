@@ -56,6 +56,17 @@
       "is_active": true
     },
     {
+      "name": "evaluate_evidence_entailment_batch",
+      "purpose": "Evaluate whether each supplied evidence item entails its atomic claim, several pairs per LLM call.",
+      "version": 1,
+      "template": "Evaluate whether each supplied evidence item establishes its corresponding atomic claim.\n\n{items}\n\nRules:\n- Use semantic equivalence, not exact keyword matching.\n- A claim may be supported by concrete activities that imply the claimed capability.\n- Evidence may establish a claim through equivalent real-world evidence.\n\nCRITICAL - anti-hallucination:\n- Use ONLY the provided evidence. Do NOT use world knowledge.\n- Do NOT invent years of experience, production deployments, or skills not in evidence.\n- Do NOT treat knowledge/study as hands-on experience.\n- Do NOT treat a related technology as exact match (e.g. LLM!=RAG, PyTorch!=production Python).\n- If evidence is insufficient, return 'insufficient_evidence', NOT 'contradicted'.\n\nHowever:\n- Do not infer duration unless dates/duration are explicitly available.\n- Do not infer RAG from generic LLM integration.\n- Do not infer production experience from model experimentation alone.\n- Do not infer a technology merely because a related technology is present.\n- Do not infer commercial experience unless the evidence establishes it.\n- Do not infer self-hosted/on-prem deployment from generic model usage.\n- Do not infer vector database experience from embeddings alone.\n\nRelation values:\n- entailed: evidence explicitly or logically establishes the claim\n- partial: evidence establishes part of the claim\n- related_but_insufficient: evidence is clearly relevant but does not establish the claim\n- insufficient_evidence: no reliable conclusion can be made from available data\n- contradicted: only for explicit contradiction\n\nEvaluate EVERY item independently.\nCRITICAL: return exactly one evaluation object per item, in the same order as the items.\nRepeat each item's claim_id exactly as given - it is used to align results.\n\nReturn JSON with:\n- evaluations: array of objects, each with:\n- claim_id: the exact claim_id of the item\n- relation: one of entailed/partial/related_but_insufficient/insufficient_evidence/contradicted\n- confidence: 0-1\n- reason: explanation\n- entailment_score: 0-1 (how strongly evidence supports the claim)\n- coverage: 0-1 (degree of claim fulfillment - 1.0=fully covered, 0.5=half covered, 0.0=not covered)\n- evidence_type: 'direct' (explicitly states the claim), 'indirect' (implies it), 'contextual' (tangentially related), or 'none'\n- experience_level: 'commercial_production', 'internal_production', 'working_personal_project', 'prototype', 'experiment', 'studied_only', or 'none'",
+      "input_schema": "EvaluateEntailmentBatchInput",
+      "output_schema": "BatchEntailmentResults",
+      "model_task_class": "low_cost",
+      "created_on": "2026-08-15",
+      "is_active": true
+    },
+    {
       "name": "extract_facts_from_text",
       "purpose": "Extract structured facts from unstructured text (file import).",
       "version": 1,

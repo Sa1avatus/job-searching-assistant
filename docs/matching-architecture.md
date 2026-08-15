@@ -229,6 +229,24 @@ Measures already in place:
   decomposition uses `APP_MATCHING_DECOMPOSE_MAX_TOKENS`/`APP_MATCHING_DECOMPOSE_CONTEXT_SIZE`.
   The two context sizes must match — Ollama reloads the model on every `num_ctx` change,
   and reloading a multi-GB model between stages dominated local latency.
+- **Batched entailment** (`APP_MATCHING_ENTAILMENT_BATCH_SIZE`, default 5): concurrent
+  (claim, evidence) pairs are collected by a background flusher inside
+  `RouterEvidenceEvaluator` and evaluated in one LLM call per batch, cutting the actual
+  request count ~5× (a 164-pair run issues ~35 requests instead of ~164). This
+  amortizes per-request overhead (HTTP round-trips, gateway processing, Ollama
+  scheduling) and reduces queue/gateway load; on cloud APIs with per-request metering
+  it also cuts cost. Batches are greedily drained (no artificial latency for sparse
+  traffic) and packed so input + output fit the model context window; single-item
+  batches reuse the exact single-pair path. Results are aligned to requests by
+  `claim_id` echo with an order-based fallback; a failed or incomplete batch degrades
+  per-item to `evaluation_error`, never `unknown`. Per-pair cache keys are unchanged,
+  so cached results from previous single-mode runs remain valid. `1` disables batching
+  entirely.
+  Measured on RTX 3060 + qwen3.5:4b (cold force run): 376s / 164 pairs vs 399s / 142
+  pairs without batching — per-pair throughput ~18% higher while processing more
+  requirements. The pipeline is GPU-compute-bound, so batching reduces request count
+  far more than wall time; the wall-time levers are candidate caps, early exit, and
+  per-task model routing (small model for entailment).
 - **Extraction grounding tolerance**: a `source_fragment` is accepted when every content
   word (function words excluded) appears in the source text, so weaker local models that
   slightly paraphrase fragments still pass while invented content is still rejected.
