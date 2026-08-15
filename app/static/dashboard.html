@@ -3427,7 +3427,6 @@
       const metadata = [
         vacancySourceLabels[currentLanguage][item.source] || item.source,
         item.location || (currentLanguage === 'en' ? 'Location unspecified' : 'Локация не указана'),
-        vacancyStatusLabels[currentLanguage][item.status] || item.status,
         item.published_at
           ? currentLanguage === 'en'
             ? `Published ${new Date(item.published_at).toLocaleDateString('en-US')}`
@@ -3435,7 +3434,20 @@
           : currentLanguage === 'en' ? 'Publication date unspecified' : 'Дата публикации не указана'
       ];
       title.append(element('div', metadata.join(' · '), 'meta'));
-      top.append(title, createMatchMeter(item.match_score));
+      const cardCorner = element('div', undefined, 'card-corner');
+      const statusKey = item.status || 'saved';
+      const statusBadge = element(
+        'button',
+        vacancyStatusLabels[currentLanguage][statusKey] || statusKey,
+        'status-badge'
+      );
+      statusBadge.type = 'button';
+      statusBadge.dataset.status = statusKey;
+      statusBadge.title = currentLanguage === 'en' ? 'Change status' : 'Изменить статус';
+      statusBadge.setAttribute('aria-haspopup', 'menu');
+      statusBadge.setAttribute('aria-expanded', 'false');
+      cardCorner.append(statusBadge, createMatchMeter(item.match_score));
+      top.append(title, cardCorner);
       card.append(top);
       card.append(createVacancyAttributeTags(item));
       const keySkills = createKeySkillTags(item.key_skills);
@@ -3522,17 +3534,43 @@
         blacklistBtn.addEventListener('click', () => { moreMenu.hidden = true; blacklistCompany(item.company, true).catch(showError); });
         moreMenu.append(rejectBtn, blacklistBtn);
       }
+      const statusPopup = element('div', undefined, 'status-popup');
+      statusPopup.hidden = true;
+      statusPopup.setAttribute('role', 'menu');
+      editableApplicationStatuses.forEach(status => {
+        const statusButton = element(
+          'button',
+          vacancyStatusLabels[currentLanguage][status] || status
+        );
+        statusButton.type = 'button';
+        statusButton.disabled = item.status === status;
+        statusButton.addEventListener('click', async () => {
+          statusButton.disabled = true;
+          try {
+            item.status = await setApplicationStatus(item.application_id, status);
+            card.replaceWith(renderSavedVacancy(item));
+            await loadSavedVacancies(vacancyPage);
+            restoreSearchResults();
+          } catch (error) {
+            showError(error);
+            statusButton.disabled = false;
+          }
+        });
+        statusPopup.append(statusButton);
+      });
+      statusBadge.addEventListener('click', () => {
+        statusPopup.hidden = !statusPopup.hidden;
+        statusBadge.setAttribute('aria-expanded', String(!statusPopup.hidden));
+      });
+      cardCorner.append(statusPopup);
       moreToggle.addEventListener('click', () => {
         moreMenu.hidden = !moreMenu.hidden;
+        statusPopup.hidden = true;
         moreToggle.setAttribute('aria-expanded', String(!moreMenu.hidden));
       });
       moreActions.append(moreToggle, moreMenu);
       actions.append(detailsButton, applicationLink, link, moreActions);
-      const statusEditor = createStatusEditor(item, 'status', async () => {
-        await loadSavedVacancies(vacancyPage);
-        restoreSearchResults();
-      });
-      card.append(top, actions, statusEditor, details);
+      card.append(top, actions, details);
       return card;
     }
 
