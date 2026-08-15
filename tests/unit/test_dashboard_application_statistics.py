@@ -53,6 +53,23 @@ def test_search_result_overflow_menu_expands_matching_explanation() -> None:
     assert "cardCorner.append(statusBadge, createMatchMeter(item.match_score))" in search_renderer
 
 
+def test_saved_vacancy_card_keeps_topline_first() -> None:
+    dashboard = (Path(__file__).parents[2] / "app" / "static" / "dashboard.html").read_text(
+        encoding="utf-8"
+    )
+    saved_renderer = dashboard.split("function renderSavedVacancy(item)", 1)[1].split(
+        "async function loadMatchDetails", 1
+    )[0]
+
+    # The status badge and match meter live in the topline; it must stay the first
+    # child of the card (matching the search card layout) rather than being moved to
+    # the middle by a duplicate `card.append(top, ...)` call.
+    assert "card.append(top);" in saved_renderer
+    assert "card.append(actions, details);" in saved_renderer
+    assert "card.append(top, actions, details)" not in saved_renderer
+    assert "cardCorner.append(statusBadge, createMatchMeter(item.match_score))" in saved_renderer
+
+
 def test_resume_keywords_editor_matches_summary_size_and_limit() -> None:
     dashboard = (Path(__file__).parents[2] / "app" / "static" / "dashboard.html").read_text(
         encoding="utf-8"
