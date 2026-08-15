@@ -47,8 +47,10 @@ def test_search_result_overflow_menu_expands_matching_explanation() -> None:
     assert (
         "loadMatchDetails(item.application_id, matchDetails, matchDetailsButton)" in search_renderer
     )
-    assert "moreMenu.append(matchDetailsButton, blacklist, changeStatus)" in search_renderer
+    assert "moreMenu.append(matchDetailsButton, blacklist)" in search_renderer
     assert "card.append(actions, taskState, matchDetails)" in search_renderer
+    assert "statusBadge.dataset.status" in search_renderer
+    assert "cardCorner.append(statusBadge, createMatchMeter(item.match_score))" in search_renderer
 
 
 def test_resume_keywords_editor_matches_summary_size_and_limit() -> None:
