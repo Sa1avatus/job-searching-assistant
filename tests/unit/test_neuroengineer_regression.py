@@ -127,59 +127,73 @@ def test_neuroengineer_regression():
             ev_defs = {
                 "ev-python": (
                     "Python/FastAPI backend, PostgreSQL, Redis, Docker.",
-                    "Python", "production",
+                    "Python",
+                    "production",
                 ),
                 "ev-ml": (
                     "NLP pipelines with PyTorch, Hugging Face transformers.",
-                    "ML/NLP", "hands_on",
+                    "ML/NLP",
+                    "hands_on",
                 ),
                 "ev-rag": (
                     "RAG service with embeddings, OpenSearch, reranking.",
-                    "RAG", "production",
+                    "RAG",
+                    "production",
                 ),
                 "ev-selfhosted": (
                     "Local LLM inference with Ollama, GGUF quantized models.",
-                    "self_hosted_inference", "hands_on",
+                    "self_hosted_inference",
+                    "hands_on",
                 ),
                 "ev-docker": (
                     "Docker, docker-compose multi-service deployments.",
-                    "Docker", "production",
+                    "Docker",
+                    "production",
                 ),
                 "ev-postgres": (
                     "PostgreSQL schemas with SQLAlchemy/Alembic.",
-                    "PostgreSQL", "production",
+                    "PostgreSQL",
+                    "production",
                 ),
                 "ev-redis": (
                     "Redis for caching, session management, coordination.",
-                    "Redis", "production",
+                    "Redis",
+                    "production",
                 ),
                 "ev-embeddings": (
                     "Multilingual-e5-small embeddings for search.",
-                    "embeddings", "hands_on",
+                    "embeddings",
+                    "hands_on",
                 ),
                 "ev-reranking": (
                     "Cross-encoder reranking pipeline.",
-                    "reranking", "production",
+                    "reranking",
+                    "production",
                 ),
                 "ev-llm": (
                     "LLM providers (Anthropic, Gemini, OpenAI-compatible).",
-                    "LLM", "hands_on",
+                    "LLM",
+                    "hands_on",
                 ),
                 "ev-vlm": (
                     "Experimented with Qwen-VL for document OCR.",
-                    "VLM", "experiment",
+                    "VLM",
+                    "experiment",
                 ),
                 "ev-pytorch": (
                     "PyTorch model training, custom loss functions.",
-                    "PyTorch", "hands_on",
+                    "PyTorch",
+                    "hands_on",
                 ),
                 "ev-hf": (
                     "Hugging Face transformers and datasets.",
-                    "Hugging Face", "hands_on",
+                    "Hugging Face",
+                    "hands_on",
                 ),
                 "ev-async": (
                     "Async Python services with asyncio.",
-                    "async", "production",
+                    "async",
+                    "production",
                 ),
             }
             ev_rows = {}
@@ -247,7 +261,10 @@ def test_neuroengineer_regression():
             decompositions: dict[str, RequirementDecomposition] = {}
 
             def add_claim(
-                req_key, claim_suffix, claim_type, subject,
+                req_key,
+                claim_suffix,
+                claim_type,
+                subject,
                 criticality=Criticality.REQUIRED,
             ):
                 db_id = req_rows[req_key].id
@@ -276,14 +293,22 @@ def test_neuroengineer_regression():
             eval_results: dict[str, EntailmentResult] = {}
 
             def add_eval(
-                req_key, ev_key, claim_suffix, relation, coverage,
-                evidence_type, exp_level, strength,
+                req_key,
+                ev_key,
+                claim_suffix,
+                relation,
+                coverage,
+                evidence_type,
+                exp_level,
+                strength,
             ):
                 claim_id = f"{req_rows[req_key].id}-{claim_suffix}"
                 ev = ev_rows[ev_key]
                 cat = (
-                    EvidenceStrengthCategory.STRONG if strength >= 0.75
-                    else EvidenceStrengthCategory.PARTIAL if strength >= 0.55
+                    EvidenceStrengthCategory.STRONG
+                    if strength >= 0.75
+                    else EvidenceStrengthCategory.PARTIAL
+                    if strength >= 0.55
                     else EvidenceStrengthCategory.WEAK
                 )
                 eval_results[f"{claim_id}:{ev.id}"] = EntailmentResult(
@@ -305,132 +330,193 @@ def test_neuroengineer_regression():
             # Python → supported
             add_claim("req-python", "c1", ClaimType.SKILL, "Python")
             add_eval(
-                "req-python", "ev-python", "c1",
-                EntailmentRelation.ENTAILED, 0.95,
+                "req-python",
+                "ev-python",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.95,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.COMMERCIAL_PRODUCTION, 0.95,
+                ClaimExperienceLevel.COMMERCIAL_PRODUCTION,
+                0.95,
             )
 
             # FastAPI → supported
             add_claim("req-fastapi", "c1", ClaimType.TECHNOLOGY, "FastAPI")
             add_eval(
-                "req-fastapi", "ev-python", "c1",
-                EntailmentRelation.ENTAILED, 0.95,
+                "req-fastapi",
+                "ev-python",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.95,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.COMMERCIAL_PRODUCTION, 0.95,
+                ClaimExperienceLevel.COMMERCIAL_PRODUCTION,
+                0.95,
             )
 
             # Docker → supported
             add_claim("req-docker", "c1", ClaimType.TECHNOLOGY, "Docker")
             add_eval(
-                "req-docker", "ev-docker", "c1",
-                EntailmentRelation.ENTAILED, 0.95,
+                "req-docker",
+                "ev-docker",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.95,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.COMMERCIAL_PRODUCTION, 0.95,
+                ClaimExperienceLevel.COMMERCIAL_PRODUCTION,
+                0.95,
             )
 
             # PostgreSQL → supported
             add_claim("req-postgres", "c1", ClaimType.TECHNOLOGY, "PostgreSQL")
             add_eval(
-                "req-postgres", "ev-postgres", "c1",
-                EntailmentRelation.ENTAILED, 0.95,
+                "req-postgres",
+                "ev-postgres",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.95,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.COMMERCIAL_PRODUCTION, 0.95,
+                ClaimExperienceLevel.COMMERCIAL_PRODUCTION,
+                0.95,
             )
 
             # Redis → supported
             add_claim("req-redis", "c1", ClaimType.TECHNOLOGY, "Redis")
             add_eval(
-                "req-redis", "ev-redis", "c1",
-                EntailmentRelation.ENTAILED, 0.85,
+                "req-redis",
+                "ev-redis",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.85,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.COMMERCIAL_PRODUCTION, 0.85,
+                ClaimExperienceLevel.COMMERCIAL_PRODUCTION,
+                0.85,
             )
 
             # ML/NLP → supported
             add_claim("req-ml", "c1", ClaimType.PRACTICAL_EXPERIENCE, "ML/NLP")
             add_eval(
-                "req-ml", "ev-ml", "c1",
-                EntailmentRelation.ENTAILED, 0.90,
+                "req-ml",
+                "ev-ml",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.90,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.WORKING_PERSONAL_PROJECT, 0.90,
+                ClaimExperienceLevel.WORKING_PERSONAL_PROJECT,
+                0.90,
             )
 
             # RAG → supported
             add_claim("req-rag", "c1", ClaimType.PRACTICAL_EXPERIENCE, "RAG")
             add_eval(
-                "req-rag", "ev-rag", "c1",
-                EntailmentRelation.ENTAILED, 0.90,
+                "req-rag",
+                "ev-rag",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.90,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.COMMERCIAL_PRODUCTION, 0.90,
+                ClaimExperienceLevel.COMMERCIAL_PRODUCTION,
+                0.90,
             )
 
             # Embeddings → supported
             add_claim("req-embeddings", "c1", ClaimType.TECHNOLOGY, "embeddings")
             add_eval(
-                "req-embeddings", "ev-embeddings", "c1",
-                EntailmentRelation.ENTAILED, 0.90,
+                "req-embeddings",
+                "ev-embeddings",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.90,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.WORKING_PERSONAL_PROJECT, 0.90,
+                ClaimExperienceLevel.WORKING_PERSONAL_PROJECT,
+                0.90,
             )
 
             # Reranking → supported
             add_claim("req-reranking", "c1", ClaimType.TECHNOLOGY, "reranking")
             add_eval(
-                "req-reranking", "ev-reranking", "c1",
-                EntailmentRelation.ENTAILED, 0.95,
+                "req-reranking",
+                "ev-reranking",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.95,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.COMMERCIAL_PRODUCTION, 0.95,
+                ClaimExperienceLevel.COMMERCIAL_PRODUCTION,
+                0.95,
             )
 
             # LLM → supported
             add_claim(
-                "req-llm", "c1", ClaimType.TECHNOLOGY, "LLM integration",
+                "req-llm",
+                "c1",
+                ClaimType.TECHNOLOGY,
+                "LLM integration",
             )
             add_eval(
-                "req-llm", "ev-llm", "c1",
-                EntailmentRelation.ENTAILED, 0.90,
+                "req-llm",
+                "ev-llm",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.90,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.WORKING_PERSONAL_PROJECT, 0.90,
+                ClaimExperienceLevel.WORKING_PERSONAL_PROJECT,
+                0.90,
             )
 
             # VLM → partial (experiment only)
             add_claim("req-vlm", "c1", ClaimType.PRACTICAL_EXPERIENCE, "VLM")
             add_eval(
-                "req-vlm", "ev-vlm", "c1",
-                EntailmentRelation.PARTIAL, 0.30,
+                "req-vlm",
+                "ev-vlm",
+                "c1",
+                EntailmentRelation.PARTIAL,
+                0.30,
                 EvidenceType.INDIRECT,
-                ClaimExperienceLevel.EXPERIMENT, 0.30,
+                ClaimExperienceLevel.EXPERIMENT,
+                0.30,
             )
 
             # Self-hosted → supported
             add_claim(
-                "req-selfhosted", "c1",
-                ClaimType.PRACTICAL_EXPERIENCE, "self-hosted inference",
+                "req-selfhosted",
+                "c1",
+                ClaimType.PRACTICAL_EXPERIENCE,
+                "self-hosted inference",
             )
             add_eval(
-                "req-selfhosted", "ev-selfhosted", "c1",
-                EntailmentRelation.ENTAILED, 0.85,
+                "req-selfhosted",
+                "ev-selfhosted",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.85,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.WORKING_PERSONAL_PROJECT, 0.85,
+                ClaimExperienceLevel.WORKING_PERSONAL_PROJECT,
+                0.85,
             )
 
             # PyTorch → supported
             add_claim("req-pytorch", "c1", ClaimType.TECHNOLOGY, "PyTorch")
             add_eval(
-                "req-pytorch", "ev-pytorch", "c1",
-                EntailmentRelation.ENTAILED, 0.90,
+                "req-pytorch",
+                "ev-pytorch",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.90,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.WORKING_PERSONAL_PROJECT, 0.90,
+                ClaimExperienceLevel.WORKING_PERSONAL_PROJECT,
+                0.90,
             )
 
             # Hugging Face → supported
             add_claim("req-hf", "c1", ClaimType.TECHNOLOGY, "Hugging Face")
             add_eval(
-                "req-hf", "ev-hf", "c1",
-                EntailmentRelation.ENTAILED, 0.85,
+                "req-hf",
+                "ev-hf",
+                "c1",
+                EntailmentRelation.ENTAILED,
+                0.85,
                 EvidenceType.DIRECT,
-                ClaimExperienceLevel.WORKING_PERSONAL_PROJECT, 0.85,
+                ClaimExperienceLevel.WORKING_PERSONAL_PROJECT,
+                0.85,
             )
 
             # ── Build pipeline ──
@@ -447,7 +533,11 @@ def test_neuroengineer_regression():
                 model_version = "1"
 
                 async def evaluate(
-                    self, *, claim_id, evidence_id, **kw,
+                    self,
+                    *,
+                    claim_id,
+                    evidence_id,
+                    **kw,
                 ):
                     key = f"{claim_id}:{evidence_id}"
                     if key in eval_results:
@@ -462,9 +552,7 @@ def test_neuroengineer_regression():
                         reranker_score=0.3,
                         entailment_score=0.2,
                         evidence_strength=0.2,
-                        evidence_strength_category=(
-                            EvidenceStrengthCategory.WEAK
-                        ),
+                        evidence_strength_category=(EvidenceStrengthCategory.WEAK),
                         coverage=0.0,
                         evidence_type=EvidenceType.NONE,
                         experience_level=ClaimExperienceLevel.NONE,
@@ -495,45 +583,42 @@ def test_neuroengineer_regression():
 
             req_tuple = tuple(req_rows.values())
             result = await pipe.match_requirements(
-                app.id, app.user_id, app.selected_cv_file_id, req_tuple,
+                app.id,
+                app.user_id,
+                app.selected_cv_file_id,
+                req_tuple,
             )
 
             scorer = DeterministicMatchScorer()
             score = scorer.score(tuple(result.assessments))
 
             # ── Assertions ──
-            assert score.final_score >= 70, (
-                f"Expected final_score >= 70, got {score.final_score}"
-            )
+            assert score.final_score >= 70, f"Expected final_score >= 70, got {score.final_score}"
             assert score.scoring_version == "matching-v3.0"
             assert score.calibration_version == "identity"
             assert score.raw_score_before_blockers >= score.final_score
-            assert score.required_score >= 60, (
-                f"required_score={score.required_score}"
-            )
-            assert score.preferred_score >= 30, (
-                f"preferred_score={score.preferred_score}"
-            )
+            assert score.required_score >= 60, f"required_score={score.required_score}"
+            assert score.preferred_score >= 30, f"preferred_score={score.preferred_score}"
             assert score.eligibility_status in (
                 EligibilityStatus.ELIGIBLE,
                 EligibilityStatus.REVIEW,
             )
-            assert score.confidence >= 0.5, (
-                f"confidence={score.confidence}"
-            )
+            assert score.confidence >= 0.5, f"confidence={score.confidence}"
 
             # Per-requirement checks
-            assessment_by_id = {
-                a.requirement_id: a for a in result.assessments
-            }
+            assessment_by_id = {a.requirement_id: a for a in result.assessments}
             for req_key in [
-                "req-python", "req-fastapi", "req-docker",
-                "req-postgres", "req-rag",
+                "req-python",
+                "req-fastapi",
+                "req-docker",
+                "req-postgres",
+                "req-rag",
             ]:
                 a = assessment_by_id.get(req_rows[req_key].id)
                 assert a is not None, f"Missing assessment for {req_key}"
                 assert a.match_level in (
-                    MatchLevel.EXACT, MatchLevel.STRONG,
+                    MatchLevel.EXACT,
+                    MatchLevel.STRONG,
                 ), f"{req_key}: got {a.match_level}"
 
             vlm = assessment_by_id.get(req_rows["req-vlm"].id)

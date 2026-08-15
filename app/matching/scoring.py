@@ -406,21 +406,21 @@ class DeterministicMatchScorer:
                 level in {MatchLevel.MISSING, MatchLevel.RELATED, MatchLevel.THEORETICAL_ONLY}
                 and a.requirement_type is RequirementType.HARD_SKILL
             ):
-                    if level is MatchLevel.MISSING:
-                        recommendations.append(
-                            f"Gain hands-on experience with {a.requirement_id} "
-                            "and add concrete project descriptions"
-                        )
-                    elif level is MatchLevel.RELATED:
-                        recommendations.append(
-                            f"Clarify or expand existing experience to explicitly demonstrate "
-                            f"{a.requirement_id} with measurable outcomes"
-                        )
-                    elif level is MatchLevel.THEORETICAL_ONLY:
-                        recommendations.append(
-                            f"Move from theoretical knowledge to practical application "
-                            f"of {a.requirement_id} in a project or production setting"
-                        )
+                if level is MatchLevel.MISSING:
+                    recommendations.append(
+                        f"Gain hands-on experience with {a.requirement_id} "
+                        "and add concrete project descriptions"
+                    )
+                elif level is MatchLevel.RELATED:
+                    recommendations.append(
+                        f"Clarify or expand existing experience to explicitly demonstrate "
+                        f"{a.requirement_id} with measurable outcomes"
+                    )
+                elif level is MatchLevel.THEORETICAL_ONLY:
+                    recommendations.append(
+                        f"Move from theoretical knowledge to practical application "
+                        f"of {a.requirement_id} in a project or production setting"
+                    )
         return recommendations[:10]  # Cap at 10
 
     @staticmethod

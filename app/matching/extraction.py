@@ -75,9 +75,7 @@ class StrictExtractionModel(BaseModel):
             key: value
             for key, value in data.items()
             if not (
-                value is None
-                and key in fields
-                and fields[key].default is not PydanticUndefined
+                value is None and key in fields and fields[key].default is not PydanticUndefined
             )
         }
 
