@@ -7,7 +7,7 @@ vacancies, analyses resumes, calculates explainable matches, drafts application 
 prepares supported browser forms for human review. Real HeadHunter and LinkedIn submission is
 disabled by default and requires explicit configuration and user confirmation.
 
-Current version: **1.5.2**.
+Current version: **1.5.3**.
 
 ## Current release
 
@@ -17,6 +17,9 @@ Current version: **1.5.2**.
   model-aware keys, entailment stops early after a strong confirmation, entailment pairs
   are evaluated in **batched LLM calls** (5 pairs per call by default), and simple skills
   skip the LLM entirely — cutting cold-run time and making repeated runs near-instant.
+  Entailment classification can additionally be routed to a smaller local model via
+  `APP_MATCHING_ENTAILMENT_MODEL` (e.g. `qwen3:1.5b`) while extraction and decomposition
+  keep using the model selected in the Model tab.
 
 - Matching v2.3 decomposes vacancy requirements into claims and distinguishes confirmed,
   partial, insufficient, failed, and missing evidence.

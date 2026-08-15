@@ -168,7 +168,7 @@ class OpenAICompatibleProvider(ModelProvider):
     ) -> dict[str, object]:
         """Use Ollama native /api/chat with think=false to avoid reasoning token drain."""
         payload: dict[str, object] = {
-            "model": self._model,
+            "model": request.model_override or self._model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request.prompt},
@@ -240,7 +240,7 @@ class OpenAICompatibleProvider(ModelProvider):
                 },
             }
         request_payload: dict[str, object] = {
-            "model": self._model,
+            "model": request.model_override or self._model,
             "messages": [
                 {
                     "role": "system",

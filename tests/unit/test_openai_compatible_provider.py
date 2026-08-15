@@ -69,6 +69,62 @@ async def test_openai_compatible_provider_sends_chat_completion_request() -> Non
 
 
 @pytest.mark.asyncio
+async def test_ollama_provider_honors_model_override() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        # The per-task override replaces the provider's default model name.
+        assert payload["model"] == "qwen3:1.5b"
+        assert payload["think"] is False
+        return httpx.Response(
+            200,
+            json={"message": {"content": '{"result": "ok"}'}, "done_reason": "stop"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="ollama",
+            model="qwen3.5:4b",
+            base_url="http://host.docker.internal:11434/v1",
+        )
+        request = ModelRequest(
+            task_name="evaluate_evidence_entailment",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="Evaluate",
+            max_cost_usd=0.03,
+            model_override="qwen3:1.5b",
+        )
+        assert await provider.complete(request) == {"result": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_honors_model_override() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["model"] == "qwen3:1.5b"
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"result": "ok"}'}}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="key",
+            model="qwen3.5:4b",
+            base_url="https://models.example.test/v1/",
+        )
+        request = ModelRequest(
+            task_name="evaluate_evidence_entailment",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="Evaluate",
+            max_cost_usd=0.03,
+            model_override="qwen3:1.5b",
+        )
+        assert await provider.complete(request) == {"result": "ok"}
+
+
+@pytest.mark.asyncio
 async def test_ollama_compatible_provider_disables_reasoning() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)

@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     # evaluates several (claim, evidence) pairs in one request, amortizing
     # per-request overhead; batches are packed to fit the context window.
     matching_entailment_batch_size: int = Field(default=5, ge=1, le=20)
+    # Optional model name for entailment evaluation only (e.g. a small local
+    # model for classification). Empty = use the user's configured model.
+    matching_entailment_model: str = ""
     matching_decompose_max_tokens: int = Field(default=2048, ge=64, le=8192)
     # MUST match matching_entailment_context_size: Ollama reloads the model whenever
     # num_ctx changes, and reloading a 3GB model between every decompose/entailment

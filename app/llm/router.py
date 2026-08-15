@@ -33,6 +33,9 @@ class ModelRequest:
     # context/prediction budgets dominate local-CPU inference latency.
     max_output_tokens: int | None = None
     context_size: int | None = None
+    # Optional per-request model name that overrides the provider's default model
+    # (task-specific routing, e.g. a small local model for entailment).
+    model_override: str | None = None
 
 
 class ModelProvider(Protocol):

@@ -142,6 +142,76 @@ def test_batch_size_one_keeps_single_request_path():
     asyncio.run(run())
 
 
+def test_evaluator_sends_model_override_in_batch_and_single_paths():
+    async def run() -> None:
+        router = _ScriptedRouter([{"evaluations": [_raw(f"cid{i}") for i in range(2)]}])
+        evaluator = RouterEvidenceEvaluator(
+            router,
+            _FakePromptRegistry(),
+            entailment_batch_size=2,
+            entailment_model="qwen3:1.5b",
+        )
+        await asyncio.gather(*(evaluator.evaluate(**_evaluate_args(i)) for i in range(2)))
+        assert len(router.calls) == 1
+        assert router.calls[0].task_name == "evaluate_evidence_entailment_batch"
+        assert router.calls[0].model_override == "qwen3:1.5b"
+        await evaluator.close()
+
+        # Single-pair path (batching disabled) also carries the override.
+        single_router = _ScriptedRouter()
+        single = RouterEvidenceEvaluator(
+            single_router,
+            _FakePromptRegistry(),
+            entailment_batch_size=1,
+            entailment_model="qwen3:1.5b",
+        )
+        await single.evaluate(**_evaluate_args(0))
+        assert len(single_router.calls) == 1
+        assert single_router.calls[0].task_name == "evaluate_evidence_entailment"
+        assert single_router.calls[0].model_override == "qwen3:1.5b"
+        await single.close()
+
+    asyncio.run(run())
+
+
+def test_entailment_model_override_separates_cache_identity():
+    """Cache entries from the default model must not be reused when an
+    entailment-specific model is configured, and vice versa."""
+
+    async def run() -> None:
+        async def run_once(cache: MatchingCache, entailment_model: str | None) -> int:
+            # Single-pair path (batch_size=1) expects a flat raw entailment dict.
+            router = _ScriptedRouter([_raw("cid0")])
+            evaluator = RouterEvidenceEvaluator(
+                router,
+                _FakePromptRegistry(),
+                cache=cache,
+                entailment_batch_size=1,
+                entailment_model=entailment_model,
+            )
+            await evaluator.evaluate(**_evaluate_args(0))
+            await evaluator.close()
+            return len(router.calls)
+
+        cache = MatchingCache()
+        # Default model computes and caches its result...
+        assert await run_once(cache, None) == 1
+        # ...and reuses it on a second identical run.
+        assert await run_once(cache, None) == 0
+        # A different entailment model must not reuse the default model's entry.
+        assert await run_once(cache, "qwen3:1.5b") == 1
+
+        # Symmetric direction on a fresh cache: the override model writes its
+        # entry, then the default model must miss it and call the LLM.
+        fresh = MatchingCache()
+        assert await run_once(fresh, "qwen3:1.5b") == 1
+        assert await run_once(fresh, None) == 1
+        # The default model's own entry is now cached and reused.
+        assert await run_once(fresh, None) == 0
+
+    asyncio.run(run())
+
+
 def test_batch_cache_hits_never_reach_llm():
     async def run() -> None:
         router = _ScriptedRouter([{"evaluations": [_raw(f"cid{i}") for i in range(3)]}])

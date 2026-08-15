@@ -270,6 +270,7 @@ class RouterEvidenceEvaluator:
         entailment_max_tokens: int = 512,
         entailment_context_size: int = 4096,
         entailment_batch_size: int = 1,
+        entailment_model: str | None = None,
     ) -> None:
         self._router = router
         self._prompt_registry = prompt_registry
@@ -280,6 +281,14 @@ class RouterEvidenceEvaluator:
         self._entailment_context_size = entailment_context_size
         # 1 disables batching entirely and keeps the exact single-pair behavior.
         self._entailment_batch_size = max(1, entailment_batch_size)
+        # Optional per-task model override (e.g. a small local model for
+        # classification). Cache keys must reflect it, otherwise entailment
+        # results from different models would be silently reused.
+        self._entailment_model = (entailment_model or "").strip() or None
+        if self._entailment_model is not None and self._entailment_model != self._model_identity:
+            self._entailment_identity = f"{self._model_identity}|entail:{self._entailment_model}"
+        else:
+            self._entailment_identity = self._model_identity
         self._queue: asyncio.Queue[_PendingEntailment | None] | None = None
         self._flusher_task: asyncio.Task[None] | None = None
         self._closed = False
@@ -335,7 +344,7 @@ class RouterEvidenceEvaluator:
             claim_text=request.claim_text,
             evidence_text=request.evidence_text,
             claim_type=request.claim_type,
-            model_name=self._model_identity,
+            model_name=self._entailment_identity,
             prompt_version=_PROMPT_VERSION_ENTAIL,
             source_requirement=request.source_requirement or "",
         )
@@ -402,6 +411,7 @@ class RouterEvidenceEvaluator:
                     timeout_seconds=self._timeout_seconds,
                     max_output_tokens=self._entailment_max_tokens,
                     context_size=self._entailment_context_size,
+                    model_override=self._entailment_model,
                 ),
                 _RawEntailmentResult,
             )
@@ -646,6 +656,7 @@ class RouterEvidenceEvaluator:
                         input_estimate,
                     ),
                     context_size=self._entailment_context_size,
+                    model_override=self._entailment_model,
                 ),
                 _RawBatchEntailmentResult,
             )

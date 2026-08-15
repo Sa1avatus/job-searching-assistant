@@ -41,8 +41,14 @@ semantic versioning for new releases; older historical version numbers are prese
   `claim_id` echo with an order fallback; a failed batch degrades per-item to
   `evaluation_error`. Per-pair cache keys are unchanged, so cached results from prior
   runs remain valid; `1` disables batching.
+- Entailment evaluation can be routed to a separate model
+  (`APP_MATCHING_ENTAILMENT_MODEL`, empty by default): set it to a small local model
+  (e.g. `qwen3:1.5b`) and only the entailment classification runs on it, while
+  extraction and decomposition stay on the user's configured model. Cache keys
+  incorporate the routed model, so switching it never reuses results produced by
+  another model.
 - Version markers are now consistent: `VERSION`, `README`, `README.ru`, and
-  `pyproject.toml` all report 1.5.2.
+  `pyproject.toml` all report 1.5.3.
 
 ## [1.5.1] — 2026-08-14
 
