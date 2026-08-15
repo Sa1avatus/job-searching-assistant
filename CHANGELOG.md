@@ -48,7 +48,13 @@ semantic versioning for new releases; older historical version numbers are prese
   incorporate the routed model, so switching it never reuses results produced by
   another model.
 - Version markers are now consistent: `VERSION`, `README`, `README.ru`, and
-  `pyproject.toml` all report 1.5.3.
+  `pyproject.toml` all report 1.5.4.
+- The OpenAI-compatible provider now adapts to servers that only support `text` and
+  `json_object` response formats (e.g. the local-code-worker gateway): when a request
+  with a `json_schema` `response_format` is rejected with HTTP 400, the provider
+  retries once with `json_object` and remembers the capability for the rest of the
+  session. The JSON schema stays embedded in the system prompt, so structured
+  extraction, decomposition, and entailment keep working against such endpoints.
 
 ## [1.5.1] — 2026-08-14
 

@@ -8,6 +8,7 @@ import pytest
 from app.llm.providers.openai_compatible import (
     OpenAICompatibleProvider,
     OpenAICompatibleResponseError,
+    _is_response_format_error,
     simplify_json_schema_for_ollama,
 )
 from app.llm.router import ModelRequest, ModelTaskClass
@@ -275,3 +276,80 @@ async def test_openai_compatible_provider_redacts_key_from_http_error() -> None:
 
     assert "unique-secret-sentinel" not in str(captured.value)
     assert "HTTP 401" in str(captured.value)
+
+
+def test_is_response_format_error_detection() -> None:
+    assert _is_response_format_error(
+        '{"error": {"message": "only text and json_object response formats are supported"}}'
+    )
+    assert _is_response_format_error('{"error": {"message": "response_format is unsupported"}}')
+    assert not _is_response_format_error('{"error": {"message": "invalid api key"}}')
+    assert not _is_response_format_error("")
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_falls_back_to_json_object_when_schema_rejected() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        calls.append(payload)
+        if payload["response_format"]["type"] == "json_schema":
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "only text and json_object response formats are supported",
+                        "type": "invalid_request_error",
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"result": "ok"}'}}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="key",
+            model="local-code-worker/auto",
+            base_url="http://host.docker.internal:8765/v1",
+        )
+        request = ModelRequest(
+            task_name="evaluate_evidence_entailment",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="Evaluate",
+            max_cost_usd=0.03,
+            response_schema={"type": "object"},
+        )
+        # First call: json_schema rejected → automatic retry with json_object.
+        assert await provider.complete(request) == {"result": "ok"}
+        assert [c["response_format"]["type"] for c in calls] == ["json_schema", "json_object"]
+        # Subsequent calls go straight to json_object without a 400 round-trip.
+        assert await provider.complete(request) == {"result": "ok"}
+        assert calls[-1]["response_format"]["type"] == "json_object"
+        assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_does_not_fallback_on_unrelated_400() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"message": "invalid api key"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="key",
+            model="m",
+            base_url="https://models.example.test/v1/",
+        )
+        request = ModelRequest(
+            task_name="t",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="p",
+            max_cost_usd=0.03,
+            response_schema={"type": "object"},
+        )
+        with pytest.raises(OpenAICompatibleResponseError):
+            await provider.complete(request)

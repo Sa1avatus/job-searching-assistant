@@ -4,8 +4,11 @@ import json
 from typing import Any
 
 import httpx
+import structlog
 
 from app.llm.router import ModelProvider, ModelRequest, ModelTaskClass
+
+logger = structlog.get_logger(__name__)
 
 
 class OpenAICompatibleResponseError(RuntimeError):
@@ -123,6 +126,18 @@ def parse_model_json(content: str) -> dict[str, object]:
     return parsed
 
 
+def _is_response_format_error(body: str) -> bool:
+    """Detect a 400 that rejects the ``response_format`` parameter.
+
+    Some OpenAI-compatible servers (e.g. the local-code-worker gateway) only
+    support ``text`` and ``json_object`` response formats. The provider adapts
+    to them by falling back to ``json_object`` (the schema stays embedded in the
+    system prompt). The check is conservative so unrelated 400s still raise.
+    """
+    lowered = body.casefold()
+    return "response_format" in lowered or "response format" in lowered
+
+
 class OpenAICompatibleProvider(ModelProvider):
     name = "openai_compatible"
 
@@ -151,6 +166,10 @@ class OpenAICompatibleProvider(ModelProvider):
         self._http_client = http_client
         self._api_key = normalized_api_key
         self._model = normalized_model
+        # Set to False after a 400 that rejects json_schema response_format; the
+        # provider then uses json_object for every subsequent request of this
+        # provider instance (schema stays in the system prompt).
+        self._supports_json_schema = True
 
     def supports(self, task_class: ModelTaskClass) -> bool:
         return task_class in {
@@ -160,6 +179,55 @@ class OpenAICompatibleProvider(ModelProvider):
 
     def estimate_cost_usd(self, request: ModelRequest) -> float:
         return 0.0
+
+    def _response_format_for(self, request: ModelRequest) -> dict[str, object]:
+        """Pick the response_format for the current endpoint capability.
+
+        Servers that reject ``json_schema`` (detected once, then cached on the
+        instance) get ``json_object``; the full schema stays embedded in the
+        system prompt either way, so the model still receives it.
+        """
+        if request.response_schema is None:
+            return {"type": "json_object"}
+        if not self._supports_json_schema:
+            return {"type": "json_object"}
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "structured_response",
+                "strict": True,
+                "schema": request.response_schema,
+            },
+        }
+
+    def _retry_with_json_object_if_unsupported(
+        self,
+        request: ModelRequest,
+        payload: dict[str, object],
+        response: httpx.Response,
+    ) -> bool:
+        """Fall back to json_object once when the server rejects json_schema.
+
+        Mutates ``payload`` in place and remembers the capability for subsequent
+        requests, so only the first call pays the 400 round-trip. Returns True
+        when the caller should re-send the (updated) payload.
+        """
+        if (
+            response.status_code != 400
+            or not self._supports_json_schema
+            or request.response_schema is None
+        ):
+            return False
+        if not _is_response_format_error(response.text):
+            return False
+        self._supports_json_schema = False
+        logger.info(
+            "openai_compatible_json_schema_unsupported_fallback",
+            task_name=request.task_name,
+            status_code=response.status_code,
+        )
+        payload["response_format"] = {"type": "json_object"}
+        return True
 
     async def _complete_ollama_native(
         self,
@@ -229,16 +297,6 @@ class OpenAICompatibleProvider(ModelProvider):
         if self._is_ollama:
             return await self._complete_ollama_native(request, system_prompt)
 
-        response_format: dict[str, object] = {"type": "json_object"}
-        if response_schema is not None:
-            response_format = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "structured_response",
-                    "strict": True,
-                    "schema": response_schema,
-                },
-            }
         request_payload: dict[str, object] = {
             "model": request.model_override or self._model,
             "messages": [
@@ -254,7 +312,7 @@ class OpenAICompatibleProvider(ModelProvider):
             "temperature": 0,
             "stream": False,
             "max_tokens": request.max_output_tokens or 16384,
-            "response_format": response_format,
+            "response_format": self._response_format_for(request),
         }
         response = await self._http_client.post(
             self._completion_url,
@@ -265,6 +323,17 @@ class OpenAICompatibleProvider(ModelProvider):
             },
             json=request_payload,
         )
+
+        if self._retry_with_json_object_if_unsupported(request, request_payload, response):
+            response = await self._http_client.post(
+                self._completion_url,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                json=request_payload,
+            )
 
         response_content_type = response.headers.get(
             "content-type",

@@ -7,7 +7,7 @@ vacancies, analyses resumes, calculates explainable matches, drafts application 
 prepares supported browser forms for human review. Real HeadHunter and LinkedIn submission is
 disabled by default and requires explicit configuration and user confirmation.
 
-Current version: **1.5.3**.
+Current version: **1.5.4**.
 
 ## Current release
 
@@ -20,6 +20,10 @@ Current version: **1.5.3**.
   Entailment classification can additionally be routed to a smaller local model via
   `APP_MATCHING_ENTAILMENT_MODEL` (e.g. `qwen3:1.5b`) while extraction and decomposition
   keep using the model selected in the Model tab.
+- The LLM provider adapts to OpenAI-compatible endpoints that only accept `text` and
+  `json_object` response formats (such as the local-code-worker gateway): structured
+  matching requests automatically fall back to `json_object` when `json_schema` is
+  rejected, keeping extraction/decomposition/entailment working.
 
 - Matching v2.3 decomposes vacancy requirements into claims and distinguishes confirmed,
   partial, insufficient, failed, and missing evidence.
