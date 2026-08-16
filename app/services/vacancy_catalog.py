@@ -185,28 +185,26 @@ class VacancyCatalogService:
         if location.strip():
             statement = statement.where(VacancyRow.location.ilike(f"%{location.strip()}%"))
         if status == "all":
-            statement = statement.where(ApplicationRow.status.not_in(("rejected", "skipped")))
+            statement = statement.where(
+                ApplicationRow.status.not_in(("rejected", "employer_rejected", "skipped"))
+            )
         else:
             statement = statement.where(ApplicationRow.status == status)
         if min_match_score:
             statement = statement.where(ApplicationRow.match_score >= min_match_score)
         if published_from is not None:
             statement = statement.where(
-                VacancyRow.published_at
-                >= datetime.combine(published_from, time.min, tzinfo=UTC)
+                VacancyRow.published_at >= datetime.combine(published_from, time.min, tzinfo=UTC)
             )
         if published_to is not None:
             statement = statement.where(
-                VacancyRow.published_at
-                <= datetime.combine(published_to, time.max, tzinfo=UTC)
+                VacancyRow.published_at <= datetime.combine(published_to, time.max, tzinfo=UTC)
             )
         if work_format != "all":
             statement = statement.where(VacancyRow.work_format == work_format)
         if employment_type != "all":
             statement = statement.where(
-                cast(VacancyRow.employment_types, String).ilike(
-                    f'%"{employment_type}"%'
-                )
+                cast(VacancyRow.employment_types, String).ilike(f'%"{employment_type}"%')
             )
         if source == "headhunter":
             statement = statement.where(VacancyRow.source_url.ilike("%hh.ru/%"))

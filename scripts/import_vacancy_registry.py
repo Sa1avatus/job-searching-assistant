@@ -168,9 +168,7 @@ def _find_vacancy(session: Session, record: RegistryVacancy) -> VacancyRow | Non
         source_id_match = re.search(r"/(?:vacancy|jobs/view)/(\d+)", record.source_url)
         if source_id_match:
             vacancy = session.scalar(
-                select(VacancyRow).where(
-                    VacancyRow.source_url.contains(source_id_match.group(1))
-                )
+                select(VacancyRow).where(VacancyRow.source_url.contains(source_id_match.group(1)))
             )
             if vacancy is not None:
                 return vacancy

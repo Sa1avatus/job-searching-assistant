@@ -17,6 +17,8 @@ class FieldObservation(TypedDict):
     options: list[str]
     current_value: str | None
     name: str
+    element_id: str
+    placeholder: str
     min_length: int | None
     max_length: int | None
     minimum: str | None
@@ -30,11 +32,74 @@ class FieldObservation(TypedDict):
 SEMANTIC_TERMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("email", ("email", "e-mail")),
     ("phone", ("phone", "telephone", "mobile")),
-    ("full_name", ("full name", "name")),
+    ("full_name", ("full name", "name", "first name", "last name")),
+    ("first_name", ("first name", "given name")),
+    ("last_name", ("last name", "surname", "family name")),
     ("resume", ("resume", "cv", "curriculum vitae")),
-    ("salary", ("salary", "compensation", "pay")),
+    ("salary", ("salary", "compensation", "pay", "expected salary")),
     ("experience", ("experience", "years worked", "years of work")),
-    ("work_authorization", ("work authorization", "authorized to work", "visa")),
+    (
+        "work_authorization",
+        (
+            "work authorization",
+            "authorized to work",
+            "visa",
+            "sponsorship",
+            "legally authorized",
+        ),
+    ),
+    ("linkedin", ("linkedin", "linkedin profile", "linkedin url")),
+    ("github", ("github", "github profile", "github url", "portfolio")),
+    ("website", ("website", "personal website", "portfolio url")),
+    (
+        "location",
+        (
+            "location",
+            "city",
+            "address",
+            "country",
+            "state",
+            "willing to relocate",
+            "preferred location",
+        ),
+    ),
+    (
+        "education",
+        (
+            "education",
+            "degree",
+            "university",
+            "college",
+            "school",
+            "field of study",
+            "major",
+            "gpa",
+        ),
+    ),
+    (
+        "start_date",
+        (
+            "start date",
+            "available date",
+            "earliest start",
+            "availability",
+            "notice period",
+        ),
+    ),
+    (
+        "cover_letter",
+        (
+            "cover letter",
+            "motivation letter",
+            "additional information",
+            "why do you want",
+            "tell us about",
+        ),
+    ),
+    ("gender", ("gender", "sex", "pronouns")),
+    ("ethnicity", ("ethnicity", "race", "ethnic background")),
+    ("disability", ("disability", "disabled", "handicap")),
+    ("veteran", ("veteran", "military", "armed forces")),
 )
 
 
@@ -138,6 +203,8 @@ async def _observe_control(control: Locator) -> FieldObservation:
                         ? (element.checked ? (label || element.value || 'true') : null)
                         : (element.value || null),
                     name: element.name || '',
+                    element_id: element.id || '',
+                    placeholder: element.getAttribute('placeholder')?.trim() || '',
                     min_length: element.minLength >= 0 ? element.minLength : null,
                     max_length: element.maxLength >= 0 ? element.maxLength : null,
                     minimum: element.getAttribute('min'),
@@ -158,12 +225,20 @@ def _to_form_field(observation: FieldObservation, index: int) -> FormField:
         observation["label"], observation["name"]
     )
     field_id = observation["field_id"] or f"field-{index}"
-    if observation["label"]:
-        source_locator = f"label:{observation['label']}"
-    elif observation["name"]:
-        source_locator = f"name:{observation['name']}"
-    else:
-        source_locator = f"nth:{index}"
+    candidates = tuple(
+        dict.fromkeys(
+            candidate
+            for candidate in (
+                f"label:{observation['label']}" if observation["label"] else "",
+                (f"placeholder:{observation['placeholder']}" if observation["placeholder"] else ""),
+                f"id:{observation['element_id']}" if observation["element_id"] else "",
+                f"name:{observation['name']}" if observation["name"] else "",
+                f"nth:{index}",
+            )
+            if candidate
+        )
+    )
+    source_locator = candidates[0]
     return FormField(
         field_id=field_id,
         label=observation["label"],
@@ -184,4 +259,40 @@ def _to_form_field(observation: FieldObservation, index: int) -> FormField:
             accepted_file_types=tuple(observation["accepted_file_types"]),
             allows_multiple=observation["allows_multiple"],
         ),
+        locator_candidates=candidates,
     )
+
+
+def form_fingerprint(fields: tuple[FormField, ...]) -> str:
+    import hashlib
+
+    parts = []
+    for field in sorted(fields, key=lambda f: f.field_id):
+        parts.append(f"{field.field_id}:{field.field_type.value}:{field.label}:{field.is_required}")
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+
+
+def detect_form_changes(
+    old_fields: tuple[FormField, ...],
+    new_fields: tuple[FormField, ...],
+) -> dict[str, object]:
+    old_by_id = {f.field_id: f for f in old_fields}
+    new_by_id = {f.field_id: f for f in new_fields}
+    added = sorted(set(new_by_id) - set(old_by_id))
+    removed = sorted(set(old_by_id) - set(new_by_id))
+    changed: list[str] = []
+    for fid in sorted(set(old_by_id) & set(new_by_id)):
+        old, new = old_by_id[fid], new_by_id[fid]
+        if (
+            old.field_type != new.field_type
+            or old.is_required != new.is_required
+            or old.label != new.label
+            or old.options != new.options
+        ):
+            changed.append(fid)
+    return {
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+        "stable": not added and not removed and not changed,
+    }

@@ -3,11 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from app.llm.router import ModelRouter
+from app.llm.router import ModelRequest, ModelRouter
 from app.matching.model_extractors import (
     RouterCandidateEvidenceExtractor,
     RouterVacancyRequirementExtractor,
     UngroundedExtractionError,
+    _is_grounded,
 )
 from app.prompts.registry import PromptRegistry
 
@@ -17,6 +18,7 @@ class _StaticProvider:
 
     def __init__(self, payload: dict[str, object]) -> None:
         self.payload = payload
+        self.request: ModelRequest | None = None
 
     def supports(self, task_class: object) -> bool:
         return True
@@ -24,7 +26,8 @@ class _StaticProvider:
     def estimate_cost_usd(self, request: object) -> float:
         return 0.0
 
-    async def complete(self, request: object) -> dict[str, object]:
+    async def complete(self, request: ModelRequest) -> dict[str, object]:
+        self.request = request
         return self.payload
 
 
@@ -63,11 +66,16 @@ def test_router_vacancy_extractor_accepts_source_grounded_requirements() -> None
         extractor = RouterVacancyRequirementExtractor(
             ModelRouter((provider,)),  # type: ignore[arg-type]
             _prompt_registry(),
+            timeout_seconds=123,
         )
 
         extraction = await extractor.extract(vacancy_id="vacancy-1", source_text=source_text)
 
         assert extraction.requirements[0].normalized_text == "python production experience"
+        assert provider.request is not None
+        assert provider.request.response_schema is not None
+        assert provider.request.response_schema["title"] == "VacancyExtraction"
+        assert provider.request.timeout_seconds == 123
 
     asyncio.run(run())
 
@@ -145,3 +153,26 @@ def test_router_candidate_extractor_controls_verification_status() -> None:
         assert not extraction.evidence[0].is_verified
 
     asyncio.run(run())
+
+
+# ── Grounding tolerance ──────────────────────────────────────────
+
+
+def test_is_grounded_accepts_verbatim_fragment() -> None:
+    source = "Requirements: Production experience with Python is required."
+    assert _is_grounded(source, "Production experience with Python is required.")
+
+
+def test_is_grounded_accepts_paraphrased_fragment() -> None:
+    """Weak local models paraphrase fragments (function words, punctuation).
+    All content words still come from the source, so this must pass."""
+    source = "Требуется опыт работы с Python и FastAPI для backend-разработки."
+    assert _is_grounded(source, "опыт работы с Python")
+    assert _is_grounded(source, "Python и FastAPI")
+
+
+def test_is_grounded_rejects_hallucinated_content_word() -> None:
+    """A content word absent from the source must still fail grounding."""
+    source = "Требуется опыт работы с Python."
+    assert not _is_grounded(source, "опыт работы с Kubernetes")
+    assert not _is_grounded(source, "Docker")

@@ -99,7 +99,7 @@
       <a id="nav-resume" href="/dashboard?panel=resume">Резюме</a>
       <a id="nav-sessions" href="/dashboard?panel=sessions">Сессии сайтов</a>
       <a id="nav-model" href="/dashboard?panel=model">Модель</a>
-      <a id="nav-access" href="/dashboard?panel=access">Доступ</a>
+      <a id="nav-access" href="/dashboard?panel=access">Профиль и доступ</a>
     </nav>
     <div class="review-content">
       <div id="status" role="status" aria-live="polite"></div>
@@ -145,18 +145,18 @@
     const applicationStatusLabels = {
       ru: {
         draft: 'Черновик', saved: 'Сохранена', awaiting_review: 'Ожидает решения',
-        approved: 'Принята', rejected: 'Отклонена', skipped: 'Пропущена',
+        approved: 'Принята', rejected: 'Отклонена мной', employer_rejected: 'Отказ работодателя', skipped: 'Пропущена',
         submitted: 'Отправлена', interview: 'Собеседование'
       },
       en: {
         draft: 'Draft', saved: 'Saved', awaiting_review: 'Awaiting decision',
-        approved: 'Accepted', rejected: 'Rejected', skipped: 'Skipped',
+        approved: 'Accepted', rejected: 'Rejected by me', employer_rejected: 'Employer rejection', skipped: 'Skipped',
         submitted: 'Submitted', interview: 'Interview'
       }
     };
     const editableApplicationStatuses = [
       'draft', 'saved', 'awaiting_review', 'approved',
-      'rejected', 'skipped', 'submitted', 'interview'
+      'rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'
     ];
 
     function createKeySkillTags(skills) {
@@ -308,7 +308,7 @@
       document.querySelector('#nav-resume').textContent = tr('Резюме', 'Resumes');
       document.querySelector('#nav-sessions').textContent = tr('Сессии сайтов', 'Site sessions');
       document.querySelector('#nav-model').textContent = tr('Модель', 'Model');
-      document.querySelector('#nav-access').textContent = tr('Доступ', 'Access');
+      document.querySelector('#nav-access').textContent = tr('Профиль и доступ', 'Profile and access');
       renderLanguageSelector();
     }
     async function decide(applicationId, decision, buttons) {

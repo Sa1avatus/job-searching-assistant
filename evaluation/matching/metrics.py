@@ -79,3 +79,14 @@ def _discounted_gain(relevances: Sequence[float]) -> float:
 def _require_positive_k(k: int) -> None:
     if k <= 0:
         raise ValueError("k must be positive")
+
+
+def irrelevant_in_top_k(ranked_ids: Sequence[str], irrelevant_ids: set[str], k: int) -> int:
+    _require_positive_k(k)
+    return sum(item in irrelevant_ids for item in ranked_ids[:k])
+
+
+def relevant_rejected_count(
+    relevant_ids: set[str], rejected_ids: set[str]
+) -> int:
+    return len(relevant_ids & rejected_ids)

@@ -1,0 +1,18 @@
+{
+  "source": "saved",
+  "recipe": {
+    "name": "FastAPI app (project venv)",
+    "kind": "fastapi",
+    "bootstrap": [],
+    "build": [],
+    "test": [
+      "bash -c \"PYTHONPATH='D:/OpenAIProjects/job-searching-assistant;D:/OpenAIProjects/job-searching-assistant/.venv/Lib/site-packages' D:/OpenAIProjects/job-searching-assistant/.venv/Scripts/python.exe -m pytest tests/ -q --tb=short\""
+    ],
+    "start": "D:/OpenAIProjects/job-searching-assistant/.venv/Scripts/python.exe -m uvicorn app.api.main:app --host 0.0.0.0 --port 8000",
+    "port": 8000,
+    "readinessPath": "/",
+    "evidence": [
+      "Uses project .venv for test execution"
+    ]
+  }
+}

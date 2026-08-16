@@ -14,8 +14,8 @@
     {
       "name": "extract_vacancy_requirements",
       "purpose": "Extract atomic, source-grounded vacancy requirements without assigning a match score.",
-      "version": 1,
-      "template": "Extract only facts explicitly present in vacancy {vacancy_id}. Return role, seniority, responsibilities, constraints, hard_blockers, preferred_items, confidence, and atomic requirements. Every requirement must contain text, normalized_text, requirement_type, importance, weight, is_blocker, alternatives, an exact source_fragment copied from the vacancy, source_section, and confidence. Do not infer unstated requirements and do not calculate candidate suitability. Vacancy text:\\n{source_text}",
+      "version": 2,
+      "template": "Extract only facts explicitly present in vacancy {vacancy_id}. Return exactly these top-level fields: role, seniority, responsibilities, requirements, constraints, hard_blockers, preferred_items, and confidence. The requirements field must be an array of atomic requirements; do not return an atomic_requirements field. Every item in requirements must contain text, normalized_text, requirement_type, importance, weight, is_blocker, alternatives, a source_fragment copied character-for-character from the vacancy text (an exact substring; never paraphrase, summarize, translate, or reorder words), source_section, and confidence. For an explicit job role, add a required role requirement and use one canonical normalized_text only when supported: software_engineering, data_ai, product_design, culinary_hospitality, healthcare, finance_accounting, or sales_retail. Do not guess an unknown role family. Do not infer unstated requirements and do not calculate candidate suitability. Vacancy text:\\n{source_text}",
       "input_schema": "VacancyExtractionInput",
       "output_schema": "VacancyExtraction",
       "model_task_class": "low_cost",
@@ -25,12 +25,67 @@
     {
       "name": "extract_candidate_evidence",
       "purpose": "Extract atomic, source-grounded candidate evidence while preserving experience strength.",
-      "version": 1,
-      "template": "Extract only evidence explicitly present in CV {cv_file_id} for user {user_id}. Return evidence and confidence. Every evidence item must contain text, normalized_text, evidence_type, optional skill_name, experience_level, optional years, is_verified=false, an exact source_fragment copied from the CV, optional source_section, and confidence. Distinguish production, hands_on, project, theoretical, conceptual, related, and unknown experience. Never upgrade conceptual knowledge to practical experience. CV text:\\n{source_text}",
+      "version": 2,
+      "template": "Extract only evidence explicitly present in CV {cv_file_id} for user {user_id}. Return evidence and confidence. Every evidence item must contain text, normalized_text, evidence_type, optional skill_name, experience_level, optional years, is_verified=false, a source_fragment copied character-for-character from the CV text (an exact substring; never paraphrase, summarize, translate, or reorder words), optional source_section, and confidence. For an explicit professional role, use evidence_type=role and set skill_name to one supported canonical family only when clear: software_engineering, data_ai, product_design, culinary_hospitality, healthcare, finance_accounting, or sales_retail. Do not guess an unknown role family. Distinguish production, hands_on, project, theoretical, conceptual, related, and unknown experience. Never upgrade conceptual knowledge to practical experience. CV text:\\n{source_text}",
       "input_schema": "CandidateEvidenceExtractionInput",
       "output_schema": "CandidateEvidenceExtraction",
       "model_task_class": "low_cost",
       "created_on": "2026-07-26",
+      "is_active": true
+    },
+    {
+      "name": "decompose_requirement",
+      "purpose": "Decompose a composite vacancy requirement into atomic claims with logical relationships.",
+      "version": 2,
+      "template": "Decompose this vacancy requirement into atomic, independently testable claims. Each claim must be a single assertion that can be verified against candidate evidence.\\n\\nRequirement: {requirement_text}\\nType: {requirement_type}\\nImportance: {importance}\\nIs blocker: {is_blocker}\\n\\nRules:\\n- Extract atomic claims while preserving logical relationships.\\n- Do not invent requirements beyond what the text states.\\n- Do not turn examples or bonus technologies into mandatory requirements.\\n- Preserve numeric thresholds (years, levels).\\n- Preserve OR semantics: 'PostgreSQL or MySQL' creates OR claims, not AND.\\n- Preserve AND semantics: 'Python and FastAPI' requires both.\\n- 'will be a plus' / 'nice to have' / 'желательно' → preferred or bonus criticality.\\n- Mandatory language without 'plus'/'nice to have' → required criticality.\\n- For duration claims (X years of Y), set claim_type=experience_duration, operator='>=', required_value=N, unit='years'.\\n- For practical/production claims, set claim_type=practical_experience or production_experience.\\n- For technology claims, set claim_type=technology or skill.\\n\\nCRITICAL: hard_blocker classification:\\n- Do NOT classify a requirement as hard_blocker merely because it is required.\\n- Use hard_blocker ONLY for truly binary eligibility conditions: mandatory work authorization, mandatory citizenship, mandatory security clearance, mandatory professional license, strict mandatory language level, explicit mandatory location constraint.\\n- Python, FastAPI, RAG, ML experience, Docker, LLM — these are NOT hard blockers even when required.\\n- When in doubt, use 'required' criticality, not 'hard_blocker'.\\n\\nSet requirement_id to {requirement_id}.\\nGenerate unique claim IDs as '{requirement_id}-claim-N'.\\nSet is_composite=true if more than one claim is extracted.\\n\\nReturn the decomposition with all claims.",
+      "input_schema": "DecomposeRequirementInput",
+      "output_schema": "RequirementDecomposition",
+      "model_task_class": "low_cost",
+      "created_on": "2026-08-13",
+      "is_active": true
+    },
+    {
+      "name": "evaluate_evidence_entailment",
+      "purpose": "Evaluate whether evidence entails, partially supports, or is merely related to an atomic claim.",
+      "version": 3,
+      "template": "Determine whether the supplied evidence establishes the atomic claim.\\n\\n{claim_text}\\n\\nEvidence (ID: {evidence_id}):\\n{evidence_text}\\n\\nRules:\\n- Use semantic equivalence, not exact keyword matching.\\n- A claim may be supported by concrete activities that imply the claimed capability.\\n- Evidence may establish a claim through equivalent real-world evidence.\\n\\nCRITICAL — anti-hallucination:\\n- Use ONLY the provided evidence. Do NOT use world knowledge.\\n- Do NOT invent years of experience, production deployments, or skills not in evidence.\\n- Do NOT treat knowledge/study as hands-on experience.\\n- Do NOT treat a related technology as exact match (e.g. LLM≠RAG, PyTorch≠production Python).\\n- If evidence is insufficient, return 'insufficient_evidence', NOT 'contradicted'.\\n\\nHowever:\\n- Do not infer duration unless dates/duration are explicitly available.\\n- Do not infer RAG from generic LLM integration.\\n- Do not infer production experience from model experimentation alone.\\n- Do not infer a technology merely because a related technology is present.\\n- Do not infer commercial experience unless the evidence establishes it.\\n- Do not infer self-hosted/on-prem deployment from generic model usage.\\n- Do not infer vector database experience from embeddings alone.\\n- 'NLP classification pipelines with PyTorch' does NOT entail 'production Python backend development'.\\n- 'Designed LLM integrations' does NOT entail 'practical RAG experience'.\\n- 'Built Python/FastAPI backend services deployed with Docker' DOES entail 'production Python'.\\n- 'Developed RAG service with embedding retrieval and reranking' DOES entail 'practical RAG'.\\n\\nRelation values:\\n- entailed: evidence explicitly or logically establishes the claim\\n- partial: evidence establishes part of the claim\\n- related_but_insufficient: evidence is clearly relevant but does not establish the claim\\n- insufficient_evidence: no reliable conclusion can be made from available data\\n- contradicted: only for explicit contradiction\\n\\nReturn JSON with:\\n- relation: one of entailed/partial/related_but_insufficient/insufficient_evidence/contradicted\\n- confidence: 0-1\\n- reason: explanation\\n- entailment_score: 0-1 (how strongly evidence supports the claim)\\n- coverage: 0-1 (degree of claim fulfillment — 1.0=fully covered, 0.5=half covered, 0.0=not covered)\\n- evidence_type: 'direct' (explicitly states the claim), 'indirect' (implies it), 'contextual' (tangentially related), or 'none'\\n- experience_level: 'commercial_production', 'internal_production', 'working_personal_project', 'prototype', 'experiment', 'studied_only', or 'none'",
+      "input_schema": "EvaluateEntailmentInput",
+      "output_schema": "EntailmentResult",
+      "model_task_class": "low_cost",
+      "created_on": "2026-08-13",
+      "is_active": true
+    },
+    {
+      "name": "evaluate_evidence_entailment_batch",
+      "purpose": "Evaluate whether each supplied evidence item entails its atomic claim, several pairs per LLM call.",
+      "version": 1,
+      "template": "Evaluate whether each supplied evidence item establishes its corresponding atomic claim.\n\n{items}\n\nRules:\n- Use semantic equivalence, not exact keyword matching.\n- A claim may be supported by concrete activities that imply the claimed capability.\n- Evidence may establish a claim through equivalent real-world evidence.\n\nCRITICAL - anti-hallucination:\n- Use ONLY the provided evidence. Do NOT use world knowledge.\n- Do NOT invent years of experience, production deployments, or skills not in evidence.\n- Do NOT treat knowledge/study as hands-on experience.\n- Do NOT treat a related technology as exact match (e.g. LLM!=RAG, PyTorch!=production Python).\n- If evidence is insufficient, return 'insufficient_evidence', NOT 'contradicted'.\n\nHowever:\n- Do not infer duration unless dates/duration are explicitly available.\n- Do not infer RAG from generic LLM integration.\n- Do not infer production experience from model experimentation alone.\n- Do not infer a technology merely because a related technology is present.\n- Do not infer commercial experience unless the evidence establishes it.\n- Do not infer self-hosted/on-prem deployment from generic model usage.\n- Do not infer vector database experience from embeddings alone.\n\nRelation values:\n- entailed: evidence explicitly or logically establishes the claim\n- partial: evidence establishes part of the claim\n- related_but_insufficient: evidence is clearly relevant but does not establish the claim\n- insufficient_evidence: no reliable conclusion can be made from available data\n- contradicted: only for explicit contradiction\n\nEvaluate EVERY item independently.\nCRITICAL: return exactly one evaluation object per item, in the same order as the items.\nRepeat each item's claim_id exactly as given - it is used to align results.\n\nReturn JSON with:\n- evaluations: array of objects, each with:\n- claim_id: the exact claim_id of the item\n- relation: one of entailed/partial/related_but_insufficient/insufficient_evidence/contradicted\n- confidence: 0-1\n- reason: explanation\n- entailment_score: 0-1 (how strongly evidence supports the claim)\n- coverage: 0-1 (degree of claim fulfillment - 1.0=fully covered, 0.5=half covered, 0.0=not covered)\n- evidence_type: 'direct' (explicitly states the claim), 'indirect' (implies it), 'contextual' (tangentially related), or 'none'\n- experience_level: 'commercial_production', 'internal_production', 'working_personal_project', 'prototype', 'experiment', 'studied_only', or 'none'",
+      "input_schema": "EvaluateEntailmentBatchInput",
+      "output_schema": "BatchEntailmentResults",
+      "model_task_class": "low_cost",
+      "created_on": "2026-08-15",
+      "is_active": true
+    },
+    {
+      "name": "extract_facts_from_text",
+      "purpose": "Extract structured facts from unstructured text (file import).",
+      "version": 1,
+      "template": "Extract structured facts from this document. Source type: {source_type}.\\n\\nRules:\\n- Extract ONLY facts explicitly stated in the text.\\n- Do NOT invent missing experience or skills.\\n- Do NOT infer RAG from generic LLM work.\\n- Do NOT infer production experience from technology mentions.\\n- Do NOT infer years of experience from a list of skills.\\n- Keep source evidence for every extracted fact.\\n- Prefer action-oriented facts over isolated keywords.\\n- Preserve distinctions: mentioned, used, implemented, designed, operated, deployed, evaluated.\\n- If uncertain, lower confidence or omit the fact.\\n- Each fact needs: category, name, value, skills list, experience_level, source_quote.\\n- Categories include: skills, technologies, project_experience, work_experience, education, certifications, languages, domains.\\n- Normalize skill aliases: Postgres→PostgreSQL, Fast API→FastAPI, HF→Hugging Face (if unambiguous).\\n- Support both Russian and English text.\\n\\nText:\\n{source_text}",
+      "input_schema": "ExtractFactsFromTextInput",
+      "output_schema": "FileExtractionResult",
+      "model_task_class": "low_cost",
+      "created_on": "2026-08-13",
+      "is_active": true
+    },
+    {
+      "name": "extract_facts_from_resume",
+      "purpose": "Extract structured facts and experience intervals from a resume.",
+      "version": 1,
+      "template": "Extract structured facts and experience intervals from this resume. Resume ID: {resume_id}.\\n\\nRules:\\n- Extract ONLY facts explicitly stated in the resume.\\n- Do NOT invent missing experience.\\n- Do NOT infer RAG from generic LLM integration.\\n- Do NOT infer production experience from experimentation/model training.\\n- Do NOT infer years of experience from technology lists.\\n- Preserve distinctions: mentioned, used, practical_experience, production_experience, designed, implemented, operated, evaluated.\\n- Each fact needs: category, name, value, skills list, experience_level, source_section, source_quote, confidence.\\n- Extract experience intervals with: role, company, started_at (YYYY-MM), ended_at (YYYY-MM or null if current), domains, skills.\\n- Dates must come from the resume. If dates are missing, set them to null.\\n- Support both Russian and English.\\n- Categories: skills, technologies, programming_languages, frameworks, databases, ml_models, ml_frameworks, llm_experience, rag_experience, retrieval, embeddings, vector_databases, reranking, self_hosted_inference, quantization, deployment, cloud, devops, backend, async_development, api_development, monitoring, evaluation, domains, work_experience, project_experience, education, certifications, languages.\\n\\nResume text:\\n{resume_text}",
+      "input_schema": "ExtractFactsFromResumeInput",
+      "output_schema": "ResumeExtractionResult",
+      "model_task_class": "low_cost",
+      "created_on": "2026-08-13",
       "is_active": true
     }
   ]

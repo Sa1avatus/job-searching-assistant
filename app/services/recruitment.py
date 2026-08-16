@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from app.domain.vacancy_attributes import EMPLOYMENT_TYPE_ORDER, EmploymentType
 from app.storage.documents import SavedDocument
 from app.storage.tables import (
     ApplicationAnswerRow,
+    ApplicationEmailEventRow,
     ApplicationRow,
     BrowserSessionRow,
     CvFileRow,
@@ -69,6 +70,57 @@ class RecruitmentService:
             self._session.rollback()
             raise DuplicateEntityError("Profile fact already exists") from error
         return fact
+
+    def list_profile_facts(self, user_id: str) -> list[ProfileFactRow]:
+        self._require_user(user_id)
+        return list(
+            self._session.scalars(
+                select(ProfileFactRow)
+                .where(ProfileFactRow.user_id == user_id)
+                .order_by(ProfileFactRow.category, ProfileFactRow.name, ProfileFactRow.id)
+            )
+        )
+
+    def update_profile_fact(
+        self,
+        user_id: str,
+        fact_id: str,
+        *,
+        category: str,
+        name: str,
+        value: str,
+        is_verified: bool,
+    ) -> ProfileFactRow:
+        fact = self._session.scalar(
+            select(ProfileFactRow).where(
+                ProfileFactRow.id == fact_id,
+                ProfileFactRow.user_id == user_id,
+            )
+        )
+        if fact is None:
+            raise EntityNotFoundError("Profile fact not found")
+        fact.category = category
+        fact.name = name
+        fact.value = value
+        fact.is_verified = is_verified
+        try:
+            self._session.commit()
+        except IntegrityError as error:
+            self._session.rollback()
+            raise DuplicateEntityError("Profile fact already exists") from error
+        return fact
+
+    def delete_profile_fact(self, user_id: str, fact_id: str) -> None:
+        fact = self._session.scalar(
+            select(ProfileFactRow).where(
+                ProfileFactRow.id == fact_id,
+                ProfileFactRow.user_id == user_id,
+            )
+        )
+        if fact is None:
+            raise EntityNotFoundError("Profile fact not found")
+        self._session.delete(fact)
+        self._session.commit()
 
     def add_cv_file(self, user_id: str, document: SavedDocument) -> CvFileRow:
         self._require_user(user_id)
@@ -758,6 +810,35 @@ class RecruitmentService:
         application.status = status
         self._session.commit()
         return application
+
+    def get_application_statistics(self, user_id: str) -> tuple[int, dict[ApplicationStatus, int]]:
+        self._require_user(user_id)
+        rows = self._session.execute(
+            select(ApplicationRow.status, func.count(ApplicationRow.id))
+            .where(ApplicationRow.user_id == user_id)
+            .group_by(ApplicationRow.status)
+        ).all()
+        counts: dict[ApplicationStatus, int] = {status: 0 for status in APPLICATION_STATUSES}
+        total = 0
+        for status, count in rows:
+            total += count
+            if status in counts:
+                counts[status] = count
+        return total, counts
+
+    def get_application_email_statistics(self, user_id: str) -> dict[str, int]:
+        self._require_user(user_id)
+        rows = self._session.execute(
+            select(ApplicationEmailEventRow.outcome, func.count(ApplicationEmailEventRow.id))
+            .where(ApplicationEmailEventRow.user_id == user_id)
+            .group_by(ApplicationEmailEventRow.outcome)
+        ).all()
+        counts = {outcome: count for outcome, count in rows}
+        return {
+            "email_events": sum(counts.values()),
+            "email_rejections": counts.get("rejected", 0),
+            "email_next_stages": counts.get("next_stage", 0),
+        }
 
     def delete_user(self, user_id: str) -> tuple[list[Path], list[str], list[str]]:
         user = self._require_user(user_id)

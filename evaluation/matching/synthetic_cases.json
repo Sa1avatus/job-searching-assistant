@@ -20,6 +20,16 @@
     "reviewer_notes": "Lexical overlap must not imply role fit."
   },
   {
+    "id": "sous-chef-vs-software-engineer",
+    "vacancy": "Sous Chef required to lead kitchen preparation and service.",
+    "candidate_profile": "Software engineer building production Python services.",
+    "expected_eligibility": false,
+    "expected_score_range": [0, 20],
+    "expected_matched_requirements": [],
+    "expected_missing_requirements": ["culinary_hospitality"],
+    "reviewer_notes": "Explicit cross-family role mismatch must be rejected before retrieval and reranking."
+  },
+  {
     "id": "kubernetes-hands-on",
     "vacancy": "Hands-on Kubernetes production operations are required.",
     "candidate_profile": "Operated Kubernetes clusters, deployments and incident response in production.",
@@ -98,5 +108,25 @@
     "expected_matched_requirements": [],
     "expected_missing_requirements": [],
     "reviewer_notes": "Poor source should degrade safely instead of inventing requirements."
+  },
+  {
+    "id": "unknown-role-family-review",
+    "vacancy": "Experienced astronaut required for Mars mission planning.",
+    "candidate_profile": "Software engineer with Python and distributed systems experience.",
+    "expected_eligibility": true,
+    "expected_score_range": [0, 30],
+    "expected_matched_requirements": [],
+    "expected_missing_requirements": [],
+    "reviewer_notes": "Unknown role family must produce REVIEW, not automatic REJECT."
+  },
+  {
+    "id": "reranker-unavailable-fallback",
+    "vacancy": "Python backend engineer with FastAPI and PostgreSQL experience.",
+    "candidate_profile": "Built production Python services with FastAPI and PostgreSQL.",
+    "expected_eligibility": true,
+    "expected_score_range": [60, 95],
+    "expected_matched_requirements": ["Python", "FastAPI", "PostgreSQL"],
+    "expected_missing_requirements": [],
+    "reviewer_notes": "When reranker is unavailable, hybrid score fallback must still produce a reasonable result."
   }
 ]

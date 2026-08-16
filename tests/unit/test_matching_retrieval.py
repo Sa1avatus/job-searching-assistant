@@ -1,7 +1,8 @@
 import asyncio
 
 from app.matching.opensearch_index import SearchHit
-from app.matching.retrieval import HybridRetriever, StoredEvidence
+from app.matching.rag_client import RagSearchResponse, RagSearchResult
+from app.matching.retrieval import HybridRetriever, RagAugmentedRetriever, StoredEvidence
 from app.matching.semantic import FakeEmbeddingClient, RetrievalCandidate
 
 
@@ -123,5 +124,93 @@ def test_hybrid_retrieval_uses_postgres_fallback_when_opensearch_fails() -> None
 
         assert candidates[0].evidence_id == "fallback"
         assert candidates[0].dense_score is None
+
+    asyncio.run(run())
+
+
+class _FakeRagClient:
+    def __init__(self, *, degraded: bool = False) -> None:
+        self.degraded = degraded
+        self.search_calls: list[dict[str, object]] = []
+
+    async def search(self, query: str, **kwargs) -> RagSearchResponse:
+        self.search_calls.append({"query": query, **kwargs})
+        return RagSearchResponse(
+            request_id="rag-1",
+            results=(
+                RagSearchResult(
+                    chunk_id="chunk-1",
+                    document_id="doc-1",
+                    external_document_id="cv:cv-1",
+                    collection="profiles",
+                    content="Production Python systems and platform work",
+                    score=1.0,
+                    reranker_score=0.9,
+                    rank=1,
+                    metadata={"source_id": "cv-1"},
+                ),
+            ),
+            effective_mode="hybrid",
+            degraded=self.degraded,
+        )
+
+    async def ingest_document(self, **kwargs):
+        raise NotImplementedError
+
+    async def health(self):
+        raise NotImplementedError
+
+
+def test_rag_augmented_retrieval_uses_owner_scoped_profile_search() -> None:
+    async def run() -> None:
+        local = HybridRetriever(
+            _FakeSearchIndex(),
+            FakeEmbeddingClient(dimensions=4),
+            _FakeRepository(),
+        )
+        rag = _FakeRagClient()
+        retriever = RagAugmentedRetriever(local, rag)
+
+        candidates = await retriever.retrieve(
+            "Python production",
+            user_id="user-1",
+            cv_file_id="cv-1",
+        )
+
+        assert rag.search_calls == [
+            {
+                "query": "Python production",
+                "owner_user_id": "user-1",
+                "collections": ("profiles",),
+                "top_k": 20,
+            }
+        ]
+        assert candidates[0].evidence_id == "both"
+        assert candidates[0].hybrid_score > 0.7
+
+    asyncio.run(run())
+
+
+def test_rag_augmented_retrieval_preserves_local_scores_when_rag_is_degraded() -> None:
+    async def run() -> None:
+        local = HybridRetriever(
+            _FakeSearchIndex(),
+            FakeEmbeddingClient(dimensions=4),
+            _FakeRepository(),
+        )
+        baseline = await local.retrieve(
+            "Python production",
+            user_id="user-1",
+            cv_file_id="cv-1",
+        )
+        retriever = RagAugmentedRetriever(local, _FakeRagClient(degraded=True))
+
+        candidates = await retriever.retrieve(
+            "Python production",
+            user_id="user-1",
+            cv_file_id="cv-1",
+        )
+
+        assert candidates == baseline
 
     asyncio.run(run())

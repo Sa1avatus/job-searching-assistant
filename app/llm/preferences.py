@@ -2,16 +2,45 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Literal
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm import Session
 
+from app.llm.providers.openai_compatible import normalize_openai_compatible_base_url
 from app.storage.tables import LlmPreferenceRow, UserRow
 
-LlmProviderName = Literal["anthropic", "gemini"]
-SUPPORTED_LLM_PROVIDERS = frozenset({"anthropic", "gemini"})
+LlmProviderName = Literal["anthropic", "gemini", "openai_compatible"]
+SUPPORTED_LLM_PROVIDERS = frozenset({"anthropic", "gemini", "openai_compatible"})
+
+
+class LlmPreferencePurpose(StrEnum):
+    """Which LLM consumer a preference belongs to.
+
+    MATCHING powers the matching worker (extraction, decomposition, entailment);
+    MATERIALS powers everything else (cover letters, screening answers, resume and
+    profile extraction, job discovery). MATERIALS is the historical single-model
+    preference, so it is the default and the fallback for MATCHING.
+    """
+
+    MATCHING = "matching"
+    MATERIALS = "materials"
+
+
+DEFAULT_LLM_PURPOSE = LlmPreferencePurpose.MATERIALS
+
+# Resolution order when a purpose has no explicit row. Matching falls back to the
+# legacy single-model preference so existing users keep working until they save a
+# matching-specific model.
+_PURPOSE_FALLBACKS: dict[LlmPreferencePurpose, tuple[LlmPreferencePurpose, ...]] = {
+    LlmPreferencePurpose.MATCHING: (
+        LlmPreferencePurpose.MATCHING,
+        LlmPreferencePurpose.MATERIALS,
+    ),
+    LlmPreferencePurpose.MATERIALS: (LlmPreferencePurpose.MATERIALS,),
+}
 
 
 class InvalidLlmPreference(ValueError):
@@ -20,6 +49,63 @@ class InvalidLlmPreference(ValueError):
 
 class LlmPreferenceNotFound(LookupError):
     pass
+
+
+def normalize_purpose(purpose: str | LlmPreferencePurpose) -> str:
+    """Validate and canonicalize a preference purpose to its storage value."""
+    value = (
+        purpose.value if isinstance(purpose, LlmPreferencePurpose) else purpose.strip().casefold()
+    )
+    try:
+        LlmPreferencePurpose(value)
+    except ValueError as error:
+        raise InvalidLlmPreference(f"Unsupported LLM preference purpose: {purpose!r}") from error
+    return value
+
+
+def resolve_preference(
+    session: Session,
+    user_id: str,
+    encryption_key: str,
+    purpose: str | LlmPreferencePurpose = DEFAULT_LLM_PURPOSE,
+) -> LlmPreference | None:
+    """Load the effective preference for a purpose, walking the fallback chain."""
+    service = LlmPreferenceService(session, encryption_key=encryption_key)
+    normalized = normalize_purpose(purpose)
+    for candidate in _PURPOSE_FALLBACKS[LlmPreferencePurpose(normalized)]:
+        preference = service.load(user_id, candidate.value)
+        if preference is not None:
+            return preference
+    return None
+
+
+def resolve_model_identity(
+    session: Session,
+    user_id: str,
+    encryption_key: str | None,
+    purpose: str | LlmPreferencePurpose = DEFAULT_LLM_PURPOSE,
+) -> str | None:
+    """Resolve a stable fingerprint of the user's selected LLM model.
+
+    Used to key matching caches and extraction results so that switching the model
+    invalidates prior LLM-derived work instead of silently reusing it. Returns
+    ``None`` when no per-user preference can be resolved (env-provided providers),
+    which preserves the historical ``model-router`` keying.
+    """
+    if encryption_key is None:
+        return None
+    try:
+        preference = resolve_preference(session, user_id, encryption_key, purpose)
+    except InvalidLlmPreference:
+        return None
+    if preference is None:
+        return None
+    identity = f"{preference.provider}:{preference.model}"
+    if preference.base_url:
+        host = httpx.URL(preference.base_url).host or ""
+        if host:
+            identity = f"{identity}@{host}"
+    return identity
 
 
 class LlmModelDiscoveryError(RuntimeError):
@@ -31,6 +117,7 @@ class LlmPreference:
     provider: LlmProviderName
     model: str
     api_key: str
+    base_url: str | None
 
 
 class LlmPreferenceService:
@@ -42,17 +129,33 @@ class LlmPreferenceService:
             raise InvalidLlmPreference("LLM credential encryption key is invalid") from error
 
     def save(
-        self, *, user_id: str, provider: str, model: str, api_key: str | None
+        self,
+        *,
+        user_id: str,
+        provider: str,
+        model: str,
+        api_key: str | None,
+        base_url: str | None = None,
+        purpose: str | LlmPreferencePurpose = DEFAULT_LLM_PURPOSE,
     ) -> LlmPreferenceRow:
         if self._session.get(UserRow, user_id) is None:
             raise LlmPreferenceNotFound("User not found")
+        normalized_purpose = normalize_purpose(purpose)
         normalized_provider = provider.strip().casefold()
         normalized_model = model.strip()
         if normalized_provider not in SUPPORTED_LLM_PROVIDERS:
             raise InvalidLlmPreference("Unsupported LLM provider")
         if not normalized_model or len(normalized_model) > 200:
             raise InvalidLlmPreference("LLM model is invalid")
-        row = self._session.get(LlmPreferenceRow, user_id)
+        normalized_base_url = None
+        if normalized_provider == "openai_compatible":
+            if base_url is None:
+                raise InvalidLlmPreference("OpenAI-compatible base URL is required")
+            try:
+                normalized_base_url = normalize_openai_compatible_base_url(base_url)
+            except ValueError as error:
+                raise InvalidLlmPreference(str(error)) from error
+        row = self._session.get(LlmPreferenceRow, (user_id, normalized_purpose))
         normalized_api_key = (api_key or "").strip()
         if not normalized_api_key and row is None:
             raise InvalidLlmPreference("API key is required")
@@ -64,28 +167,42 @@ class LlmPreferenceService:
             assert row is not None
             encrypted_api_key = row.encrypted_api_key
         now = datetime.now(UTC)
-        row = row or LlmPreferenceRow(user_id=user_id, created_at=now)
+        row = row or LlmPreferenceRow(user_id=user_id, purpose=normalized_purpose, created_at=now)
         row.provider = normalized_provider
         row.model = normalized_model
+        row.base_url = normalized_base_url
         row.encrypted_api_key = encrypted_api_key
         row.updated_at = now
         self._session.add(row)
         self._session.commit()
         return row
 
-    def load(self, user_id: str) -> LlmPreference | None:
-        row = self._session.get(LlmPreferenceRow, user_id)
+    def load(
+        self,
+        user_id: str,
+        purpose: str | LlmPreferencePurpose = DEFAULT_LLM_PURPOSE,
+    ) -> LlmPreference | None:
+        row = self._session.get(LlmPreferenceRow, (user_id, normalize_purpose(purpose)))
         if row is None:
             return None
         try:
             api_key = self._cipher.decrypt(row.encrypted_api_key.encode("ascii")).decode("utf-8")
         except (InvalidToken, ValueError, UnicodeError) as error:
             raise InvalidLlmPreference("Saved LLM credential cannot be decrypted") from error
-        return LlmPreference(provider=row.provider, model=row.model, api_key=api_key)  # type: ignore[arg-type]
+        return LlmPreference(
+            provider=row.provider,  # type: ignore[arg-type]
+            model=row.model,
+            api_key=api_key,
+            base_url=row.base_url,
+        )
 
 
 async def fetch_available_models(
-    http_client: httpx.AsyncClient, *, provider: str, api_key: str
+    http_client: httpx.AsyncClient,
+    *,
+    provider: str,
+    api_key: str,
+    base_url: str | None = None,
 ) -> list[str]:
     normalized_provider = provider.strip().casefold()
     normalized_api_key = api_key.strip()
@@ -93,7 +210,23 @@ async def fetch_available_models(
         raise InvalidLlmPreference("Unsupported LLM provider")
     if not normalized_api_key:
         raise InvalidLlmPreference("API key is required")
-    if normalized_provider == "anthropic":
+    if normalized_provider == "openai_compatible":
+        if base_url is None:
+            raise InvalidLlmPreference("OpenAI-compatible base URL is required")
+        try:
+            normalized_base_url = normalize_openai_compatible_base_url(base_url)
+        except ValueError as error:
+            raise InvalidLlmPreference(str(error)) from error
+        response = await http_client.get(
+            f"{normalized_base_url}/models",
+            headers={"Authorization": f"Bearer {normalized_api_key}"},
+        )
+        models = (
+            [entry.get("id") for entry in response.json().get("data", [])]
+            if response.is_success
+            else []
+        )
+    elif normalized_provider == "anthropic":
         response = await http_client.get(
             "https://api.anthropic.com/v1/models",
             headers={"x-api-key": normalized_api_key, "anthropic-version": "2023-06-01"},

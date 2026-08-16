@@ -1,48 +1,7 @@
 services:
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile.browser
-    environment:
-      APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
-      APP_REDIS_URL: redis://redis:6379/0
-      APP_OPENSEARCH_URL: http://opensearch:9200
-      APP_MATCHING_V2_ENABLED: ${APP_MATCHING_V2_ENABLED:-false}
-      APP_MATCHING_V2_SHADOW_MODE: ${APP_MATCHING_V2_SHADOW_MODE:-true}
-      APP_MATCHING_V2_FALLBACK_ENABLED: ${APP_MATCHING_V2_FALLBACK_ENABLED:-true}
-      APP_MATCHING_MODEL_SERVICE_URL: ${APP_MATCHING_MODEL_SERVICE_URL:-http://matching-models:8090}
-      APP_SUBMISSION_MODE: review
-      APP_ARTIFACT_DIRECTORY: /app/.artifacts
-      APP_MAX_DOCUMENT_BYTES: 5242880
-      APP_HH_USER_AGENT: ${APP_HH_USER_AGENT:-JobSearchingAssistant/1.0 (local personal assistant)}
-      APP_HH_ACCESS_TOKEN: ${APP_HH_ACCESS_TOKEN:-}
-      APP_BROWSER_STATE_ENCRYPTION_KEY: ${APP_BROWSER_STATE_ENCRYPTION_KEY:-}
-      APP_ENABLE_HEADHUNTER_APPLY: ${APP_ENABLE_HEADHUNTER_APPLY:-false}
-      APP_ENABLE_LINKEDIN_APPLY: ${APP_ENABLE_LINKEDIN_APPLY:-false}
-      APP_ANTHROPIC_API_KEY: ${APP_ANTHROPIC_API_KEY:-}
-      APP_GEMINI_API_KEY: ${APP_GEMINI_API_KEY:-}
-      APP_MATERIALS_GENERATION_TIMEOUT_SECONDS: ${APP_MATERIALS_GENERATION_TIMEOUT_SECONDS:-120}
-      DISPLAY: ":99"
-    command: ["sh", "scripts/start_api_with_browser_desktop.sh"]
-    ports:
-      - "127.0.0.1:${APP_HTTP_PORT:-8000}:8000"
-      - "127.0.0.1:7900:7900"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    volumes:
-      - ./.artifacts:/app/.artifacts
-      - ./config/browser:/app/config/browser:ro
-
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: recruitment
       POSTGRES_USER: recruitment
@@ -50,47 +9,161 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U recruitment"]
+      test: ["CMD-SHELL", "pg_isready -U recruitment -d recruitment"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
+      start_period: 10s
     volumes:
       - recruitment-postgres:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    volumes:
+      - recruitment-redis:/data
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "127.0.0.1:9200:9200"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null || exit 1"
+        ]
+      interval: 10s
+      timeout: 8s
+      retries: 30
+      start_period: 45s
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - recruitment-opensearch:/usr/share/opensearch/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENVIRONMENT: "${APP_ENVIRONMENT:-production}"
+      APP_API_KEY: "${APP_API_KEY:-}"
+      APP_API_CLIENTS_JSON: "${APP_API_CLIENTS_JSON:-}"
+      APP_DATABASE_URL: "postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment"
+      APP_REDIS_URL: "redis://redis:6379/0"
+      APP_OPENSEARCH_URL: "http://opensearch:9200"
+      APP_MATCHING_V2_ENABLED: "${APP_MATCHING_V2_ENABLED:-false}"
+      APP_MATCHING_V2_SHADOW_MODE: "${APP_MATCHING_V2_SHADOW_MODE:-false}"
+      APP_MATCHING_V2_FALLBACK_ENABLED: "${APP_MATCHING_V2_FALLBACK_ENABLED:-true}"
+      APP_MATCHING_MODEL_SERVICE_URL: "${APP_MATCHING_MODEL_SERVICE_URL:-http://matching-models:8090}"
+      APP_EMBEDDING_SERVICE_URL: "${APP_EMBEDDING_SERVICE_URL:-http://matching-models:8090}"
+      APP_EMBEDDING_DIMENSIONS: "${APP_EMBEDDING_DIMENSIONS:-384}"
+      APP_RERANKER_SERVICE_URL: "${APP_RERANKER_SERVICE_URL:-}"
+      APP_RERANKER_API_KEY: "${APP_RERANKER_API_KEY:-}"
+      APP_RAG_SERVICE_URL: "${APP_RAG_SERVICE_URL:-}"
+      APP_RAG_API_KEY: "${APP_RAG_API_KEY:-}"
+      APP_RAG_PROJECT_ID: "${APP_RAG_PROJECT_ID:-}"
+      APP_RAG_COLLECTION: "${APP_RAG_COLLECTION:-default}"
+      APP_RAG_ENABLED: "${APP_RAG_ENABLED:-false}"
+      APP_SUBMISSION_MODE: "review"
+      APP_ARTIFACT_DIRECTORY: "/app/.artifacts"
+      APP_MAX_DOCUMENT_BYTES: "5242880"
+      APP_HH_USER_AGENT: "${APP_HH_USER_AGENT:-JobSearchingAssistant/1.0 (local personal assistant)}"
+      APP_HH_ACCESS_TOKEN: "${APP_HH_ACCESS_TOKEN:-}"
+      APP_BROWSER_STATE_ENCRYPTION_KEY: "${APP_BROWSER_STATE_ENCRYPTION_KEY:-}"
+      APP_ENABLE_HEADHUNTER_APPLY: "${APP_ENABLE_HEADHUNTER_APPLY:-false}"
+      APP_ENABLE_LINKEDIN_APPLY: "${APP_ENABLE_LINKEDIN_APPLY:-false}"
+      APP_ANTHROPIC_API_KEY: "${APP_ANTHROPIC_API_KEY:-}"
+      APP_GEMINI_API_KEY: "${APP_GEMINI_API_KEY:-}"
+      APP_MATERIALS_GENERATION_TIMEOUT_SECONDS: "${APP_MATERIALS_GENERATION_TIMEOUT_SECONDS:-120}"
+    command: ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "0.0.0.0:${APP_HTTP_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3).read()"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    volumes:
+      - ./.artifacts:/app/.artifacts
+      - ./config/browser:/app/config/browser:ro
+    networks:
+      - default
+      - local-code-worker
+
   retention:
     build: .
+    restart: unless-stopped
     environment:
-      APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
-      APP_ARTIFACT_DIRECTORY: /app/.artifacts
-      APP_RETENTION_DAYS: 30
-      APP_RETENTION_INTERVAL_SECONDS: 86400
+      APP_DATABASE_URL: "postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment"
+      APP_ARTIFACT_DIRECTORY: "/app/.artifacts"
+      APP_RETENTION_DAYS: "30"
+      APP_RETENTION_INTERVAL_SECONDS: "86400"
     command: ["python", "-m", "app.workers.retention"]
     depends_on:
       postgres:
         condition: service_healthy
       api:
         condition: service_healthy
-    restart: unless-stopped
     volumes:
       - ./.artifacts:/app/.artifacts
 
   dispatcher:
     build: .
+    restart: unless-stopped
     environment:
-      APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
-      APP_REDIS_URL: redis://redis:6379/0
-      APP_OPENSEARCH_URL: http://opensearch:9200
-      APP_MATCHING_V2_ENABLED: ${APP_MATCHING_V2_ENABLED:-false}
-      APP_MATCHING_V2_SHADOW_MODE: ${APP_MATCHING_V2_SHADOW_MODE:-true}
-      APP_MATCHING_V2_FALLBACK_ENABLED: ${APP_MATCHING_V2_FALLBACK_ENABLED:-true}
-      APP_MATCHING_MODEL_SERVICE_URL: ${APP_MATCHING_MODEL_SERVICE_URL:-http://matching-models:8090}
-      APP_BROWSER_STATE_ENCRYPTION_KEY: ${APP_BROWSER_STATE_ENCRYPTION_KEY:-}
-      APP_ANTHROPIC_API_KEY: ${APP_ANTHROPIC_API_KEY:-}
-      APP_GEMINI_API_KEY: ${APP_GEMINI_API_KEY:-}
-      APP_WORKER_LEASE_SECONDS: 120
-      APP_WORKER_POLL_SECONDS: 2
-      APP_WORKER_RETRY_SECONDS: 30
-      APP_WORKER_MAX_ATTEMPTS: 3
+      APP_DATABASE_URL: "postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment"
+      APP_REDIS_URL: "redis://redis:6379/0"
+      APP_OPENSEARCH_URL: "http://opensearch:9200"
+      APP_MATCHING_V2_ENABLED: "${APP_MATCHING_V2_ENABLED:-false}"
+      APP_MATCHING_V2_SHADOW_MODE: "${APP_MATCHING_V2_SHADOW_MODE:-false}"
+      APP_MATCHING_V2_FALLBACK_ENABLED: "${APP_MATCHING_V2_FALLBACK_ENABLED:-true}"
+      APP_MATCHING_MODEL_SERVICE_URL: "${APP_MATCHING_MODEL_SERVICE_URL:-http://matching-models:8090}"
+      APP_EMBEDDING_SERVICE_URL: "${APP_EMBEDDING_SERVICE_URL:-http://matching-models:8090}"
+      APP_EMBEDDING_DIMENSIONS: "${APP_EMBEDDING_DIMENSIONS:-384}"
+      APP_RERANKER_SERVICE_URL: "${APP_RERANKER_SERVICE_URL:-}"
+      APP_RERANKER_API_KEY: "${APP_RERANKER_API_KEY:-}"
+      APP_BROWSER_STATE_ENCRYPTION_KEY: "${APP_BROWSER_STATE_ENCRYPTION_KEY:-}"
+      APP_ANTHROPIC_API_KEY: "${APP_ANTHROPIC_API_KEY:-}"
+      APP_GEMINI_API_KEY: "${APP_GEMINI_API_KEY:-}"
+      APP_WORKER_LEASE_SECONDS: "120"
+      APP_WORKER_POLL_SECONDS: "2"
+      APP_WORKER_RETRY_SECONDS: "30"
+      APP_WORKER_MAX_ATTEMPTS: "3"
     command: ["python", "-m", "app.workers.dispatcher"]
     depends_on:
       postgres:
@@ -101,23 +174,89 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+    volumes:
+      - ./.artifacts:/app/.artifacts
+    networks:
+      - default
+      - local-code-worker
+
+  matching-worker:
+    build: .
     restart: unless-stopped
+    environment:
+      APP_DATABASE_URL: "postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment"
+      APP_REDIS_URL: "redis://redis:6379/0"
+      APP_OPENSEARCH_URL: "http://opensearch:9200"
+      APP_MATCHING_V2_ENABLED: "${APP_MATCHING_V2_ENABLED:-false}"
+      APP_MATCHING_V2_SHADOW_MODE: "${APP_MATCHING_V2_SHADOW_MODE:-false}"
+      APP_MATCHING_V2_FALLBACK_ENABLED: "${APP_MATCHING_V2_FALLBACK_ENABLED:-true}"
+      APP_MATCHING_MODEL_SERVICE_URL: "${APP_MATCHING_MODEL_SERVICE_URL:-http://matching-models:8090}"
+      APP_EMBEDDING_SERVICE_URL: "${APP_EMBEDDING_SERVICE_URL:-http://matching-models:8090}"
+      APP_EMBEDDING_DIMENSIONS: "${APP_EMBEDDING_DIMENSIONS:-384}"
+      APP_RERANKER_SERVICE_URL: "${APP_RERANKER_SERVICE_URL:-}"
+      APP_RERANKER_API_KEY: "${APP_RERANKER_API_KEY:-}"
+      APP_RAG_SERVICE_URL: "${APP_RAG_SERVICE_URL:-}"
+      APP_RAG_API_KEY: "${APP_RAG_API_KEY:-}"
+      APP_RAG_PROJECT_ID: "${APP_RAG_PROJECT_ID:-}"
+      APP_RAG_COLLECTION: "${APP_RAG_COLLECTION:-default}"
+      APP_RAG_ENABLED: "${APP_RAG_ENABLED:-false}"
+      APP_BROWSER_STATE_ENCRYPTION_KEY: "${APP_BROWSER_STATE_ENCRYPTION_KEY:-}"
+      APP_ANTHROPIC_API_KEY: "${APP_ANTHROPIC_API_KEY:-}"
+      APP_GEMINI_API_KEY: "${APP_GEMINI_API_KEY:-}"
+      APP_MATCHING_WORKER_CONCURRENCY: "${APP_MATCHING_WORKER_CONCURRENCY:-2}"
+      APP_MATCHING_LLM_CONCURRENCY: "${APP_MATCHING_LLM_CONCURRENCY:-10}"
+      APP_MATCHING_CACHE_TTL_SECONDS: "${APP_MATCHING_CACHE_TTL_SECONDS:-604800}"
+      APP_MATCHING_ENTAILMENT_MAX_CANDIDATES: "${APP_MATCHING_ENTAILMENT_MAX_CANDIDATES:-2}"
+      APP_MATCHING_ENTAILMENT_MAX_TOKENS: "${APP_MATCHING_ENTAILMENT_MAX_TOKENS:-512}"
+      APP_MATCHING_ENTAILMENT_CONTEXT_SIZE: "${APP_MATCHING_ENTAILMENT_CONTEXT_SIZE:-4096}"
+      APP_MATCHING_ENTAILMENT_BATCH_SIZE: "${APP_MATCHING_ENTAILMENT_BATCH_SIZE:-5}"
+      # Optional: route entailment evaluation to a separate (e.g. smaller) model.
+      # Empty = use the user's configured model.
+      APP_MATCHING_ENTAILMENT_MODEL: "${APP_MATCHING_ENTAILMENT_MODEL:-}"
+      APP_MATCHING_EXTRACTION_CONTEXT_SIZE: "${APP_MATCHING_EXTRACTION_CONTEXT_SIZE:-4096}"
+      APP_MATCHING_EXTRACTION_MAX_TOKENS: "${APP_MATCHING_EXTRACTION_MAX_TOKENS:-4096}"
+      APP_MATCHING_DECOMPOSE_MAX_TOKENS: "${APP_MATCHING_DECOMPOSE_MAX_TOKENS:-2048}"
+      APP_MATCHING_DECOMPOSE_CONTEXT_SIZE: "${APP_MATCHING_DECOMPOSE_CONTEXT_SIZE:-4096}"
+      APP_WORKER_LEASE_SECONDS: "300"
+      APP_WORKER_POLL_SECONDS: "2"
+      APP_WORKER_RETRY_SECONDS: "30"
+      APP_WORKER_MAX_ATTEMPTS: "3"
+    command: ["python", "-m", "app.workers.matching_worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - ./.artifacts:/app/.artifacts
+    networks:
+      - default
+      - local-code-worker
 
   browser-worker:
     profiles: ["browser"]
     build:
       context: .
       dockerfile: Dockerfile.browser
+    restart: unless-stopped
     environment:
-      APP_DATABASE_URL: postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment
-      APP_REDIS_URL: redis://redis:6379/0
-      APP_ARTIFACT_DIRECTORY: /app/.artifacts
-      APP_BROWSER_STATE_ENCRYPTION_KEY: ${APP_BROWSER_STATE_ENCRYPTION_KEY:-}
-      APP_ENABLE_HEADHUNTER_APPLY: ${APP_ENABLE_HEADHUNTER_APPLY:-false}
-      APP_ENABLE_LINKEDIN_APPLY: ${APP_ENABLE_LINKEDIN_APPLY:-false}
-      APP_MAX_BROWSER_STATE_BYTES: 2097152
-      APP_WORKER_POLL_SECONDS: 2
-    command: ["python", "-m", "app.workers.browser_worker"]
+      APP_DATABASE_URL: "postgresql+psycopg://recruitment:recruitment@postgres:5432/recruitment"
+      APP_REDIS_URL: "redis://redis:6379/0"
+      APP_ARTIFACT_DIRECTORY: "/app/.artifacts"
+      APP_BROWSER_STATE_ENCRYPTION_KEY: "${APP_BROWSER_STATE_ENCRYPTION_KEY:-}"
+      APP_ENABLE_HEADHUNTER_APPLY: "${APP_ENABLE_HEADHUNTER_APPLY:-false}"
+      APP_ENABLE_LINKEDIN_APPLY: "${APP_ENABLE_LINKEDIN_APPLY:-false}"
+      APP_MAX_BROWSER_STATE_BYTES: "2097152"
+      APP_WORKER_POLL_SECONDS: "2"
+      DISPLAY: ":99"
+    command: ["/bin/bash", "scripts/start_browser_worker_with_desktop.sh"]
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:7900:7900"
     depends_on:
       postgres:
         condition: service_healthy
@@ -125,70 +264,41 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    restart: unless-stopped
     volumes:
       - ./.artifacts:/app/.artifacts
       - ./config/browser:/app/config/browser:ro
-
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "127.0.0.1:6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    volumes:
-      - recruitment-redis:/data
-
-  opensearch:
-    image: opensearchproject/opensearch:2.19.1
-    environment:
-      discovery.type: single-node
-      DISABLE_INSTALL_DEMO_CONFIG: "true"
-      DISABLE_SECURITY_PLUGIN: "true"
-      bootstrap.memory_lock: "true"
-      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
-    ports:
-      - "127.0.0.1:9200:9200"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    volumes:
-      - recruitment-opensearch:/usr/share/opensearch/data
 
   matching-models:
     profiles: ["matching"]
     build:
       context: .
       dockerfile: Dockerfile.ml
+    restart: unless-stopped
     environment:
-      EMBEDDING_MODEL_NAME: BAAI/bge-m3
-      EMBEDDING_MODEL_REVISION: main
-      RERANKER_MODEL_NAME: BAAI/bge-reranker-v2-m3
-      RERANKER_MODEL_REVISION: main
-      MODEL_DEVICE: cpu
-      MODEL_BATCH_SIZE: 8
-      HF_HOME: /models/huggingface
+      HF_TOKEN: "${HF_TOKEN:-}"
+      EMBEDDING_MODEL_NAME: "intfloat/multilingual-e5-small"
+      EMBEDDING_MODEL_REVISION: "main"
+      RERANKER_MODEL_NAME: "cross-encoder/ms-marco-MiniLM-L-2-v2"
+      RERANKER_MODEL_REVISION: "main"
+      MODEL_DEVICE: "cpu"
+      MODEL_BATCH_SIZE: "16"
+      HF_HOME: "/models/huggingface"
       HF_HUB_DISABLE_XET: "1"
-      HF_HUB_DOWNLOAD_TIMEOUT: 600
+      HF_HUB_DOWNLOAD_TIMEOUT: "600"
     ports:
       - "127.0.0.1:8090:8090"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=5).read()"
+        ]
       interval: 30s
       timeout: 10s
       retries: 30
-      start_period: 300s
-    restart: unless-stopped
+      start_period: 120s
     volumes:
       - recruitment-model-cache:/models/huggingface
 
@@ -197,3 +307,8 @@ volumes:
   recruitment-redis:
   recruitment-opensearch:
   recruitment-model-cache:
+
+networks:
+  local-code-worker:
+    name: local-code-worker-network
+    external: true

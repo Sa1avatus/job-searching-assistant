@@ -73,9 +73,7 @@ def upgrade() -> None:
             .values(
                 salary_text=find_salary_text(description_text),
                 work_format=detect_work_format(title, location, description_text),
-                employment_types=list(
-                    detect_employment_types(title, location, description_text)
-                ),
+                employment_types=list(detect_employment_types(title, location, description_text)),
             )
         )
 

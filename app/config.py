@@ -27,16 +27,56 @@ class Settings(BaseSettings):
     opensearch_evidence_index_prefix: str = "candidate-evidence"
     opensearch_evidence_read_alias: str = "candidate-evidence-read"
     opensearch_evidence_write_alias: str = "candidate-evidence-write"
-    embedding_dimensions: int = Field(default=1024, ge=1, le=65_536)
+    embedding_dimensions: int = Field(default=384, ge=1, le=65_536)
     matching_v2_enabled: bool = False
     matching_v2_shadow_mode: bool = True
     matching_v2_fallback_enabled: bool = True
     matching_model_service_url: str = "http://localhost:8090"
+    matching_retrieval_top_k: int = Field(default=20, ge=1, le=200)
+    matching_reranker_top_k: int = Field(default=5, ge=1, le=50)
+    embedding_service_url: str | None = None
     matching_model_timeout_seconds: float = Field(default=120, ge=1, le=600)
+    reranker_service_url: str | None = None
+    reranker_api_key: SecretStr | None = None
+    rag_service_url: str | None = None
+    browser_worker_url: str = "http://browser-worker:8080"
+    rag_api_key: SecretStr | None = None
+    rag_project_id: str | None = None
+    rag_collection: str = "default"
+    rag_timeout_seconds: float = Field(default=30, ge=1, le=300)
+    rag_enabled: bool = False
     worker_lease_seconds: int = Field(default=120, ge=10, le=3600)
     worker_poll_seconds: float = Field(default=2.0, ge=0.1, le=60)
     worker_retry_seconds: int = Field(default=30, ge=1, le=3600)
     worker_max_attempts: int = Field(default=3, ge=1, le=20)
+    matching_worker_concurrency: int = Field(default=2, ge=1, le=8)
+    matching_llm_concurrency: int = Field(default=10, ge=1, le=50)
+    matching_cache_ttl_seconds: int = Field(default=604_800, ge=60, le=31_536_000)
+    # Maximum (claim, evidence) candidates evaluated per claim before the strong-match
+    # early-exit. Entailment is ~88% of the LLM call budget, so a lower cap trades a small
+    # amount of recall (the 3rd-ranked candidate is skipped) for a ~1/3 cut in entailment
+    # calls on claims that don't hit a strong entailed on the top candidates.
+    matching_entailment_max_candidates: int = Field(default=2, ge=1, le=10)
+    matching_entailment_max_tokens: int = Field(default=512, ge=64, le=8192)
+    matching_entailment_context_size: int = Field(default=4096, ge=512, le=32768)
+    # Pairs per batched entailment LLM call (1 disables batching). The batch prompt
+    # evaluates several (claim, evidence) pairs in one request, amortizing
+    # per-request overhead; batches are packed to fit the context window.
+    matching_entailment_batch_size: int = Field(default=5, ge=1, le=20)
+    # Optional model name for entailment evaluation only (e.g. a small local
+    # model for classification). Empty = use the user's configured model.
+    matching_entailment_model: str = ""
+    # Extraction reads the full vacancy/candidate source text. Keep its context
+    # aligned with decompose/entailment so Ollama does not reload the model on
+    # every extraction→decompose stage switch (a 3GB model reload costs 10-30s and
+    # queues decompose/entailment calls into the model timeout).
+    matching_extraction_context_size: int = Field(default=4096, ge=512, le=32768)
+    matching_extraction_max_tokens: int = Field(default=4096, ge=64, le=16384)
+    matching_decompose_max_tokens: int = Field(default=2048, ge=64, le=8192)
+    # MUST match matching_entailment_context_size: Ollama reloads the model whenever
+    # num_ctx changes, and reloading a 3GB model between every decompose/entailment
+    # group dominated local-model matching latency.
+    matching_decompose_context_size: int = Field(default=4096, ge=512, le=32768)
     max_document_bytes: int = Field(default=5_242_880, ge=1_024, le=20_971_520)
     max_evidence_bytes: int = Field(default=10_485_760, ge=1_024, le=52_428_800)
     retention_days: int = Field(default=30, ge=1, le=3650)
@@ -74,11 +114,25 @@ class Settings(BaseSettings):
         "api_clients_json",
         "hh_access_token",
         "browser_state_encryption_key",
+        "reranker_api_key",
+        "rag_api_key",
         mode="before",
     )
     @classmethod
     def empty_secret_is_none(cls, value: object) -> object:
         return None if value == "" else value
+
+    @field_validator(
+        "embedding_service_url", "reranker_service_url", "rag_service_url", mode="before"
+    )
+    @classmethod
+    def empty_service_url_is_none(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @property
+    def resolved_embedding_service_url(self) -> str:
+        """Resolve the legacy matching URL only for the embedding service migration."""
+        return self.embedding_service_url or self.matching_model_service_url
 
     @field_validator(
         "opensearch_evidence_index_prefix",
@@ -87,8 +141,12 @@ class Settings(BaseSettings):
     )
     @classmethod
     def validate_opensearch_name(cls, value: str) -> str:
-        if not value or value != value.casefold() or any(
-            character in value for character in (" ", "\\", "/", "*", "?", '"', "<", ">", "|")
+        if (
+            not value
+            or value != value.casefold()
+            or any(
+                character in value for character in (" ", "\\", "/", "*", "?", '"', "<", ">", "|")
+            )
         ):
             raise ValueError("OpenSearch index and alias names must be lowercase and path-safe")
         return value

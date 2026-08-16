@@ -126,9 +126,7 @@ def upgrade() -> None:
         sa.Column("index_name", sa.String(255), nullable=False),
         sa.Column("indexed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.CheckConstraint(
-            "dimensions > 0", name="ck_embedding_records_dimensions_positive"
-        ),
+        sa.CheckConstraint("dimensions > 0", name="ck_embedding_records_dimensions_positive"),
         sa.UniqueConstraint(
             "entity_type",
             "entity_id",

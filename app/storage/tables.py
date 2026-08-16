@@ -47,11 +47,38 @@ class LlmPreferenceRow(Base):
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
+    purpose: Mapped[str] = mapped_column(String(50), primary_key=True, default="materials")
     provider: Mapped[str] = mapped_column(String(50))
     model: Mapped[str] = mapped_column(String(200))
+    base_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     encrypted_api_key: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class EmailIntegrationRow(Base):
+    __tablename__ = "email_integrations"
+    __table_args__ = (
+        CheckConstraint(
+            "port >= 1 AND port <= 65535",
+            name="ck_email_integrations_port_range",
+        ),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    host: Mapped[str] = mapped_column(String(255))
+    port: Mapped[int] = mapped_column(Integer, default=993)
+    username: Mapped[str] = mapped_column(String(320))
+    encrypted_password: Mapped[str] = mapped_column(Text)
+    use_ssl: Mapped[bool] = mapped_column(Boolean, default=True)
+    mailbox: Mapped[str] = mapped_column(String(255), default="INBOX")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
 
 
 class CompanyBlacklistRow(Base):
@@ -95,6 +122,197 @@ class ProfileFactRow(Base):
     value: Mapped[str] = mapped_column(Text)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Provenance columns for fact ingestion
+    source_type: Mapped[str] = mapped_column(String(50), default="manual")
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_method: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    experience_started_at: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    experience_ended_at: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="active")
+
+
+class AutofillValueRow(Base):
+    __tablename__ = "autofill_values"
+    __table_args__ = (UniqueConstraint("user_id", "key", name="uq_autofill_values_user_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(200))
+    label: Mapped[str] = mapped_column(String(200))
+    value_type: Mapped[str] = mapped_column(String(30))
+    encrypted_value: Mapped[str] = mapped_column(Text)
+    is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
+class SiteDefinitionRow(Base):
+    __tablename__ = "site_definitions"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "site_key",
+            name="uq_site_definitions_user_site_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    site_key: Mapped[str] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(String(200))
+    login_url: Mapped[str] = mapped_column(Text)
+    allowed_hosts: Mapped[list[str]] = mapped_column(JSON, default=list)
+    authorization_rules: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
+class WorkflowDefinitionRow(Base):
+    __tablename__ = "workflow_definitions"
+    __table_args__ = (
+        UniqueConstraint(
+            "site_definition_id",
+            "version",
+            name="uq_workflow_definitions_site_version",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'testing', 'active', 'broken', 'archived')",
+            name="ck_workflow_definitions_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    site_definition_id: Mapped[str] = mapped_column(
+        ForeignKey("site_definitions.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int]
+    status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    vacancy_url_patterns: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
+class WorkflowStepRow(Base):
+    __tablename__ = "workflow_steps"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_definition_id",
+            "position",
+            name="uq_workflow_steps_definition_position",
+        ),
+        CheckConstraint(
+            "action_type IN ('navigate', 'fill', 'upload', 'select', 'check', "
+            "'click', 'wait', 'assert', 'human_review', 'submit')",
+            name="ck_workflow_steps_action_type",
+        ),
+        CheckConstraint(
+            "timeout_ms >= 1 AND timeout_ms <= 120000",
+            name="ck_workflow_steps_timeout_range",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    workflow_definition_id: Mapped[str] = mapped_column(
+        ForeignKey("workflow_definitions.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer)
+    action_type: Mapped[str] = mapped_column(String(30), index=True)
+    selector_candidates: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    condition: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    parameters: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    timeout_ms: Mapped[int] = mapped_column(Integer, default=10_000)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
+class SiteFieldRow(Base):
+    __tablename__ = "site_fields"
+    __table_args__ = (
+        UniqueConstraint(
+            "site_definition_id",
+            "field_key",
+            name="uq_site_fields_definition_field_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    site_definition_id: Mapped[str] = mapped_column(
+        ForeignKey("site_definitions.id", ondelete="CASCADE"), index=True
+    )
+    field_key: Mapped[str] = mapped_column(String(200))
+    semantic_key: Mapped[str] = mapped_column(String(200), default="custom")
+    label: Mapped[str] = mapped_column(String(300), default="")
+    field_type: Mapped[str] = mapped_column(String(30))
+    is_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    options: Mapped[list[str]] = mapped_column(JSON, default=list)
+    selector_candidates: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
+class SiteFieldMappingRow(Base):
+    __tablename__ = "site_field_mappings"
+    __table_args__ = (
+        UniqueConstraint(
+            "site_field_id",
+            name="uq_site_field_mappings_site_field_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    site_field_id: Mapped[str] = mapped_column(
+        ForeignKey("site_fields.id", ondelete="CASCADE"), index=True
+    )
+    value_key: Mapped[str] = mapped_column(String(200))
+    transformation: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    review_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
+class SiteValueOverrideRow(Base):
+    __tablename__ = "site_value_overrides"
+    __table_args__ = (
+        UniqueConstraint(
+            "site_definition_id",
+            "scope_key",
+            "value_key",
+            name="uq_site_value_overrides_scope_value_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    site_definition_id: Mapped[str] = mapped_column(
+        ForeignKey("site_definitions.id", ondelete="CASCADE"), index=True
+    )
+    site_field_id: Mapped[str | None] = mapped_column(
+        ForeignKey("site_fields.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    scope_key: Mapped[str] = mapped_column(String(36))
+    value_key: Mapped[str] = mapped_column(String(200))
+    encrypted_value: Mapped[str] = mapped_column(Text)
+    is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
 
 
 class VacancyRow(Base):
@@ -196,9 +414,7 @@ class CandidateEvidenceRow(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     cv_file_id: Mapped[str] = mapped_column(
         ForeignKey("cv_files.id", ondelete="CASCADE"), index=True
     )
@@ -268,6 +484,60 @@ class ApplicationRow(Base):
     answers: Mapped[list[ApplicationAnswerRow]] = relationship(cascade="all, delete-orphan")
 
 
+class ApplicationEmailEventRow(Base):
+    __tablename__ = "application_email_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "message_fingerprint",
+            name="uq_application_email_events_user_fingerprint",
+        ),
+        CheckConstraint(
+            "outcome IN ('rejected', 'next_stage', 'unknown')",
+            name="ck_application_email_events_outcome",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    application_id: Mapped[str | None] = mapped_column(
+        ForeignKey("applications.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    message_fingerprint: Mapped[str] = mapped_column(String(64))
+    outcome: Mapped[str] = mapped_column(String(30))
+    status_applied: Mapped[bool] = mapped_column(Boolean, default=False)
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ApplicationTimelineEventRow(Base):
+    __tablename__ = "application_timeline_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ("
+            "'status_change', 'email_received', 'email_sent', "
+            "'note_added', 'match_calculated', 'manual_update'"
+            ")",
+            name="ck_application_timeline_events_event_type",
+        ),
+        Index(
+            "ix_application_timeline_events_app_occurred",
+            "application_id",
+            "occurred_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(50), index=True)
+    previous_value: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    new_value: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    detail_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    source: Mapped[str] = mapped_column(String(100), default="system")
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class RequirementMatchRow(Base):
     __tablename__ = "requirement_matches"
     __table_args__ = (
@@ -318,6 +588,10 @@ class RequirementMatchRow(Base):
     explanation: Mapped[str] = mapped_column(Text)
     retrieval_model_versions_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Entailment columns
+    entailment_relation: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    evidence_strength: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_hard_blocker: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class ApplicationMatchResultRow(Base):
@@ -326,6 +600,22 @@ class ApplicationMatchResultRow(Base):
         CheckConstraint(
             "final_score >= 0 AND final_score <= 100",
             name="ck_application_match_results_final_range",
+        ),
+        CheckConstraint(
+            "language_score >= 0 AND language_score <= 100",
+            name="ck_application_match_results_language_range",
+        ),
+        CheckConstraint(
+            "semantic_similarity >= 0 AND semantic_similarity <= 1",
+            name="ck_application_match_results_semantic_range",
+        ),
+        CheckConstraint(
+            "reranker_score >= 0 AND reranker_score <= 1",
+            name="ck_application_match_results_reranker_range",
+        ),
+        CheckConstraint(
+            "requirements_match >= 0 AND requirements_match <= 100",
+            name="ck_application_match_results_requirements_range",
         ),
     )
 
@@ -347,6 +637,10 @@ class ApplicationMatchResultRow(Base):
     work_format_score: Mapped[float] = mapped_column(Float, default=0.0)
     location_score: Mapped[float] = mapped_column(Float, default=0.0)
     domain_score: Mapped[float] = mapped_column(Float, default=0.0)
+    language_score: Mapped[float] = mapped_column(Float, default=0.0)
+    semantic_similarity: Mapped[float] = mapped_column(Float, default=0.0)
+    reranker_score: Mapped[float] = mapped_column(Float, default=0.0)
+    requirements_match: Mapped[float] = mapped_column(Float, default=0.0)
     blocker_count: Mapped[int] = mapped_column(Integer, default=0)
     matched_required_count: Mapped[int] = mapped_column(Integer, default=0)
     missing_required_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -360,6 +654,15 @@ class ApplicationMatchResultRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
     )
+    # Claim pipeline scoring columns
+    required_score: Mapped[float] = mapped_column(Float, default=0.0)
+    preferred_score: Mapped[float] = mapped_column(Float, default=0.0)
+    bonus_score: Mapped[float] = mapped_column(Float, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    # Pipeline progress tracking
+    requirements_total: Mapped[int] = mapped_column(Integer, default=0)
+    requirements_processed: Mapped[int] = mapped_column(Integer, default=0)
+    llm_calls_made: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class ApplicationAnswerRow(Base):
@@ -401,6 +704,7 @@ class WorkflowTaskRow(Base):
     scheduled_for: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, index=True
     )
+    refresh_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
@@ -483,3 +787,20 @@ class WorkerHeartbeatRow(Base):
     worker_name: Mapped[str] = mapped_column(String(200), primary_key=True)
     status: Mapped[str] = mapped_column(String(50))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class FactImportBatchRow(Base):
+    __tablename__ = "fact_import_batches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    source_type: Mapped[str] = mapped_column(String(50))
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    extractor_version: Mapped[str] = mapped_column(String(50), default="1")
+    facts_created: Mapped[int] = mapped_column(Integer, default=0)
+    facts_merged: Mapped[int] = mapped_column(Integer, default=0)
+    facts_skipped: Mapped[int] = mapped_column(Integer, default=0)
+    facts_rejected: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(30), default="completed")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

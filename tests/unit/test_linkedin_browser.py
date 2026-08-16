@@ -13,6 +13,7 @@ from adapters.job_boards.linkedin_browser import (
     clean_linkedin_description_text,
     has_submitted_application_marker,
     is_meaningful_linkedin_description,
+    select_best_linkedin_description,
 )
 from app.browser.engine import BrowserActionResult, PlaywrightEngine
 from app.domain.failures import FailureCategory
@@ -78,6 +79,49 @@ Community Guidelines"""
 
     assert "Looking for talent?" not in cleaned
     assert not is_meaningful_linkedin_description(cleaned)
+
+
+def test_linkedin_description_selector_prefers_full_vacancy_over_promo() -> None:
+    promo = """See jobs where you’d be a top applicant Plus!
+Get insider access to live talks with industry leaders.
+1-month free trial. Easy to cancel.
+We'll remind you 7 days before your trial ends."""
+    full_description = """About the job
+About the role
+Build and evaluate production LLM systems for enterprise customers.
+Responsibilities
+Design evaluation datasets and improve prompt quality across products.
+Requirements
+Three years of Python experience and hands-on work with LLM evaluation."""
+
+    selected = select_best_linkedin_description((promo, full_description))
+
+    assert selected.startswith("About the role")
+    assert "Responsibilities" in selected
+    assert "Three years of Python experience" in selected
+    assert "free trial" not in selected.casefold()
+
+
+@pytest.mark.asyncio
+async def test_linkedin_description_waits_for_meaningful_semantic_container() -> None:
+    marker = MagicMock()
+    marker.evaluate = AsyncMock(
+        return_value=(
+            "About the job\nResponsibilities\nBuild production evaluation systems.\n"
+            "Requirements\nExperience with Python, LLMs, and evaluation datasets."
+        )
+    )
+    markers = MagicMock()
+    markers.count = AsyncMock(return_value=1)
+    markers.nth.return_value = marker
+    page = MagicMock()
+    page.get_by_text.return_value = markers
+    page.wait_for_timeout = AsyncMock()
+
+    candidates = await LinkedInBrowserAdapter._semantic_description_candidates(cast(Page, page))
+
+    assert select_best_linkedin_description(candidates).startswith("Responsibilities")
+    page.wait_for_timeout.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -191,9 +235,7 @@ async def test_search_closes_page_on_zero_results(
     cards = MagicMock()
     cards.count = AsyncMock(return_value=0)
     result_targets = MagicMock()
-    result_targets.first.wait_for = AsyncMock(
-        side_effect=PlaywrightTimeoutError("no results")
-    )
+    result_targets.first.wait_for = AsyncMock(side_effect=PlaywrightTimeoutError("no results"))
     page.locator.side_effect = [cards, result_targets]
     engine = MagicMock()
     engine.artifact_directory = Path(".artifacts")

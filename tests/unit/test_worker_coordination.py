@@ -7,6 +7,7 @@ class FakeRedisClient:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
         self.counters: dict[str, int] = {}
+        self.expirations: dict[str, int] = {}
 
     async def set(self, name: str, value: str, *, nx: bool, ex: int) -> bool | None:
         if nx and name in self.values:
@@ -15,9 +16,12 @@ class FakeRedisClient:
         return True
 
     async def eval(self, script: str, numkeys: int, *keys_and_args: str) -> int:
-        key, expected_value = keys_and_args
+        key, expected_value, *extra_args = keys_and_args
         if self.values.get(key) != expected_value:
             return 0
+        if extra_args:
+            self.expirations[key] = int(extra_args[0])
+            return 1
         del self.values[key]
         return 1
 
@@ -39,6 +43,9 @@ def test_only_one_worker_acquires_lease_and_owner_releases_it() -> None:
         assert first_lease is not None
         assert second_lease is None
         wrong_owner = WorkerLease("application:1", "wrong", 30)
+        assert await coordinator.renew_lease(wrong_owner) is False
+        assert await coordinator.renew_lease(first_lease) is True
+        assert list(client.expirations.values()) == [30]
         assert await coordinator.release_lease(wrong_owner) is False
         assert await coordinator.release_lease(first_lease) is True
 

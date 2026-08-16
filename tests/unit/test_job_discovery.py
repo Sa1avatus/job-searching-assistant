@@ -392,6 +392,17 @@ def test_build_search_queries_combines_phrases_and_words_without_duplicates() ->
     ]
 
 
+def test_build_search_queries_bounds_long_resume_keyword_lists_for_job_sites() -> None:
+    search_text = ", ".join(f"Specialized Role {index}" for index in range(80))
+
+    queries = build_search_queries(search_text)
+
+    assert len(search_text) > 300
+    assert 1 <= len(queries) <= 8
+    assert all(len(query) <= 200 for query in queries)
+    assert search_text not in queries
+
+
 def test_skill_matching_normalizes_spacing_and_respects_word_boundaries() -> None:
     normalized_skill = _normalize_skill("  Machine   Learning ")
 
@@ -712,9 +723,7 @@ def test_greenhouse_backfills_limit_after_rejected_candidate() -> None:
                 GreenhouseSearchHit(
                     rejected_url, "Old Python Engineer", "Old Example", "Remote", "Python"
                 ),
-                GreenhouseSearchHit(
-                    new_url, "New Python Engineer", "Example", "Remote", "Python"
-                ),
+                GreenhouseSearchHit(new_url, "New Python Engineer", "Example", "Remote", "Python"),
             )
         )
         with session_factory() as session:

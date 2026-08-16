@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, HttpUrl, SecretStr
 
 from app.domain.application_status import ApplicationStatus
+from app.domain.autofill import AutofillValueType
 
 WorkFormat = Literal["remote", "hybrid", "office", "unspecified"]
 EmploymentTypeName = Literal[
@@ -14,6 +15,8 @@ EmploymentTypeName = Literal[
     "temporary",
     "internship",
 ]
+
+_MAX_SEARCH_TEXT_LENGTH = 2_000
 
 
 class VacancyRequest(BaseModel):
@@ -47,6 +50,18 @@ class AssessmentResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     submission_mode: str
+
+
+class RerankerStatusResponse(BaseModel):
+    configured: bool
+    status: str
+    live: bool
+    ready: bool
+    degraded: bool
+    model: str | None = None
+    model_revision: str | None = None
+    device: str | None = None
+    error_code: str | None = None
 
 
 class ConnectorCapabilityResponse(BaseModel):
@@ -87,6 +102,32 @@ class ProfileFactResponse(ProfileFactRequest):
     user_id: str
 
 
+class AutofillValueResponse(BaseModel):
+    id: str
+    user_id: str
+    key: str
+    label: str
+    value_type: str
+    serialized_value: str
+    is_sensitive: bool
+    requires_review: bool
+    may_send_to_llm: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AutofillValueCreateRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=200)
+    label: str = Field(min_length=1, max_length=200)
+    value_type: AutofillValueType
+    serialized_value: str = Field(min_length=1)
+    is_sensitive: bool = False
+
+
+class AutofillValueUpdateRequest(BaseModel):
+    serialized_value: str = Field(min_length=1)
+
+
 class CvFileResponse(BaseModel):
     id: str
     user_id: str
@@ -100,6 +141,19 @@ class CvFileResponse(BaseModel):
     years_of_experience: float | None
     analyzed_at: datetime | None
     is_active: bool = False
+    rag_sync_status: str = "not_scheduled"
+    rag_sync_attempts: int = 0
+    rag_sync_failure_code: str | None = None
+    rag_synced_at: datetime | None = None
+
+
+class ResumeRagSyncResponse(BaseModel):
+    task_id: str
+    status: str
+    attempt_number: int
+    failure_code: str | None = None
+    updated_at: datetime
+    synced_at: datetime | None = None
 
 
 class ActiveCvFileRequest(BaseModel):
@@ -186,6 +240,9 @@ class RequirementMatchDetailResponse(BaseModel):
     match_level: str
     explanation: str
     retrieval_model_versions: dict[str, object]
+    entailment_relation: str | None = None
+    evidence_strength: float | None = None
+    is_hard_blocker: bool = False
 
 
 class ApplicationMatchDetailsResponse(BaseModel):
@@ -204,6 +261,10 @@ class ApplicationMatchDetailsResponse(BaseModel):
     work_format_score: float
     location_score: float
     domain_score: float
+    language_score: float
+    semantic_similarity: float
+    reranker_score: float
+    requirements_match: float
     blocker_count: int
     matched_required_count: int
     missing_required_count: int
@@ -215,6 +276,16 @@ class ApplicationMatchDetailsResponse(BaseModel):
     started_at: datetime | None
     calculated_at: datetime | None
     requirements: list[RequirementMatchDetailResponse]
+    required_score: float = 0.0
+    preferred_score: float = 0.0
+    bonus_score: float = 0.0
+    confidence: float = 0.0
+    raw_score_before_blockers: float = 0.0
+    blocker_penalty: float = 0.0
+    calibration_version: str = "identity"
+    recommendations: list[str] = Field(default_factory=list)
+    hard_blockers: list[str] = Field(default_factory=list)
+    hard_blockers_unresolved: list[str] = Field(default_factory=list)
 
 
 class TaskTransitionResponse(BaseModel):
@@ -224,6 +295,7 @@ class TaskTransitionResponse(BaseModel):
     worker: str
     attempt_number: int
     evidence: list[str]
+    occurred_at: datetime
 
 
 class WorkflowTaskResponse(BaseModel):
@@ -234,6 +306,18 @@ class WorkflowTaskResponse(BaseModel):
     state: str
     attempt_number: int
     priority: int
+    queue_position: int | None = None
+    pipeline_status: str | None = None
+    pipeline_started_at: datetime | None = None
+    pipeline_updated_at: datetime | None = None
+    calculated_at: datetime | None = None
+    requirements_total: int | None = None
+    requirements_processed: int | None = None
+    llm_calls_made: int | None = None
+    refresh_requested: bool = False
+    scheduled_for: datetime
+    created_at: datetime
+    updated_at: datetime
     transitions: list[TaskTransitionResponse]
 
 
@@ -339,7 +423,7 @@ class ConfirmProfileFactsRequest(BaseModel):
 
 
 class ConfirmResumeProfileRequest(ConfirmProfileFactsRequest):
-    search_keywords: str = Field(default="", max_length=500)
+    search_keywords: str = Field(default="", max_length=2_000)
     years_of_experience: float | None = Field(default=None, ge=0, le=80)
 
 
@@ -351,9 +435,60 @@ class ConfirmedProfileFactResponse(BaseModel):
     is_verified: bool
 
 
+class ProfileFactDetailResponse(BaseModel):
+    id: str
+    user_id: str
+    category: str
+    name: str
+    value: str
+    is_verified: bool
+    source_type: str = "manual"
+    source_id: str | None = None
+    source_text: str | None = None
+    extraction_method: str | None = None
+    batch_id: str | None = None
+    confidence: float = 1.0
+    experience_started_at: str | None = None
+    experience_ended_at: str | None = None
+    status: str = "active"
+    created_at: datetime | None = None
+
+
+class FactImportBatchResponse(BaseModel):
+    id: str
+    user_id: str
+    source_type: str
+    source_id: str | None = None
+    source_filename: str | None = None
+    extractor_version: str
+    facts_created: int
+    facts_merged: int
+    facts_skipped: int
+    facts_rejected: int
+    status: str
+    created_at: datetime | None = None
+
+
+class FactImportResultResponse(BaseModel):
+    batch_id: str
+    source_type: str
+    facts_created: int
+    facts_merged: int
+    facts_skipped: int
+    facts_rejected: int
+    candidates: list[dict[str, object]] = []
+
+
+class ExtractFromResumeRequest(BaseModel):
+    cv_file_id: str
+    force: bool = False
+    auto_accept: bool = False
+
+
 class LlmModelsRequest(BaseModel):
-    provider: Literal["anthropic", "gemini"]
+    provider: Literal["anthropic", "gemini", "openai_compatible"]
     api_key: SecretStr
+    base_url: str | None = Field(default=None, max_length=2000)
 
 
 class LlmModelsResponse(BaseModel):
@@ -361,19 +496,45 @@ class LlmModelsResponse(BaseModel):
 
 
 class LlmPreferenceUpdateRequest(BaseModel):
-    provider: Literal["anthropic", "gemini"]
+    provider: Literal["anthropic", "gemini", "openai_compatible"]
     model: str = Field(min_length=1, max_length=200)
     api_key: SecretStr | None = None
+    base_url: str | None = Field(default=None, max_length=2000)
+    purpose: str = Field(default="materials", min_length=1, max_length=50)
 
 
 class LlmPreferenceResponse(BaseModel):
-    provider: Literal["anthropic", "gemini"]
+    provider: Literal["anthropic", "gemini", "openai_compatible"]
     model: str
+    base_url: str | None = None
     api_key_configured: bool = True
+    purpose: str = "materials"
+
+
+class EmailIntegrationUpdateRequest(BaseModel):
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(ge=1, le=65535)
+    username: str = Field(min_length=1, max_length=320)
+    password: SecretStr | None = None
+    use_ssl: bool = True
+    mailbox: str = Field(default="INBOX", min_length=1, max_length=255)
+    enabled: bool = True
+
+
+class EmailIntegrationResponse(BaseModel):
+    host: str
+    port: int
+    username: str
+    use_ssl: bool
+    mailbox: str
+    enabled: bool
+    password_configured: bool = True
 
 
 class BrowserSessionStatusResponse(BaseModel):
-    site_key: Literal["headhunter", "linkedin"]
+    site_key: str
+    site_name: str
+    is_custom: bool = False
     is_authorized: bool
     is_live: bool | None = None
     is_waiting_for_login: bool
@@ -384,8 +545,110 @@ class BrowserSessionStatusResponse(BaseModel):
 
 
 class BrowserAuthorizationResponse(BaseModel):
-    site_key: Literal["headhunter", "linkedin"]
+    site_key: str
     state: Literal["waiting_for_login", "authorized", "cancelled"]
+
+
+class SiteDefinitionCreateRequest(BaseModel):
+    site_key: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=200)
+    login_url: str = Field(min_length=1, max_length=2000)
+    allowed_hosts: list[str] = Field(min_length=1, max_length=50)
+    authorization_rules: dict[str, object] = Field(default_factory=dict)
+
+
+class SiteDefinitionUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    login_url: str = Field(min_length=1, max_length=2000)
+    allowed_hosts: list[str] = Field(min_length=1, max_length=50)
+    authorization_rules: dict[str, object] = Field(default_factory=dict)
+
+
+class SiteDefinitionResponse(BaseModel):
+    id: str
+    site_key: str
+    name: str
+    login_url: str
+    allowed_hosts: list[str]
+    authorization_rules: dict[str, object]
+    is_archived: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class SiteFieldDiscoveryItem(BaseModel):
+    field_key: str = Field(min_length=1, max_length=200)
+    semantic_key: str = Field(default="custom", min_length=1, max_length=200)
+    label: str = Field(default="", max_length=300)
+    field_type: Literal[
+        "text", "textarea", "select", "radio", "checkbox", "file", "date", "number", "unknown"
+    ]
+    is_required: bool = False
+    options: list[str] = Field(default_factory=list, max_length=200)
+    selector_candidates: list[str] = Field(min_length=1, max_length=20)
+
+
+class SiteFieldDiscoveryRequest(BaseModel):
+    fields: list[SiteFieldDiscoveryItem] = Field(max_length=200)
+
+
+class SiteFieldMappingUpdateRequest(BaseModel):
+    value_key: str = Field(min_length=1, max_length=200)
+    transformation: dict[str, object] = Field(default_factory=dict)
+    review_required: bool = False
+
+
+class SiteValueOverrideRequest(BaseModel):
+    value_key: str = Field(min_length=1, max_length=200)
+    serialized_value: str = Field(min_length=1, max_length=20_000)
+    is_sensitive: bool = False
+    site_field_id: str | None = None
+
+
+class SiteFieldMappingResponse(BaseModel):
+    id: str
+    value_key: str
+    transformation: dict[str, object]
+    review_required: bool
+
+
+class SiteFieldResponse(BaseModel):
+    id: str
+    site_definition_id: str
+    field_key: str
+    semantic_key: str
+    label: str
+    field_type: str
+    is_required: bool
+    options: list[str]
+    selector_candidates: list[dict[str, str]]
+    mapping: SiteFieldMappingResponse | None = None
+    has_site_override: bool = False
+    has_field_override: bool = False
+
+
+class SiteValueOverrideResponse(BaseModel):
+    id: str
+    site_definition_id: str
+    site_field_id: str | None
+    value_key: str
+    is_sensitive: bool
+
+
+class EffectiveValueResponse(BaseModel):
+    value_key: str
+    value: str
+    source: Literal[
+        "application_override",
+        "site_field_override",
+        "site_override",
+        "resume",
+        "global",
+        "generated",
+    ]
+    source_record_id: str | None
+    is_sensitive: bool
+    requires_review: bool
 
 
 class DiscoverHeadHunterVacanciesRequest(BaseModel):
@@ -395,7 +658,7 @@ class DiscoverHeadHunterVacanciesRequest(BaseModel):
         max_length=20,
     )
     limit: int = Field(default=15, ge=1, le=50)
-    search_text: str | None = Field(default=None, max_length=300)
+    search_text: str | None = Field(default=None, max_length=_MAX_SEARCH_TEXT_LENGTH)
     cv_file_id: str | None = None
 
 
@@ -450,7 +713,7 @@ class DiscoverLinkedInVacanciesRequest(BaseModel):
         max_length=5,
     )
     limit: int = Field(default=15, ge=1, le=50)
-    search_text: str | None = Field(default=None, max_length=300)
+    search_text: str | None = Field(default=None, max_length=_MAX_SEARCH_TEXT_LENGTH)
     cv_file_id: str | None = None
 
 
@@ -464,7 +727,7 @@ class DiscoverGreenhouseVacanciesRequest(BaseModel):
     )
     locations: list[str] = Field(default_factory=list, max_length=20)
     limit: int = Field(default=15, ge=1, le=50)
-    search_text: str | None = Field(default=None, max_length=300)
+    search_text: str | None = Field(default=None, max_length=_MAX_SEARCH_TEXT_LENGTH)
     cv_file_id: str | None = None
 
 
@@ -475,8 +738,9 @@ class DiscoverVacanciesStreamRequest(BaseModel):
     board_urls: list[HttpUrl] = Field(default_factory=list, max_length=20)
     locations: list[str] = Field(default_factory=list, max_length=20)
     limit: int = Field(default=15, ge=1, le=50)
-    search_text: str | None = Field(default=None, max_length=300)
+    search_text: str | None = Field(default=None, max_length=_MAX_SEARCH_TEXT_LENGTH)
     cv_file_id: str | None = None
+    direct_rerank: bool = False
 
 
 class CompanyBlacklistRequest(BaseModel):

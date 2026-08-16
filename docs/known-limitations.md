@@ -1,10 +1,13 @@
 # Known limitations
 
+Read this document when diagnosing connector behavior or deciding whether a capability has been
+verified beyond controlled fixtures.
+
 ## hh.ru (HeadHunter)
-- Search and vacancy extraction go through a real Chromium browser
-  (`adapters/job_boards/headhunter_browser.py`), not `api.hh.ru` — the anonymous API is
-  CAPTCHA-limited in practice. The personal dashboard requires and reuses the candidate's saved
-  hh.ru session for search, extraction, and the separate real-submission step.
+- Search and vacancy extraction go through Chromium (`adapters/job_boards/headhunter_browser.py`),
+  not `api.hh.ru`. The adapter can read public pages without a captured session, but dashboard
+  discovery deliberately requires and reuses the candidate's saved hh.ru session. Submission also
+  requires that session.
 - Real response submission (`POST /v1/applications/{id}/apply-headhunter`) requires
   `APP_ENABLE_HEADHUNTER_APPLY=true` and a session captured by hand through the dashboard — the
   automation never sees or types a password.
@@ -14,9 +17,8 @@
 - Location filtering uses a small built-in table of common region names → hh.ru area ids
   (`KNOWN_AREA_IDS`), not a live lookup; unknown region names are ignored (falls back to
   "anywhere").
-- Selectors are based on hh.ru's `data-qa` attributes but have not been exercised against the live
-  site from the development sandbox (no network egress there). Verify locally with
-  `APP_BROWSER_HEADLESS=false` before unattended use.
+- Selectors are based on hh.ru's `data-qa` attributes. Their current live compatibility is not
+  established by the controlled suite and must be treated as time-sensitive.
 - The vacancy's "resume" field is always reported as required by hh.ru but is never filled by this
   adapter (hh.ru attaches whichever resume is already selected in the user's own account); it is
   explicitly excluded from the pre-submission required-answer check for this reason.
@@ -52,8 +54,8 @@
 - The current browser flow fills a controlled fixture and stops at review; it never submits.
 
 ## Materials generation (cover letters / screening answers)
-- Requires `APP_ANTHROPIC_API_KEY`; the user supplies and is billed for their own key, with no
-  proxying or markup by this project.
+- Requires a user-configured Anthropic, Gemini, or OpenAI-compatible provider. External providers
+  receive the selected resume facts and vacancy context and may bill the user's account.
 - The model only ever sees the candidate's own *verified* profile facts and the vacancy's own
   text; it is instructed not to invent anything beyond that, and sensitive-category fields (work
   authorization, disability, background checks, etc.) are never sent to the model and never
@@ -70,6 +72,30 @@
   still not Russian.
 
 ## General
+- Matching v2 requires separately configured embedding and reranker services. The independent
+  reranker has not been claimed as live-compatible until its bearer-authenticated Docker smoke test
+  is explicitly run; when it is absent or unavailable, matching uses conservative hybrid scores.
+- RAG is optional. When `APP_RAG_ENABLED=false` (default) or the service is unavailable, the
+  pipeline uses local data only and records the fallback in the explanation. When enabled, RAG may
+  refine the ordering of locally verified candidate evidence before reranking; retrieved RAG text
+  never becomes evidence by itself and cannot introduce a candidate claim.
+- JSA expects the RAG project to provide authorized `profiles`, `resumes`, and `vacancies`
+  collections. It does not create them automatically. Confirmed resume profiles and confirmed
+  profile facts are synchronized, updates use the platform's optimistic-lock contract, and
+  **Direct to reranker** performs another refresh. Resume deletion and empty-profile cleanup are
+  propagated, and deleting a user attempts cleanup of all known owner-scoped RAG documents. A
+  bounded owner-scoped CLI backfill is available, but it is operator-triggered. Confirmed resume
+  synchronization uses the durable dispatcher with bounded retries, and its task state plus a
+  sanitized failure code are exposed per resume. Aggregate success, skipped, and failure counts are
+  exposed through `/metrics`.
+- Skill normalization resolves common aliases (Postgres→postgresql, K8s→kubernetes) during
+  extraction. Unknown skills pass through unchanged. Custom aliases can be injected via
+  `SkillNormalizer(aliases={...})`.
+- Email classification uses regex patterns for EN and RU. Ambiguous emails (both rejection and
+  next-stage signals, or no signals) produce `UNKNOWN` outcome and appear in the review queue.
+  Automatic status updates only happen for high-confidence outcomes.
+- EML/MBOX/ZIP file import providers skip corrupted files gracefully. ZIP import rejects path
+  traversal attempts (`../..`, absolute paths) and enforces decompression size limits.
 - Human-action/CAPTCHA checkpoints and encrypted Playwright storage state are durable. The worker
   does not yet reconnect an open tab, preserve in-memory JavaScript state, or automatically resume
   an external action; recovery starts a new context from cookies/localStorage.

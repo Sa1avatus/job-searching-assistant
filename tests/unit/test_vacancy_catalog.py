@@ -87,17 +87,32 @@ def test_catalog_hides_rejected_and_blacklisted_companies() -> None:
             preferred_skills=[],
         )
         visible_application = recruitment.prepare_application(user.id, visible_vacancy.id)
+        employer_rejected_vacancy = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/employer-rejected",
+            title="Employer rejected",
+            company="Employer Rejected Co",
+            required_skills=[],
+            preferred_skills=[],
+        )
+        employer_rejected_application = recruitment.prepare_application(
+            user.id, employer_rejected_vacancy.id
+        )
         recruitment.prepare_application(user.id, blocked_vacancy.id)
         CompanyBlacklistService(session).add(user.id, "Blocked Co")
 
         VacancyCatalogService(session).reject_saved_vacancy(visible_application.id)
+        recruitment.update_application_status(employer_rejected_application.id, "employer_rejected")
         visible_page = VacancyCatalogService(session).list_saved_vacancies(user.id)
         rejected_page = VacancyCatalogService(session).list_saved_vacancies(
             user.id, status="rejected"
         )
+        employer_rejected_page = VacancyCatalogService(session).list_saved_vacancies(
+            user.id, status="employer_rejected"
+        )
 
     assert visible_page.total == 0
     assert [item.company for item in rejected_page.items] == ["Visible Co"]
+    assert [item.company for item in employer_rejected_page.items] == ["Employer Rejected Co"]
 
 
 def test_catalog_filters_by_source_publication_date() -> None:

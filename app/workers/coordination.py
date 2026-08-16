@@ -38,6 +38,12 @@ class RedisCoordinator:
         end
         return 0
     """
+    _RENEW_SCRIPT = """
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+            return redis.call('expire', KEYS[1], ARGV[2])
+        end
+        return 0
+    """
 
     def __init__(self, client: RedisCoordinationClient, namespace: str = "recruitment") -> None:
         self._client = client
@@ -62,6 +68,16 @@ class RedisCoordinator:
             lease.owner_token,
         )
         return deleted_count == 1
+
+    async def renew_lease(self, lease: WorkerLease) -> bool:
+        renewed = await self._client.eval(
+            self._RENEW_SCRIPT,
+            1,
+            self._lease_key(lease.resource_key),
+            lease.owner_token,
+            str(lease.expires_in_seconds),
+        )
+        return renewed == 1
 
     async def check_domain_rate_limit(
         self,

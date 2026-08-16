@@ -4,10 +4,12 @@ import secrets
 import sys
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import suppress
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
+from urllib.parse import urlsplit
 
 # Playwright launches the browser as a subprocess. On Windows, asyncio's default
 # SelectorEventLoop (which uvicorn ends up using in some run configurations, notably
@@ -23,6 +25,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 import httpx
+import structlog
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import SecretStr
@@ -32,8 +35,6 @@ from sqlalchemy.orm import Session
 from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChallenge
 from adapters.job_boards.contracts import ADAPTER_CAPABILITIES
 from adapters.job_boards.greenhouse_api import GreenhouseJobBoardApi
-from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter
-from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
 from adapters.job_boards.linkedin_reference import LinkedInJobReference
 from app.api.schemas import (
     ActiveCvFileRequest,
@@ -44,6 +45,9 @@ from app.api.schemas import (
     ApplicationStatusUpdateRequest,
     AssessmentRequest,
     AssessmentResponse,
+    AutofillValueCreateRequest,
+    AutofillValueResponse,
+    AutofillValueUpdateRequest,
     BrowserApplySubmitRequest,
     BrowserAuthorizationResponse,
     BrowserHandoffRequest,
@@ -62,9 +66,15 @@ from app.api.schemas import (
     DiscoverLinkedInVacanciesRequest,
     DiscoverVacanciesStreamRequest,
     DiscoveryOutcomeResponse,
+    EffectiveValueResponse,
+    EmailIntegrationResponse,
+    EmailIntegrationUpdateRequest,
     EmploymentTypeName,
     EvidenceArtifactResponse,
     ExtractedProfileResponse,
+    ExtractFromResumeRequest,
+    FactImportBatchResponse,
+    FactImportResultResponse,
     GreenhouseImportRequest,
     HeadHunterImportRequest,
     HealthResponse,
@@ -77,14 +87,26 @@ from app.api.schemas import (
     LlmPreferenceResponse,
     LlmPreferenceUpdateRequest,
     PrepareApplicationRequest,
+    ProfileFactDetailResponse,
     ProfileFactRequest,
     ProfileFactResponse,
     RequirementMatchDetailResponse,
+    RerankerStatusResponse,
+    ResumeRagSyncResponse,
     ReviewDecisionRequest,
     ReviewItemResponse,
     SavedVacancyPageResponse,
     SavedVacancyResponse,
     ScreeningAnswerResponse,
+    SiteDefinitionCreateRequest,
+    SiteDefinitionResponse,
+    SiteDefinitionUpdateRequest,
+    SiteFieldDiscoveryRequest,
+    SiteFieldMappingResponse,
+    SiteFieldMappingUpdateRequest,
+    SiteFieldResponse,
+    SiteValueOverrideRequest,
+    SiteValueOverrideResponse,
     TaskTransitionResponse,
     UserRequest,
     UserResponse,
@@ -93,36 +115,77 @@ from app.api.schemas import (
     WorkflowTaskResponse,
     WorkFormat,
 )
-from app.browser.engine import PlaywrightEngine
-from app.browser.selector_library import SelectorLibrary
+from app.api.statistics_schemas import (
+    ApplicationEmailSyncResponse,
+    ApplicationStatisticsResponse,
+    ApplicationSyncResponse,
+)
 from app.browser.session_probe import probe_browser_session
-from app.browser.session_service import BrowserSessionService
 from app.browser.session_store import InvalidBrowserState, delete_browser_state_file
 from app.config import Settings, get_settings
+from app.domain.autofill_keys import InvalidAutofillKey
+from app.domain.autofill_sensitivity import evaluate_autofill_usage
+from app.domain.effective_values import (
+    EffectiveValueBlocked,
+    EffectiveValueCandidate,
+    EffectiveValueNotFound,
+    apply_effective_value_transformation,
+    resolve_effective_autofill_value,
+)
+from app.domain.forms import FormField, FormFieldType
 from app.domain.models import ProfileFact, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy
 from app.domain.resume_text import UnreadableResumeError, extract_resume_text
 from app.domain.vacancy_attributes import EMPLOYMENT_TYPE_ORDER
 from app.llm.preferences import (
+    DEFAULT_LLM_PURPOSE,
     InvalidLlmPreference,
     LlmModelDiscoveryError,
     LlmPreferenceNotFound,
+    LlmPreferencePurpose,
     LlmPreferenceService,
     fetch_available_models,
+    resolve_preference,
 )
 from app.llm.providers.anthropic import AnthropicMessagesProvider
 from app.llm.providers.gemini import GeminiProvider
+from app.llm.providers.openai_compatible import OpenAICompatibleProvider
 from app.llm.router import ModelProvider, ModelRouter, NoModelAvailableError
-from app.matching.jobs import MatchingJobNotReadyError, MatchingJobService
+from app.matching.jobs import (
+    BACKGROUND_MATCHING_PRIORITY,
+    MatchingJobNotReadyError,
+    MatchingJobService,
+)
 from app.observability.logging import configure_logging
 from app.observability.metrics import metrics
+from app.prompts.registry import PromptRegistry
+from app.security.autofill_decryption import decrypt_autofill_value
+from app.security.autofill_encryption import InvalidAutofillValueEncryption
+from app.services.application_email_sync import (
+    ApplicationEmailProvider,
+    ApplicationEmailSyncService,
+)
+from app.services.application_sync import ApplicationStatusSyncService, ApplicationSubmissionProbe
+from app.services.autofill_value_delete import delete_autofill_value
+from app.services.autofill_value_list import list_autofill_values
+from app.services.autofill_value_update import update_autofill_value
+from app.services.autofill_values import InvalidAutofillValue, create_autofill_value
 from app.services.browser_authorization import (
-    BrowserAuthorizationError,
-    BrowserAuthorizationManager,
-    BrowserSiteKey,
+    KNOWN_AUTHORIZATION_SITES,
+    BrowserAuthorizationSite,
 )
 from app.services.browser_handoff import create_browser_handoff
+from app.services.browser_worker_client import BrowserWorkerClient
 from app.services.company_blacklist import CompanyBlacklistService
+from app.services.email_file_import import (
+    MAX_EMAIL_IMPORT_BYTES,
+    MAX_EMAIL_IMPORT_FILES,
+    UploadedEmailFile,
+    UploadedEmailImportProvider,
+)
+from app.services.email_integrations import EmailIntegrationService, InvalidEmailIntegration
+from app.services.http_adapters import HttpHeadHunterAdapter, HttpLinkedInAdapter
+from app.services.imap_email_provider import ImapApplicationEmailProvider
 from app.services.job_discovery import (
     DiscoveryOutcome,
     GreenhouseDiscoveryError,
@@ -137,12 +200,31 @@ from app.services.materials_generation import (
     cover_letter_matches_vacancy_language,
     detect_vacancy_language,
 )
+from app.services.rag_sync import RagSyncService
 from app.services.recruitment import (
     DuplicateEntityError,
     EntityNotFoundError,
     RecruitmentService,
 )
+from app.services.reranker_status import RerankerStatusProbe
 from app.services.resume_intake import ResumeIntakeService
+from app.services.resume_rag_jobs import (
+    ResumeRagJobNotReadyError,
+    ResumeRagJobService,
+    ResumeRagJobStatus,
+)
+from app.services.site_definition_archive import archive_site_definition
+from app.services.site_definition_update import (
+    InvalidSiteDefinitionUpdate,
+    update_site_definition,
+)
+from app.services.site_definitions import InvalidSiteDefinition, create_site_definition
+from app.services.site_fields import (
+    InvalidSiteField,
+    save_discovered_site_fields,
+    upsert_site_field_mapping,
+    upsert_site_value_override,
+)
 from app.services.vacancy_catalog import VacancyCatalogService
 from app.services.vacancy_metadata import (
     detect_work_format,
@@ -155,25 +237,52 @@ from app.storage.evidence_artifacts import EvidenceArtifactStorage, InvalidEvide
 from app.storage.tables import (
     ApplicationMatchResultRow,
     ApplicationRow,
+    AutofillValueRow,
     BrowserSessionRow,
     CandidateEvidenceRow,
     CvFileRow,
+    EmailIntegrationRow,
     LlmPreferenceRow,
+    ProfileFactRow,
     RequirementMatchRow,
+    SiteDefinitionRow,
+    SiteFieldMappingRow,
+    SiteFieldRow,
+    SiteValueOverrideRow,
     UserRow,
     VacancyRequirementRow,
     VacancyRow,
     WorkerHeartbeatRow,
     WorkflowTaskRow,
 )
-from app.workers.browser_tasks import _restore_browser_session
 from app.workers.browser_worker import create_session_store
 
 configure_logging()
-app = FastAPI(title="Job Searching Assistant", version="1.1.100")
+logger = structlog.get_logger(__name__)
+app = FastAPI(title="Job Searching Assistant", version="1.4.1")
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
-BROWSER_AUTHORIZATION_MANAGER = BrowserAuthorizationManager()
+
+
+def get_application_email_provider(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationEmailProvider:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(status_code=503, detail="Encrypted storage is not configured")
+    try:
+        integration = EmailIntegrationService(
+            session,
+            encryption_key=encryption_key,
+        ).load(user_id)
+    except InvalidEmailIntegration as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    if integration is None or not integration.enabled:
+        raise HTTPException(status_code=503, detail="Email integration is not configured")
+    return ImapApplicationEmailProvider(integration)
 
 
 def serialize_discovery_outcomes(
@@ -205,7 +314,13 @@ def response_employment_types(vacancy: VacancyRow) -> list[EmploymentTypeName]:
     ]
 
 
-def serialize_cv_file(cv_file: CvFileRow, *, active_cv_file_id: str | None) -> CvFileResponse:
+def serialize_cv_file(
+    cv_file: CvFileRow,
+    *,
+    active_cv_file_id: str | None,
+    rag_status: ResumeRagJobStatus | None = None,
+) -> CvFileResponse:
+    rag_status = rag_status or ResumeRagJobStatus(None, "not_scheduled", 0, None, None, None)
     return CvFileResponse(
         id=cv_file.id,
         user_id=cv_file.user_id,
@@ -219,7 +334,37 @@ def serialize_cv_file(cv_file: CvFileRow, *, active_cv_file_id: str | None) -> C
         years_of_experience=cv_file.years_of_experience,
         analyzed_at=cv_file.analyzed_at,
         is_active=cv_file.id == active_cv_file_id,
+        rag_sync_status=rag_status.status,
+        rag_sync_attempts=rag_status.attempt_number,
+        rag_sync_failure_code=rag_status.failure_code,
+        rag_synced_at=rag_status.synced_at,
     )
+
+
+def resume_rag_status(session: Session, cv_file_id: str) -> ResumeRagJobStatus:
+    settings = get_settings()
+    if not (
+        settings.rag_enabled
+        and settings.rag_service_url
+        and settings.rag_api_key
+        and settings.rag_project_id
+    ):
+        return ResumeRagJobStatus(None, "not_configured", 0, None, None, None)
+    return ResumeRagJobService(session).status(cv_file_id)
+
+
+def required_mapping_string(data: dict[str, object], key: str, *, default: str = "") -> str:
+    value = data.get(key, default)
+    if not isinstance(value, str):
+        raise ValueError(f"Browser worker returned invalid {key}")
+    return value
+
+
+def required_mapping_string_list(data: dict[str, object], key: str) -> list[str]:
+    value = data.get(key, [])
+    if not isinstance(value, list | tuple) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"Browser worker returned invalid {key}")
+    return [item for item in value if isinstance(item, str)]
 
 
 def required_api_scope(method: str, path: str) -> str:
@@ -234,6 +379,8 @@ def required_api_scope(method: str, path: str) -> str:
     if path.startswith("/v1/vacancies"):
         return "vacancies:write"
     if method == "GET" and path.startswith("/v1/evidence/"):
+        return "review:read"
+    if method == "GET" and path.startswith("/v1/workflow-tasks/"):
         return "review:read"
     if path == "/v1/applications/prepare":
         return "applications:write"
@@ -274,6 +421,20 @@ async def llm_http_client() -> AsyncIterator[httpx.AsyncClient]:
     timeout = httpx.Timeout(settings.materials_generation_timeout_seconds + 10)
     async with httpx.AsyncClient(
         timeout=timeout, follow_redirects=False, trust_env=False
+    ) as client:
+        yield client
+
+
+async def reranker_http_client() -> AsyncIterator[httpx.AsyncClient | None]:
+    settings = get_settings()
+    if settings.reranker_service_url is None or settings.reranker_api_key is None:
+        yield None
+        return
+    async with httpx.AsyncClient(
+        base_url=settings.reranker_service_url,
+        timeout=settings.matching_model_timeout_seconds,
+        follow_redirects=False,
+        trust_env=False,
     ) as client:
         yield client
 
@@ -335,11 +496,12 @@ def build_user_model_providers(
     session: Session,
     user_id: str,
     settings: Settings,
+    purpose: str | LlmPreferencePurpose = DEFAULT_LLM_PURPOSE,
 ) -> tuple[ModelProvider, ...]:
     encryption_key = _configured_secret(settings.browser_state_encryption_key)
     if encryption_key is None:
         return build_model_providers(http_client, settings)
-    preference = LlmPreferenceService(session, encryption_key=encryption_key).load(user_id)
+    preference = resolve_preference(session, user_id, encryption_key, purpose)
     if preference is None:
         return build_model_providers(http_client, settings)
     if preference.provider == "anthropic":
@@ -348,31 +510,24 @@ def build_user_model_providers(
                 http_client, api_key=preference.api_key, model=preference.model
             ),
         )
-    return (GeminiProvider(http_client, api_key=preference.api_key, model=preference.model),)
+    if preference.provider == "gemini":
+        return (GeminiProvider(http_client, api_key=preference.api_key, model=preference.model),)
+    if preference.base_url is None:
+        raise InvalidLlmPreference("OpenAI-compatible base URL is required")
+    return (
+        OpenAICompatibleProvider(
+            http_client,
+            api_key=preference.api_key,
+            model=preference.model,
+            base_url=preference.base_url,
+        ),
+    )
 
 
 async def model_router() -> AsyncIterator[ModelRouter]:
     settings = get_settings()
     async with httpx.AsyncClient(timeout=60, follow_redirects=False, trust_env=False) as client:
         yield ModelRouter(build_model_providers(client, settings))
-
-
-async def headhunter_browser_adapter() -> AsyncIterator[HeadHunterBrowserAdapter]:
-    """A HeadHunterBrowserAdapter for read-only search/extraction (no captured session needed).
-
-    api.hh.ru's anonymous access is CAPTCHA-limited in practice, so search and vacancy reads go
-    through a real Chromium instance against hh.ru's public pages instead. Only the separate
-    apply step needs a session captured via scripts/browser_login_capture.py.
-    """
-    settings = get_settings()
-    task_artifact_directory = settings.artifact_directory / "browser-worker" / "headhunter-read"
-    async with PlaywrightEngine(
-        headless=settings.browser_headless,
-        timeout_ms=settings.browser_timeout_ms,
-        artifact_directory=task_artifact_directory,
-        selector_library=SelectorLibrary(settings.artifact_directory),
-    ) as browser_engine:
-        yield HeadHunterBrowserAdapter(browser_engine)
 
 
 def document_storage() -> DocumentStorage:
@@ -457,6 +612,7 @@ def dashboard_interface() -> FileResponse:
             ),
             "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
         },
     )
 
@@ -630,6 +786,25 @@ def ready(session: Annotated[Session, Depends(session_scope)]) -> HealthResponse
     return health()
 
 
+@app.get("/api/v1/admin/reranker/status", response_model=RerankerStatusResponse)
+async def get_reranker_status(
+    http_client: Annotated[httpx.AsyncClient | None, Depends(reranker_http_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> RerankerStatusResponse:
+    api_key = (
+        settings.reranker_api_key.get_secret_value()
+        if settings.reranker_api_key is not None
+        else None
+    )
+    partially_configured = (settings.reranker_service_url is None) != (api_key is None)
+    result = await RerankerStatusProbe().probe(
+        http_client,
+        api_key=api_key,
+        partially_configured=partially_configured,
+    )
+    return RerankerStatusResponse.model_validate(asdict(result))
+
+
 @app.get("/v1/connectors", response_model=list[ConnectorCapabilityResponse])
 def list_connectors() -> list[ConnectorCapabilityResponse]:
     return [
@@ -675,6 +850,122 @@ def create_user(
     return UserResponse(id=user.id, display_name=user.display_name)
 
 
+@app.get(
+    "/v1/users/{user_id}/application-statistics",
+    response_model=ApplicationStatisticsResponse,
+)
+def get_application_statistics(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationStatisticsResponse:
+    try:
+        service = RecruitmentService(session)
+        total, counts = service.get_application_statistics(user_id)
+        email_counts = service.get_application_email_statistics(user_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return ApplicationStatisticsResponse(total=total, **counts, **email_counts)
+
+
+@app.post(
+    "/v1/users/{user_id}/application-sync",
+    response_model=ApplicationSyncResponse,
+)
+async def synchronize_application_statuses(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationSyncResponse:
+    settings = get_settings()
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if settings.browser_state_encryption_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail="APP_BROWSER_STATE_ENCRYPTION_KEY is required",
+        )
+    probes: dict[str, ApplicationSubmissionProbe] = {}
+    browser_client = BrowserWorkerClient(settings.browser_worker_url)
+    headhunter_probe = await browser_client.probe(user_id=user_id, site_key="headhunter")
+    if headhunter_probe.valid:
+        probes["headhunter"] = HttpHeadHunterAdapter(browser_client, user_id)
+    if settings.enable_linkedin_apply:
+        linkedin_probe = await browser_client.probe(user_id=user_id, site_key="linkedin")
+        if linkedin_probe.valid:
+            probes["linkedin-reference"] = HttpLinkedInAdapter(browser_client, user_id)
+    try:
+        summary = await ApplicationStatusSyncService(session).synchronize(user_id, probes)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return ApplicationSyncResponse.model_validate(asdict(summary))
+
+
+@app.post(
+    "/v1/users/{user_id}/application-email-sync",
+    response_model=ApplicationEmailSyncResponse,
+)
+async def synchronize_application_emails(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    provider: Annotated[ApplicationEmailProvider, Depends(get_application_email_provider)],
+) -> ApplicationEmailSyncResponse:
+    try:
+        summary = await ApplicationEmailSyncService(session).synchronize(user_id, provider)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return ApplicationEmailSyncResponse.model_validate(asdict(summary))
+
+
+@app.post(
+    "/v1/users/{user_id}/application-email-import",
+    response_model=ApplicationEmailSyncResponse,
+)
+async def import_application_emails(
+    user_id: str,
+    files: Annotated[
+        list[UploadFile],
+        File(description="EML files, an mbox mailbox, or ZIP archives containing EML files"),
+    ],
+    session: Annotated[Session, Depends(session_scope)],
+) -> ApplicationEmailSyncResponse:
+    if not files:
+        raise HTTPException(status_code=422, detail="At least one email file is required")
+    if len(files) > MAX_EMAIL_IMPORT_FILES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"At most {MAX_EMAIL_IMPORT_FILES} email files can be imported at once",
+        )
+    uploaded_files: list[UploadedEmailFile] = []
+    total_bytes = 0
+    try:
+        for upload in files:
+            remaining = MAX_EMAIL_IMPORT_BYTES - total_bytes
+            content = await upload.read(remaining + 1)
+            if len(content) > remaining:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="Email import exceeds the total size limit",
+                )
+            total_bytes += len(content)
+            uploaded_files.append(
+                UploadedEmailFile(
+                    filename=upload.filename or "",
+                    content=content,
+                )
+            )
+    finally:
+        for upload in files:
+            await upload.close()
+    try:
+        provider = UploadedEmailImportProvider(uploaded_files)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    try:
+        summary = await ApplicationEmailSyncService(session).synchronize(user_id, provider)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return ApplicationEmailSyncResponse.model_validate(asdict(summary))
+
+
 @app.post("/v1/llm/models", response_model=LlmModelsResponse)
 async def list_llm_models(
     request: LlmModelsRequest,
@@ -685,6 +976,7 @@ async def list_llm_models(
             http_client,
             provider=request.provider,
             api_key=request.api_key.get_secret_value(),
+            base_url=request.base_url,
         )
     except (InvalidLlmPreference, LlmModelDiscoveryError, httpx.HTTPError) as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
@@ -696,12 +988,173 @@ async def list_llm_models(
     response_model=LlmPreferenceResponse | None,
 )
 def get_llm_preference(
-    user_id: str, session: Annotated[Session, Depends(session_scope)]
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    purpose: str = "materials",
 ) -> LlmPreferenceResponse | None:
-    row = session.get(LlmPreferenceRow, user_id)
+    row = session.get(LlmPreferenceRow, (user_id, purpose))
     if row is None:
         return None
-    return LlmPreferenceResponse(provider=row.provider, model=row.model)  # type: ignore[arg-type]
+    return LlmPreferenceResponse.model_validate(row, from_attributes=True)
+
+
+@app.get(
+    "/v1/users/{user_id}/email-integration",
+    response_model=EmailIntegrationResponse | None,
+)
+def get_email_integration(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> EmailIntegrationResponse | None:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    row = session.get(EmailIntegrationRow, user_id)
+    if row is None:
+        return None
+    return EmailIntegrationResponse(
+        host=row.host,
+        port=row.port,
+        username=row.username,
+        use_ssl=row.use_ssl,
+        mailbox=row.mailbox,
+        enabled=row.enabled,
+    )
+
+
+@app.get(
+    "/v1/users/{user_id}/autofill-values",
+    response_model=list[AutofillValueResponse],
+)
+def get_autofill_values(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[AutofillValueResponse]:
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail="APP_BROWSER_STATE_ENCRYPTION_KEY is required",
+        )
+    try:
+        values = list_autofill_values(session, user_id=user_id, encryption_key=encryption_key)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InvalidAutofillValueEncryption as error:
+        raise HTTPException(
+            status_code=503, detail="Autofill values cannot be decrypted"
+        ) from error
+    return [AutofillValueResponse.model_validate(value, from_attributes=True) for value in values]
+
+
+@app.post(
+    "/v1/users/{user_id}/autofill-values",
+    response_model=AutofillValueResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_autofill_value(
+    user_id: str,
+    request: AutofillValueCreateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> AutofillValueResponse:
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail="APP_BROWSER_STATE_ENCRYPTION_KEY is required",
+        )
+    try:
+        row = create_autofill_value(
+            session,
+            user_id=user_id,
+            key=request.key,
+            label=request.label,
+            value_type=request.value_type,
+            serialized_value=request.serialized_value,
+            is_sensitive=request.is_sensitive,
+            encryption_key=encryption_key,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DuplicateEntityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (InvalidAutofillKey, InvalidAutofillValue, InvalidAutofillValueEncryption) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    usage_policy = evaluate_autofill_usage(is_sensitive=row.is_sensitive)
+    return AutofillValueResponse(
+        id=row.id,
+        user_id=row.user_id,
+        key=row.key,
+        label=row.label,
+        value_type=row.value_type,
+        serialized_value=request.serialized_value,
+        is_sensitive=row.is_sensitive,
+        requires_review=usage_policy.requires_review,
+        may_send_to_llm=usage_policy.may_send_to_llm,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+@app.put(
+    "/v1/users/{user_id}/autofill-values/{key:path}",
+    response_model=AutofillValueResponse,
+)
+def replace_autofill_value(
+    user_id: str,
+    key: str,
+    request: AutofillValueUpdateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> AutofillValueResponse:
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail="APP_BROWSER_STATE_ENCRYPTION_KEY is required",
+        )
+    try:
+        row = update_autofill_value(
+            session,
+            user_id=user_id,
+            key=key,
+            serialized_value=request.serialized_value,
+            encryption_key=encryption_key,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (InvalidAutofillKey, InvalidAutofillValueEncryption) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    usage_policy = evaluate_autofill_usage(is_sensitive=row.is_sensitive)
+    return AutofillValueResponse(
+        id=row.id,
+        user_id=row.user_id,
+        key=row.key,
+        label=row.label,
+        value_type=row.value_type,
+        serialized_value=request.serialized_value,
+        is_sensitive=row.is_sensitive,
+        requires_review=usage_policy.requires_review,
+        may_send_to_llm=usage_policy.may_send_to_llm,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+@app.delete(
+    "/v1/users/{user_id}/autofill-values/{key:path}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_autofill_value(
+    user_id: str,
+    key: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> Response:
+    try:
+        delete_autofill_value(session, user_id=user_id, key=key)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InvalidAutofillKey as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.put("/v1/users/{user_id}/llm-preference", response_model=LlmPreferenceResponse)
@@ -717,12 +1170,485 @@ def update_llm_preference(
             provider=request.provider,
             model=request.model,
             api_key=request.api_key.get_secret_value() if request.api_key is not None else None,
+            base_url=request.base_url,
+            purpose=request.purpose,
         )
     except LlmPreferenceNotFound as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except InvalidLlmPreference as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return LlmPreferenceResponse(provider=row.provider, model=row.model)  # type: ignore[arg-type]
+    return LlmPreferenceResponse.model_validate(row, from_attributes=True)
+
+
+@app.put(
+    "/v1/users/{user_id}/email-integration",
+    response_model=EmailIntegrationResponse,
+)
+def update_email_integration(
+    user_id: str,
+    request: EmailIntegrationUpdateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> EmailIntegrationResponse:
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(status_code=503, detail="Encrypted storage is not configured")
+    try:
+        row = EmailIntegrationService(session, encryption_key=encryption_key).save(
+            user_id=user_id,
+            host=request.host,
+            port=request.port,
+            username=request.username,
+            password=(
+                request.password.get_secret_value() if request.password is not None else None
+            ),
+            use_ssl=request.use_ssl,
+            mailbox=request.mailbox,
+            enabled=request.enabled,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InvalidEmailIntegration as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return EmailIntegrationResponse(
+        host=row.host,
+        port=row.port,
+        username=row.username,
+        use_ssl=row.use_ssl,
+        mailbox=row.mailbox,
+        enabled=row.enabled,
+    )
+
+
+def _site_definition_response(row: SiteDefinitionRow) -> SiteDefinitionResponse:
+    return SiteDefinitionResponse(
+        id=row.id,
+        site_key=row.site_key,
+        name=row.name,
+        login_url=row.login_url,
+        allowed_hosts=list(row.allowed_hosts),
+        authorization_rules=dict(row.authorization_rules),
+        is_archived=row.archived_at is not None,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _custom_authorization_site(row: SiteDefinitionRow) -> BrowserAuthorizationSite:
+    raw_markers = row.authorization_rules.get("login_path_markers", [])
+    if not isinstance(raw_markers, list):
+        raw_markers = []
+    markers = tuple(
+        marker
+        for marker in raw_markers
+        if isinstance(marker, str) and marker.startswith("/") and len(marker) <= 500
+    )
+    if not markers:
+        login_path = urlsplit(row.login_url).path or "/"
+        markers = (login_path,)
+    return BrowserAuthorizationSite(
+        site_key=row.site_key,
+        login_url=row.login_url,
+        allowed_hosts=tuple(row.allowed_hosts),
+        login_path_markers=markers,
+    )
+
+
+def _authorization_site(
+    session: Session,
+    *,
+    user_id: str,
+    site_key: str,
+) -> BrowserAuthorizationSite:
+    known = KNOWN_AUTHORIZATION_SITES.get(site_key)
+    if known is not None:
+        return known
+    row = session.scalar(
+        select(SiteDefinitionRow).where(
+            SiteDefinitionRow.user_id == user_id,
+            SiteDefinitionRow.site_key == site_key,
+            SiteDefinitionRow.archived_at.is_(None),
+        )
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Site definition not found")
+    return _custom_authorization_site(row)
+
+
+def _authorization_site_payload(site: BrowserAuthorizationSite) -> dict[str, object]:
+    return {
+        "site_key": site.site_key,
+        "login_url": site.login_url,
+        "allowed_hosts": list(site.allowed_hosts),
+        "login_path_markers": list(site.login_path_markers),
+        "allow_subdomains": site.allow_subdomains,
+    }
+
+
+def _worker_http_error(error: httpx.HTTPStatusError) -> HTTPException:
+    try:
+        detail = error.response.json().get("detail", error.response.text)
+    except Exception:
+        detail = error.response.text
+    return HTTPException(status_code=error.response.status_code, detail=str(detail))
+
+
+async def _browser_login_is_waiting(user_id: str, site_key: str) -> bool:
+    try:
+        client = BrowserWorkerClient(get_settings().browser_worker_url)
+        return await client.login_is_waiting(user_id=user_id, site_key=site_key)
+    except Exception:
+        return False
+
+
+@app.get(
+    "/v1/users/{user_id}/site-definitions",
+    response_model=list[SiteDefinitionResponse],
+)
+def get_site_definitions(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    include_archived: bool = False,
+) -> list[SiteDefinitionResponse]:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    statement = select(SiteDefinitionRow).where(SiteDefinitionRow.user_id == user_id)
+    if not include_archived:
+        statement = statement.where(SiteDefinitionRow.archived_at.is_(None))
+    rows = session.scalars(statement.order_by(SiteDefinitionRow.name, SiteDefinitionRow.site_key))
+    return [_site_definition_response(row) for row in rows]
+
+
+@app.post(
+    "/v1/users/{user_id}/site-definitions",
+    response_model=SiteDefinitionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_site_definition(
+    user_id: str,
+    request: SiteDefinitionCreateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> SiteDefinitionResponse:
+    if request.site_key.strip().casefold() in KNOWN_AUTHORIZATION_SITES:
+        raise HTTPException(status_code=409, detail="Site key is reserved")
+    try:
+        row = create_site_definition(
+            session,
+            user_id=user_id,
+            site_key=request.site_key,
+            name=request.name,
+            login_url=request.login_url,
+            allowed_hosts=request.allowed_hosts,
+            authorization_rules=request.authorization_rules,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DuplicateEntityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (InvalidSiteDefinition, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _site_definition_response(row)
+
+
+@app.put(
+    "/v1/users/{user_id}/site-definitions/{site_definition_id}",
+    response_model=SiteDefinitionResponse,
+)
+def replace_site_definition(
+    user_id: str,
+    site_definition_id: str,
+    request: SiteDefinitionUpdateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> SiteDefinitionResponse:
+    try:
+        row = update_site_definition(
+            session,
+            user_id=user_id,
+            site_definition_id=site_definition_id,
+            name=request.name,
+            login_url=request.login_url,
+            allowed_hosts=request.allowed_hosts,
+            authorization_rules=request.authorization_rules,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (InvalidSiteDefinitionUpdate, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _site_definition_response(row)
+
+
+@app.post(
+    "/v1/users/{user_id}/site-definitions/{site_definition_id}/archive",
+    response_model=SiteDefinitionResponse,
+)
+async def archive_user_site_definition(
+    user_id: str,
+    site_definition_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> SiteDefinitionResponse:
+    try:
+        row = archive_site_definition(
+            session,
+            user_id=user_id,
+            site_definition_id=site_definition_id,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    client = BrowserWorkerClient(get_settings().browser_worker_url)
+    with suppress(httpx.HTTPError):
+        await client.login_cancel(user_id=user_id, site_key=row.site_key)
+    return _site_definition_response(row)
+
+
+def _site_field_response(session: Session, row: SiteFieldRow) -> SiteFieldResponse:
+    mapping = session.scalar(
+        select(SiteFieldMappingRow).where(SiteFieldMappingRow.site_field_id == row.id)
+    )
+    mapping_response = (
+        SiteFieldMappingResponse(
+            id=mapping.id,
+            value_key=mapping.value_key,
+            transformation=dict(mapping.transformation),
+            review_required=mapping.review_required,
+        )
+        if mapping is not None
+        else None
+    )
+    overrides = session.scalars(
+        select(SiteValueOverrideRow).where(
+            SiteValueOverrideRow.site_definition_id == row.site_definition_id,
+            SiteValueOverrideRow.value_key == (mapping.value_key if mapping else ""),
+        )
+    ).all()
+    return SiteFieldResponse(
+        id=row.id,
+        site_definition_id=row.site_definition_id,
+        field_key=row.field_key,
+        semantic_key=row.semantic_key,
+        label=row.label,
+        field_type=row.field_type,
+        is_required=row.is_required,
+        options=list(row.options),
+        selector_candidates=list(row.selector_candidates),
+        mapping=mapping_response,
+        has_site_override=any(override.scope_key == "*" for override in overrides),
+        has_field_override=any(override.scope_key == row.id for override in overrides),
+    )
+
+
+@app.post(
+    "/v1/users/{user_id}/site-definitions/{site_definition_id}/fields/discovery",
+    response_model=list[SiteFieldResponse],
+)
+def save_site_field_discovery(
+    user_id: str,
+    site_definition_id: str,
+    request: SiteFieldDiscoveryRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[SiteFieldResponse]:
+    fields = tuple(
+        FormField(
+            field_id=item.field_key,
+            label=item.label,
+            field_type=FormFieldType(item.field_type),
+            is_required=item.is_required,
+            options=tuple(item.options),
+            semantic_category=item.semantic_key,
+            source_locator=item.selector_candidates[0],
+            locator_candidates=tuple(item.selector_candidates),
+        )
+        for item in request.fields
+    )
+    try:
+        rows = save_discovered_site_fields(
+            session,
+            user_id=user_id,
+            site_definition_id=site_definition_id,
+            fields=fields,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (InvalidSiteField, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return [_site_field_response(session, row) for row in rows]
+
+
+@app.get(
+    "/v1/users/{user_id}/site-definitions/{site_definition_id}/fields",
+    response_model=list[SiteFieldResponse],
+)
+def get_site_fields(
+    user_id: str,
+    site_definition_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[SiteFieldResponse]:
+    site = session.scalar(
+        select(SiteDefinitionRow).where(
+            SiteDefinitionRow.id == site_definition_id,
+            SiteDefinitionRow.user_id == user_id,
+            SiteDefinitionRow.archived_at.is_(None),
+        )
+    )
+    if site is None:
+        raise HTTPException(status_code=404, detail="Site definition not found")
+    rows = session.scalars(
+        select(SiteFieldRow)
+        .where(SiteFieldRow.site_definition_id == site.id)
+        .order_by(SiteFieldRow.label, SiteFieldRow.field_key)
+    )
+    return [_site_field_response(session, row) for row in rows]
+
+
+@app.put(
+    "/v1/users/{user_id}/site-fields/{site_field_id}/mapping",
+    response_model=SiteFieldMappingResponse,
+)
+def put_site_field_mapping(
+    user_id: str,
+    site_field_id: str,
+    request: SiteFieldMappingUpdateRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> SiteFieldMappingResponse:
+    try:
+        row = upsert_site_field_mapping(
+            session,
+            user_id=user_id,
+            site_field_id=site_field_id,
+            value_key=request.value_key,
+            transformation=request.transformation,
+            review_required=request.review_required,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return SiteFieldMappingResponse(
+        id=row.id,
+        value_key=row.value_key,
+        transformation=dict(row.transformation),
+        review_required=row.review_required,
+    )
+
+
+@app.put(
+    "/v1/users/{user_id}/site-definitions/{site_definition_id}/overrides",
+    response_model=SiteValueOverrideResponse,
+)
+def put_site_value_override(
+    user_id: str,
+    site_definition_id: str,
+    request: SiteValueOverrideRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> SiteValueOverrideResponse:
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(status_code=503, detail="Encrypted storage is not configured")
+    try:
+        row = upsert_site_value_override(
+            session,
+            user_id=user_id,
+            site_definition_id=site_definition_id,
+            site_field_id=request.site_field_id,
+            value_key=request.value_key,
+            serialized_value=request.serialized_value,
+            is_sensitive=request.is_sensitive,
+            encryption_key=encryption_key,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return SiteValueOverrideResponse(
+        id=row.id,
+        site_definition_id=row.site_definition_id,
+        site_field_id=row.site_field_id,
+        value_key=row.value_key,
+        is_sensitive=row.is_sensitive,
+    )
+
+
+@app.get(
+    "/v1/users/{user_id}/site-fields/{site_field_id}/effective-value",
+    response_model=EffectiveValueResponse,
+)
+def get_site_field_effective_value(
+    user_id: str,
+    site_field_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    allow_sensitive: bool = False,
+) -> EffectiveValueResponse:
+    field = session.scalar(
+        select(SiteFieldRow)
+        .join(SiteDefinitionRow, SiteDefinitionRow.id == SiteFieldRow.site_definition_id)
+        .where(
+            SiteFieldRow.id == site_field_id,
+            SiteDefinitionRow.user_id == user_id,
+            SiteDefinitionRow.archived_at.is_(None),
+        )
+    )
+    if field is None:
+        raise HTTPException(status_code=404, detail="Site field not found")
+    mapping = session.scalar(
+        select(SiteFieldMappingRow).where(SiteFieldMappingRow.site_field_id == field.id)
+    )
+    if mapping is None:
+        raise HTTPException(status_code=404, detail="Site field mapping not found")
+    encryption_key = _configured_secret(get_settings().browser_state_encryption_key)
+    if encryption_key is None:
+        raise HTTPException(status_code=503, detail="Encrypted storage is not configured")
+
+    overrides = session.scalars(
+        select(SiteValueOverrideRow).where(
+            SiteValueOverrideRow.site_definition_id == field.site_definition_id,
+            SiteValueOverrideRow.value_key == mapping.value_key,
+        )
+    ).all()
+    override_candidates = {
+        row.scope_key: EffectiveValueCandidate(
+            decrypt_autofill_value(row.encrypted_value, encryption_key=encryption_key),
+            source_record_id=row.id,
+            is_sensitive=row.is_sensitive,
+        )
+        for row in overrides
+    }
+    global_row = session.scalar(
+        select(AutofillValueRow).where(
+            AutofillValueRow.user_id == user_id,
+            AutofillValueRow.key == mapping.value_key,
+        )
+    )
+    global_candidate = (
+        EffectiveValueCandidate(
+            decrypt_autofill_value(global_row.encrypted_value, encryption_key=encryption_key),
+            source_record_id=global_row.id,
+            is_sensitive=global_row.is_sensitive,
+        )
+        if global_row is not None
+        else None
+    )
+    try:
+        resolved = resolve_effective_autofill_value(
+            value_key=mapping.value_key,
+            site_field_override=override_candidates.get(field.id),
+            site_override=override_candidates.get("*"),
+            global_value=global_candidate,
+            allow_sensitive=allow_sensitive,
+        )
+    except EffectiveValueNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except EffectiveValueBlocked as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    transformed_value = apply_effective_value_transformation(
+        resolved.value,
+        mapping.transformation,
+    )
+    return EffectiveValueResponse(
+        value_key=mapping.value_key,
+        value=transformed_value,
+        source=resolved.source.value,
+        source_record_id=resolved.source_record_id,
+        is_sensitive=resolved.is_sensitive,
+        requires_review=resolved.requires_review or mapping.review_required,
+    )
 
 
 @app.get(
@@ -742,8 +1668,22 @@ async def get_browser_session_statuses(
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
+    custom_sites = session.scalars(
+        select(SiteDefinitionRow)
+        .where(
+            SiteDefinitionRow.user_id == user_id,
+            SiteDefinitionRow.archived_at.is_(None),
+        )
+        .order_by(SiteDefinitionRow.name, SiteDefinitionRow.site_key)
+    ).all()
+    custom_sites = [row for row in custom_sites if row.site_key not in KNOWN_AUTHORIZATION_SITES]
+    sites = [
+        ("headhunter", "hh.ru", False),
+        ("linkedin", "LinkedIn", False),
+        *((row.site_key, row.name, True) for row in custom_sites),
+    ]
     statuses: list[BrowserSessionStatusResponse] = []
-    for site_key in ("headhunter", "linkedin"):
+    for site_key, site_name, is_custom in sites:
         row = session.scalar(
             select(BrowserSessionRow).where(
                 BrowserSessionRow.user_id == user_id,
@@ -756,7 +1696,7 @@ async def get_browser_session_statuses(
             try:
                 stored_state = store.load(row.encrypted_state_path)
                 is_authorized = True
-                if probe:
+                if probe and site_key in KNOWN_AUTHORIZATION_SITES:
                     session_probe = await probe_browser_session(
                         site_key=site_key,
                         state=stored_state,
@@ -773,8 +1713,10 @@ async def get_browser_session_statuses(
         statuses.append(
             BrowserSessionStatusResponse(
                 site_key=site_key,
+                site_name=site_name,
+                is_custom=is_custom,
                 is_authorized=is_authorized,
-                is_waiting_for_login=BROWSER_AUTHORIZATION_MANAGER.is_waiting(
+                is_waiting_for_login=await _browser_login_is_waiting(
                     user_id=user_id, site_key=site_key
                 ),
                 last_url=row.last_url if row is not None else None,
@@ -795,7 +1737,7 @@ async def get_browser_session_statuses(
 )
 async def start_browser_authorization(
     user_id: str,
-    site_key: BrowserSiteKey,
+    site_key: str,
     session: Annotated[Session, Depends(session_scope)],
 ) -> BrowserAuthorizationResponse:
     settings = get_settings()
@@ -806,19 +1748,20 @@ async def start_browser_authorization(
         )
     if session.get(UserRow, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
+    site = _authorization_site(session, user_id=user_id, site_key=site_key)
+    client = BrowserWorkerClient(settings.browser_worker_url)
     try:
-        await BROWSER_AUTHORIZATION_MANAGER.start(
+        await client.login_start(
             user_id=user_id,
             site_key=site_key,
-            timeout_ms=settings.browser_timeout_ms,
-            artifact_directory=settings.artifact_directory,
+            site=_authorization_site_payload(site),
         )
-    except BrowserAuthorizationError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except Exception as error:
+    except httpx.HTTPStatusError as error:
+        raise _worker_http_error(error) from error
+    except httpx.HTTPError as error:
         raise HTTPException(
             status_code=502,
-            detail="Не удалось открыть окно входа. Проверьте локальную установку Chromium",
+            detail="Браузерный воркер недоступен. Запустите browser-worker (--profile browser)",
         ) from error
     return BrowserAuthorizationResponse(site_key=site_key, state="waiting_for_login")
 
@@ -829,26 +1772,23 @@ async def start_browser_authorization(
 )
 async def confirm_browser_authorization(
     user_id: str,
-    site_key: BrowserSiteKey,
+    site_key: str,
     session: Annotated[Session, Depends(session_scope)],
 ) -> BrowserAuthorizationResponse:
     if session.get(UserRow, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
+    _authorization_site(session, user_id=user_id, site_key=site_key)
+    adapter_name = site_key if site_key in KNOWN_AUTHORIZATION_SITES else "generic"
+    client = BrowserWorkerClient(get_settings().browser_worker_url)
     try:
-        state, last_url = await BROWSER_AUTHORIZATION_MANAGER.confirm(
-            user_id=user_id, site_key=site_key
-        )
-        store = create_session_store(get_settings())
-        BrowserSessionService(session, store).save(
+        await client.login_confirm(
             user_id=user_id,
             site_key=site_key,
-            adapter_name=site_key,
-            state=state,
-            last_url=last_url,
+            adapter_name=adapter_name,
         )
-    except BrowserAuthorizationError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except (InvalidBrowserState, RuntimeError) as error:
+    except httpx.HTTPStatusError as error:
+        raise _worker_http_error(error) from error
+    except httpx.HTTPError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     return BrowserAuthorizationResponse(site_key=site_key, state="authorized")
 
@@ -859,12 +1799,15 @@ async def confirm_browser_authorization(
 )
 async def cancel_browser_authorization(
     user_id: str,
-    site_key: BrowserSiteKey,
+    site_key: str,
     session: Annotated[Session, Depends(session_scope)],
 ) -> BrowserAuthorizationResponse:
     if session.get(UserRow, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
-    await BROWSER_AUTHORIZATION_MANAGER.cancel(user_id=user_id, site_key=site_key)
+    _authorization_site(session, user_id=user_id, site_key=site_key)
+    client = BrowserWorkerClient(get_settings().browser_worker_url)
+    with suppress(httpx.HTTPError):
+        await client.login_cancel(user_id=user_id, site_key=site_key)
     return BrowserAuthorizationResponse(site_key=site_key, state="cancelled")
 
 
@@ -873,7 +1816,7 @@ async def cancel_browser_authorization(
     response_model=ProfileFactResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def add_profile_fact(
+async def add_profile_fact(
     user_id: str,
     request: ProfileFactRequest,
     session: Annotated[Session, Depends(session_scope)],
@@ -885,6 +1828,7 @@ def add_profile_fact(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    await RagSyncService(session, get_settings()).sync_profile(user_id)
     return ProfileFactResponse(
         id=fact.id,
         user_id=fact.user_id,
@@ -895,6 +1839,292 @@ def add_profile_fact(
     )
 
 
+@app.get(
+    "/v1/users/{user_id}/facts",
+    response_model=list[ProfileFactResponse],
+)
+def list_profile_facts(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[ProfileFactResponse]:
+    try:
+        facts = RecruitmentService(session).list_profile_facts(user_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return [ProfileFactResponse.model_validate(fact, from_attributes=True) for fact in facts]
+
+
+@app.put(
+    "/v1/users/{user_id}/facts/{fact_id}",
+    response_model=ProfileFactResponse,
+)
+async def update_profile_fact(
+    user_id: str,
+    fact_id: str,
+    request: ProfileFactRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ProfileFactResponse:
+    try:
+        fact = RecruitmentService(session).update_profile_fact(
+            user_id,
+            fact_id,
+            **request.model_dump(),
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DuplicateEntityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    await RagSyncService(session, get_settings()).sync_profile(user_id)
+    return ProfileFactResponse.model_validate(fact, from_attributes=True)
+
+
+@app.delete(
+    "/v1/users/{user_id}/facts/{fact_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_profile_fact(
+    user_id: str,
+    fact_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> Response:
+    try:
+        RecruitmentService(session).delete_profile_fact(user_id, fact_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    await RagSyncService(session, get_settings()).sync_profile(user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get(
+    "/v1/users/{user_id}/facts-detailed",
+    response_model=list[ProfileFactDetailResponse],
+)
+def list_profile_facts_detailed(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    source_type: str | None = None,
+    status_filter: str | None = None,
+) -> list[ProfileFactDetailResponse]:
+    """List facts with provenance details, optionally filtered."""
+    from sqlalchemy import select as sa_select
+
+    query = sa_select(ProfileFactRow).where(ProfileFactRow.user_id == user_id)
+    if source_type:
+        query = query.where(ProfileFactRow.source_type == source_type)
+    if status_filter:
+        query = query.where(ProfileFactRow.status == status_filter)
+    query = query.order_by(ProfileFactRow.category, ProfileFactRow.name)
+    facts = session.scalars(query).all()
+    return [
+        ProfileFactDetailResponse(
+            id=f.id,
+            user_id=f.user_id,
+            category=f.category,
+            name=f.name,
+            value=f.value,
+            is_verified=f.is_verified,
+            source_type=f.source_type,
+            source_id=f.source_id,
+            source_text=f.source_text,
+            extraction_method=f.extraction_method,
+            batch_id=f.batch_id,
+            confidence=f.confidence,
+            experience_started_at=f.experience_started_at,
+            experience_ended_at=f.experience_ended_at,
+            status=f.status,
+            created_at=f.created_at,
+        )
+        for f in facts
+    ]
+
+
+@app.post(
+    "/v1/users/{user_id}/facts/import-file",
+    response_model=FactImportResultResponse,
+)
+async def import_facts_from_file(
+    user_id: str,
+    file: UploadFile,
+    session: Annotated[Session, Depends(session_scope)],
+    auto_accept: bool = False,
+) -> FactImportResultResponse:
+    """Import facts from an uploaded file (TXT, MD, CSV, JSON, PDF, DOCX)."""
+    from app.llm.preferences import InvalidLlmPreference
+    from app.services.fact_ingestion import FactIngestionService
+
+    content = await file.read()
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=60, follow_redirects=False, trust_env=False) as client:
+        try:
+            providers = build_user_model_providers(client, session, user_id, settings)
+        except InvalidLlmPreference as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        if not providers:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "No LLM provider configured. Set one in the Model tab or via "
+                    "APP_GEMINI_API_KEY / APP_ANTHROPIC_API_KEY."
+                ),
+            )
+        router = ModelRouter(providers)
+        prompt_registry = PromptRegistry.load(
+            Path(__file__).parents[2] / "prompts" / "registry.json"
+        )
+        service = FactIngestionService(session, router, prompt_registry)
+        try:
+            result = await service.import_from_file(
+                user_id,
+                file.filename or "upload",
+                content,
+                auto_accept=auto_accept,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+    await RagSyncService(session, settings).sync_profile(user_id)
+    return FactImportResultResponse(
+        batch_id=result.batch_id,
+        source_type=result.source_type,
+        facts_created=result.facts_created,
+        facts_merged=result.facts_merged,
+        facts_skipped=result.facts_skipped,
+        facts_rejected=result.facts_rejected,
+        candidates=[
+            {
+                "name": c.name,
+                "category": c.category,
+                "value": c.value,
+                "confidence": c.confidence,
+                "source_text": c.source_text,
+                "duplicate_status": c.duplicate_status.value,
+            }
+            for c in result.candidates[:50]
+        ],
+    )
+
+
+@app.post(
+    "/v1/users/{user_id}/facts/extract-from-resume",
+    response_model=FactImportResultResponse,
+)
+async def extract_facts_from_resume(
+    user_id: str,
+    request: ExtractFromResumeRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> FactImportResultResponse:
+    """Extract facts from an existing resume using LLM."""
+    from app.llm.preferences import InvalidLlmPreference
+    from app.services.fact_ingestion import FactIngestionService
+
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=120, follow_redirects=False, trust_env=False) as client:
+        try:
+            providers = build_user_model_providers(client, session, user_id, settings)
+        except InvalidLlmPreference as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        if not providers:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "No LLM provider configured. Set one in the Model tab or via "
+                    "APP_GEMINI_API_KEY / APP_ANTHROPIC_API_KEY."
+                ),
+            )
+        router = ModelRouter(providers)
+        prompt_registry = PromptRegistry.load(
+            Path(__file__).parents[2] / "prompts" / "registry.json"
+        )
+        service = FactIngestionService(session, router, prompt_registry)
+        try:
+            result = await service.extract_from_resume(
+                user_id,
+                request.cv_file_id,
+                force=request.force,
+                auto_accept=request.auto_accept,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+    await RagSyncService(session, settings).sync_profile(user_id)
+    return FactImportResultResponse(
+        batch_id=result.batch_id,
+        source_type=result.source_type,
+        facts_created=result.facts_created,
+        facts_merged=result.facts_merged,
+        facts_skipped=result.facts_skipped,
+        facts_rejected=result.facts_rejected,
+        candidates=[
+            {
+                "name": c.name,
+                "category": c.category,
+                "value": c.value,
+                "confidence": c.confidence,
+                "source_text": c.source_text,
+                "duplicate_status": c.duplicate_status.value,
+            }
+            for c in result.candidates[:50]
+        ],
+    )
+
+
+@app.get(
+    "/v1/users/{user_id}/fact-import-batches",
+    response_model=list[FactImportBatchResponse],
+)
+def list_fact_import_batches(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[FactImportBatchResponse]:
+    """List fact import batches for a user."""
+    from app.services.fact_ingestion import FactIngestionService
+
+    service = FactIngestionService(
+        session,
+        ModelRouter(()),  # No LLM needed for listing
+        PromptRegistry.load(Path(__file__).parents[2] / "prompts" / "registry.json"),
+    )
+    batches = service.list_batches(user_id)
+    return [
+        FactImportBatchResponse(
+            id=b.id,
+            user_id=b.user_id,
+            source_type=b.source_type,
+            source_id=b.source_id,
+            source_filename=b.source_filename,
+            extractor_version=b.extractor_version,
+            facts_created=b.facts_created,
+            facts_merged=b.facts_merged,
+            facts_skipped=b.facts_skipped,
+            facts_rejected=b.facts_rejected,
+            status=b.status,
+            created_at=b.created_at,
+        )
+        for b in batches
+    ]
+
+
+@app.post(
+    "/v1/users/{user_id}/fact-import-batches/{batch_id}/undo",
+)
+def undo_fact_import_batch(
+    user_id: str,
+    batch_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> dict[str, object]:
+    """Undo a fact import batch."""
+    from app.services.fact_ingestion import FactIngestionService
+
+    service = FactIngestionService(
+        session,
+        ModelRouter(()),
+        PromptRegistry.load(Path(__file__).parents[2] / "prompts" / "registry.json"),
+    )
+    try:
+        removed = service.undo_batch(user_id, batch_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {"batch_id": batch_id, "facts_marked_superseded": removed}
+
+
 @app.post(
     "/v1/applications/{application_id}/recalculate-match",
     response_model=WorkflowTaskResponse,
@@ -903,6 +2133,7 @@ def add_profile_fact(
 def recalculate_application_match(
     application_id: str,
     session: Annotated[Session, Depends(session_scope)],
+    force: bool = False,
 ) -> WorkflowTaskResponse:
     settings = get_settings()
     if not settings.matching_v2_enabled:
@@ -911,12 +2142,12 @@ def recalculate_application_match(
             detail="Matching v2 is disabled; set APP_MATCHING_V2_ENABLED=true",
         )
     try:
-        task = MatchingJobService(session).schedule(application_id)
+        task = MatchingJobService(session).schedule(application_id, force=force)
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except MatchingJobNotReadyError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return _workflow_task_response(task)
+    return _workflow_task_response(task, session)
 
 
 @app.post(
@@ -956,7 +2187,9 @@ async def upload_cv_file(
         saved_document.storage_path.unlink(missing_ok=True)
     user = session.get(UserRow, user_id)
     return serialize_cv_file(
-        cv_file, active_cv_file_id=user.active_cv_file_id if user is not None else None
+        cv_file,
+        active_cv_file_id=user.active_cv_file_id if user is not None else None,
+        rag_status=resume_rag_status(session, cv_file.id),
     )
 
 
@@ -971,14 +2204,21 @@ def list_cv_files(
         raise HTTPException(status_code=404, detail=str(error)) from error
     user = session.get(UserRow, user_id)
     active_cv_file_id = user.active_cv_file_id if user is not None else None
-    return [serialize_cv_file(cv_file, active_cv_file_id=active_cv_file_id) for cv_file in cv_files]
+    return [
+        serialize_cv_file(
+            cv_file,
+            active_cv_file_id=active_cv_file_id,
+            rag_status=resume_rag_status(session, cv_file.id),
+        )
+        for cv_file in cv_files
+    ]
 
 
 @app.delete(
     "/v1/users/{user_id}/cv-files/{cv_file_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def delete_cv_file(
+async def delete_cv_file(
     user_id: str,
     cv_file_id: str,
     session: Annotated[Session, Depends(session_scope)],
@@ -988,6 +2228,8 @@ def delete_cv_file(
         stored_path = RecruitmentService(session).delete_cv_file(user_id, cv_file_id)
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    ResumeRagJobService(session).delete_for_cv(cv_file_id)
+    await RagSyncService(session, get_settings()).delete_resume(user_id, cv_file_id)
     storage.delete(stored_path)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -1002,7 +2244,11 @@ def select_active_cv_file(
         cv_file = RecruitmentService(session).set_active_cv_file(user_id, request.cv_file_id)
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return serialize_cv_file(cv_file, active_cv_file_id=cv_file.id)
+    return serialize_cv_file(
+        cv_file,
+        active_cv_file_id=cv_file.id,
+        rag_status=resume_rag_status(session, cv_file.id),
+    )
 
 
 @app.post(
@@ -1059,7 +2305,7 @@ async def extract_profile_from_cv(
     "/v1/users/{user_id}/cv-files/{cv_file_id}/profile",
     response_model=CvFileResponse,
 )
-def confirm_resume_profile(
+async def confirm_resume_profile(
     user_id: str,
     cv_file_id: str,
     request: ConfirmResumeProfileRequest,
@@ -1077,14 +2323,72 @@ def confirm_resume_profile(
         )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return serialize_cv_file(cv_file, active_cv_file_id=cv_file.id)
+    settings = get_settings()
+    if (
+        settings.rag_enabled
+        and settings.rag_service_url
+        and settings.rag_api_key
+        and settings.rag_project_id
+    ):
+        ResumeRagJobService(session).schedule(cv_file.id)
+    return serialize_cv_file(
+        cv_file,
+        active_cv_file_id=cv_file.id,
+        rag_status=resume_rag_status(session, cv_file.id),
+    )
+
+
+@app.post(
+    "/v1/users/{user_id}/cv-files/{cv_file_id}/rag-sync",
+    response_model=ResumeRagSyncResponse,
+)
+async def sync_resume_to_rag(
+    user_id: str,
+    cv_file_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> ResumeRagSyncResponse:
+    """Manually retry RAG indexing for one reviewed resume owned by the user."""
+    try:
+        cv_file = RecruitmentService(session).get_cv_file(user_id, cv_file_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    if cv_file.analyzed_at is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Confirm the resume profile before sending it to RAG",
+        )
+
+    settings = get_settings()
+    if not (
+        settings.rag_enabled
+        and settings.rag_service_url
+        and settings.rag_api_key
+        and settings.rag_project_id
+    ):
+        raise HTTPException(status_code=503, detail="RAG synchronization is not configured")
+
+    try:
+        task = ResumeRagJobService(session).schedule(cv_file.id, force=True)
+    except ResumeRagJobNotReadyError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    task_status = ResumeRagJobService(session).status(cv_file.id)
+    if task_status.task_id is None or task_status.updated_at is None:
+        raise HTTPException(status_code=500, detail="RAG synchronization task was not persisted")
+    return ResumeRagSyncResponse(
+        task_id=task.id,
+        status=task_status.status,
+        attempt_number=task_status.attempt_number,
+        failure_code=task_status.failure_code,
+        updated_at=task_status.updated_at,
+        synced_at=task_status.synced_at,
+    )
 
 
 @app.post(
     "/v1/users/{user_id}/confirm-profile-facts",
     response_model=list[ConfirmedProfileFactResponse],
 )
-def confirm_profile_facts(
+async def confirm_profile_facts(
     user_id: str,
     request: ConfirmProfileFactsRequest,
     session: Annotated[Session, Depends(session_scope)],
@@ -1116,6 +2420,7 @@ def confirm_profile_facts(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError:
         pass  # re-confirming an already-saved fact is a harmless no-op, not an error
+    await RagSyncService(session, get_settings()).sync_profile(user_id)
     return saved
 
 
@@ -1135,33 +2440,17 @@ async def discover_headhunter_vacancies(
     job-seeker API. Only creates vacancies/applications for human review.
     """
     settings = get_settings()
-    store = create_session_store(settings)
-    state = _restore_browser_session(SessionFactory, store, user_id=user_id, site_key="headhunter")
-    if state is None:
-        raise HTTPException(
-            status_code=409,
-            detail="Авторизуйтесь на hh.ru в разделе «Сессии сайтов» личного кабинета",
-        )
-    task_artifact_directory = (
-        settings.artifact_directory / "browser-worker" / f"hh-discover-{user_id}"
-    )
+    browser_client = BrowserWorkerClient(settings.browser_worker_url)
+    adapter = HttpHeadHunterAdapter(browser_client, user_id)
     try:
-        async with PlaywrightEngine(
-            headless=settings.browser_headless,
-            timeout_ms=settings.browser_timeout_ms,
-            artifact_directory=task_artifact_directory,
-            storage_state=state,
-            selector_library=SelectorLibrary(settings.artifact_directory),
-        ) as browser_engine:
-            adapter = HeadHunterBrowserAdapter(browser_engine)
-            outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
-                user_id,
-                headhunter_adapter=adapter,
-                locations=request.locations,
-                limit=request.limit,
-                search_text=request.search_text,
-                cv_file_id=request.cv_file_id,
-            )
+        outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
+            user_id,
+            headhunter_adapter=adapter,
+            locations=request.locations,
+            limit=request.limit,
+            search_text=request.search_text,
+            cv_file_id=request.cv_file_id,
+        )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except NoSearchKeywordsError as error:
@@ -1205,33 +2494,17 @@ async def discover_linkedin_vacancies(
             status_code=403,
             detail="LinkedIn browser automation is disabled (APP_ENABLE_LINKEDIN_APPLY=false)",
         )
-    store = create_session_store(settings)
-    state = _restore_browser_session(SessionFactory, store, user_id=user_id, site_key="linkedin")
-    if state is None:
-        raise HTTPException(
-            status_code=409,
-            detail="Авторизуйтесь в LinkedIn в разделе «Сессии сайтов» личного кабинета",
-        )
-    task_artifact_directory = (
-        settings.artifact_directory / "browser-worker" / f"li-discover-{user_id}"
-    )
+    browser_client = BrowserWorkerClient(settings.browser_worker_url)
+    adapter = HttpLinkedInAdapter(browser_client, user_id)
     try:
-        async with PlaywrightEngine(
-            headless=settings.browser_headless,
-            timeout_ms=settings.browser_timeout_ms,
-            artifact_directory=task_artifact_directory,
-            storage_state=state,
-            selector_library=SelectorLibrary(settings.artifact_directory),
-        ) as browser_engine:
-            adapter = LinkedInBrowserAdapter(browser_engine)
-            outcomes = await JobDiscoveryService(session).discover_linkedin_vacancies(
-                user_id,
-                linkedin_adapter=adapter,
-                locations=request.locations,
-                limit=request.limit,
-                search_text=request.search_text,
-                cv_file_id=request.cv_file_id,
-            )
+        outcomes = await JobDiscoveryService(session).discover_linkedin_vacancies(
+            user_id,
+            linkedin_adapter=adapter,
+            locations=request.locations,
+            limit=request.limit,
+            search_text=request.search_text,
+            cv_file_id=request.cv_file_id,
+        )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except NoSearchKeywordsError as error:
@@ -1312,42 +2585,135 @@ async def discover_vacancies_stream(
 
     settings = get_settings()
     requested_sources = tuple(dict.fromkeys(request.sources))
+    discovery_limit = min(50, request.limit * 3) if request.direct_rerank else request.limit
     queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
-    enrichment_semaphore = asyncio.Semaphore(1)
+    enrichment_semaphore = asyncio.Semaphore(3 if request.direct_rerank else 1)
 
-    async def publish_outcome(source: str, outcome: DiscoveryOutcome) -> None:
+    async def publish_outcome(
+        source: str,
+        outcome: DiscoveryOutcome,
+        enrichment: dict[str, object] | None = None,
+    ) -> None:
+        item = serialize_discovery_outcome(outcome)
+        if enrichment:
+            item.update(enrichment)
         await queue.put(
             {
                 "event": "vacancy",
                 "source": source,
-                "item": serialize_discovery_outcome(outcome),
+                "item": item,
             }
         )
 
-    async def enrich_outcome(source: str, application_id: str) -> None:
+    async def enrich_outcome(
+        source: str,
+        application_id: str,
+        *,
+        emit_events: bool = True,
+    ) -> dict[str, object]:
+        enrichment: dict[str, object] = {
+            "matching_status": "processing",
+            "materials_status": "processing",
+        }
+
+        async def emit(event: dict[str, object]) -> None:
+            if emit_events:
+                await queue.put(event)
+
+        matching_was_scheduled = False
+
+        async def schedule_matching(*, force: bool) -> None:
+            nonlocal matching_was_scheduled
+            if not settings.matching_v2_enabled:
+                return
+            try:
+                with SessionFactory() as matching_session:
+                    MatchingJobService(matching_session).schedule(
+                        application_id,
+                        force=force,
+                        priority=BACKGROUND_MATCHING_PRIORITY,
+                    )
+                matching_was_scheduled = True
+            except Exception as error:  # noqa: BLE001 - legacy score remains available
+                enrichment.update(
+                    matching_status="error",
+                    matching_error=str(error),
+                )
+                await emit(
+                    {
+                        "event": "matching_error",
+                        "source": source,
+                        "application_id": application_id,
+                        "error": str(error),
+                    }
+                )
+
         async with enrichment_semaphore:
-            await queue.put(
+            await emit(
                 {
                     "event": "enrichment_started",
                     "source": source,
                     "application_id": application_id,
                 }
             )
-            matching_was_scheduled = False
-            if settings.matching_v2_enabled:
+            if not request.direct_rerank:
+                await schedule_matching(force=False)
+
+            # Direct mode requires RAG ingestion to finish before matching is scheduled.
+            if settings.rag_enabled:
                 try:
-                    with SessionFactory() as matching_session:
-                        MatchingJobService(matching_session).schedule(application_id)
-                    matching_was_scheduled = True
-                except Exception as error:  # noqa: BLE001 - legacy score remains available
-                    await queue.put(
-                        {
-                            "event": "matching_error",
-                            "source": source,
-                            "application_id": application_id,
-                            "error": str(error),
-                        }
+                    from app.matching.rag_client import create_rag_client
+                    from app.services.profile_rag_ingestion import ProfileRagIngestionService
+                    from app.services.vacancy_rag_ingestion import VacancyRagIngestionService
+
+                    rag = create_rag_client(
+                        service_url=settings.rag_service_url,
+                        api_key=(
+                            settings.rag_api_key.get_secret_value()
+                            if settings.rag_api_key
+                            else None
+                        ),
+                        project_id=settings.rag_project_id,
+                        collection="vacancies",
+                        timeout_seconds=settings.rag_timeout_seconds,
+                        enabled=True,
                     )
+                    with SessionFactory() as rag_session:
+                        app_row = rag_session.get(ApplicationRow, application_id)
+                        if app_row is not None:
+                            if request.direct_rerank:
+                                profile_ingestion = ProfileRagIngestionService(rag_session, rag)
+                                await profile_ingestion.ingest_profile(app_row.user_id)
+                                if app_row.selected_cv_file_id is not None:
+                                    await profile_ingestion.ingest_cv(app_row.selected_cv_file_id)
+                            result = await VacancyRagIngestionService(
+                                rag_session, rag
+                            ).ingest_vacancy(
+                                app_row.vacancy_id,
+                                owner_user_id=app_row.user_id,
+                            )
+                            if result:
+                                logger.info(
+                                    "rag_vacancy_ingested",
+                                    application_id=application_id,
+                                    document_id=result.document_id,
+                                    status=result.status,
+                                )
+                            else:
+                                logger.warning(
+                                    "rag_vacancy_ingest_skipped",
+                                    application_id=application_id,
+                                )
+                # RAG ingestion failure must not block vacancy discovery.
+                except Exception as rag_error:  # noqa: BLE001
+                    logger.warning(
+                        "rag_ingestion_failed",
+                        application_id=application_id,
+                        error=str(rag_error)[:200],
+                    )
+
+            if request.direct_rerank:
+                await schedule_matching(force=True)
 
             try:
                 async with httpx.AsyncClient(
@@ -1373,7 +2739,11 @@ async def discover_vacancies_stream(
                             cover_letter_text = (
                                 application.cover_letter_text if application is not None else ""
                             )
-                await queue.put(
+                enrichment.update(
+                    materials_status="ready",
+                    cover_letter_text=cover_letter_text,
+                )
+                await emit(
                     {
                         "event": "materials_ready",
                         "source": source,
@@ -1382,7 +2752,11 @@ async def discover_vacancies_stream(
                     }
                 )
             except Exception as error:  # noqa: BLE001 - matching and search must continue
-                await queue.put(
+                enrichment.update(
+                    materials_status="error",
+                    materials_error=str(error),
+                )
+                await emit(
                     {
                         "event": "materials_error",
                         "source": source,
@@ -1396,16 +2770,23 @@ async def discover_vacancies_stream(
                     with SessionFactory() as poll_session:
                         aggregate = poll_session.get(ApplicationMatchResultRow, application_id)
                         application = poll_session.get(ApplicationRow, application_id)
-                        if (
-                            aggregate is not None
-                            and aggregate.status in {"scored", "degraded", "failed"}
-                        ):
+                        if aggregate is not None and aggregate.status in {
+                            "scored",
+                            "degraded",
+                            "failed",
+                        }:
                             score = (
                                 round(aggregate.final_score)
                                 if aggregate.status == "scored"
-                                else application.match_score if application is not None else 0
+                                else application.match_score
+                                if application is not None
+                                else 0
                             )
-                            await queue.put(
+                            enrichment.update(
+                                matching_status=aggregate.status,
+                                match_score=score,
+                            )
+                            await emit(
                                 {
                                     "event": "matching_ready",
                                     "source": source,
@@ -1417,7 +2798,11 @@ async def discover_vacancies_stream(
                             break
                     await asyncio.sleep(1)
                 else:
-                    await queue.put(
+                    enrichment.update(
+                        matching_status="error",
+                        matching_error="Detailed matching is still queued",
+                    )
+                    await emit(
                         {
                             "event": "matching_error",
                             "source": source,
@@ -1429,7 +2814,11 @@ async def discover_vacancies_stream(
                 with SessionFactory() as score_session:
                     application = score_session.get(ApplicationRow, application_id)
                     score = application.match_score if application is not None else 0
-                await queue.put(
+                enrichment.update(
+                    matching_status="legacy",
+                    match_score=score,
+                )
+                await emit(
                     {
                         "event": "matching_ready",
                         "source": source,
@@ -1438,18 +2827,35 @@ async def discover_vacancies_stream(
                         "matching_status": "legacy",
                     }
                 )
+            return enrichment
 
     async def run_source(source: str) -> None:
-        enrichment_tasks: list[asyncio.Task[None]] = []
+        enrichment_tasks: list[asyncio.Task[dict[str, object]]] = []
+        direct_results: list[tuple[DiscoveryOutcome, dict[str, object]]] = []
+        direct_tasks: list[tuple[DiscoveryOutcome, asyncio.Task[dict[str, object]]]] = []
         try:
             with SessionFactory() as source_session:
                 service = JobDiscoveryService(source_session)
 
                 async def on_outcome(outcome: DiscoveryOutcome) -> None:
-                    await publish_outcome(source, outcome)
-                    enrichment_tasks.append(
-                        asyncio.create_task(enrich_outcome(source, outcome.application_id))
-                    )
+                    if request.direct_rerank:
+                        direct_tasks.append(
+                            (
+                                outcome,
+                                asyncio.create_task(
+                                    enrich_outcome(
+                                        source,
+                                        outcome.application_id,
+                                        emit_events=False,
+                                    )
+                                ),
+                            )
+                        )
+                    else:
+                        await publish_outcome(source, outcome)
+                        enrichment_tasks.append(
+                            asyncio.create_task(enrich_outcome(source, outcome.application_id))
+                        )
 
                 if source == "greenhouse":
                     async with httpx.AsyncClient(
@@ -1460,7 +2866,7 @@ async def discover_vacancies_stream(
                             greenhouse_adapter=GreenhouseJobBoardApi(client),
                             board_urls=[str(board_url) for board_url in request.board_urls],
                             locations=request.locations,
-                            limit=request.limit,
+                            limit=discovery_limit,
                             search_text=request.search_text,
                             cv_file_id=request.cv_file_id,
                             on_outcome=on_outcome,
@@ -1470,53 +2876,65 @@ async def discover_vacancies_stream(
                         raise LinkedInSessionRequiredError(
                             "LinkedIn browser automation is disabled"
                         )
-                    store = create_session_store(settings)
-                    state = _restore_browser_session(
-                        SessionFactory, store, user_id=user_id, site_key=source
-                    )
-                    if state is None:
-                        raise LinkedInSessionRequiredError(
-                            f"Authorize {source} in Site sessions before searching"
+                    browser_client = BrowserWorkerClient(settings.browser_worker_url)
+                    if source == "headhunter":
+                        headhunter_adapter = HttpHeadHunterAdapter(browser_client, user_id)
+                    else:
+                        linkedin_adapter = HttpLinkedInAdapter(browser_client, user_id)
+                    if source == "headhunter":
+                        await service.discover_headhunter_vacancies(
+                            user_id,
+                            headhunter_adapter=headhunter_adapter,
+                            locations=request.locations,
+                            limit=discovery_limit,
+                            search_text=request.search_text,
+                            cv_file_id=request.cv_file_id,
+                            on_outcome=on_outcome,
                         )
-                    artifact_prefix = "hh" if source == "headhunter" else "li"
-                    artifact_directory = (
-                        settings.artifact_directory
-                        / "browser-worker"
-                        / f"{artifact_prefix}-discover-{user_id}"
+                    else:
+                        await service.discover_linkedin_vacancies(
+                            user_id,
+                            linkedin_adapter=linkedin_adapter,
+                            locations=request.locations,
+                            limit=discovery_limit,
+                            search_text=request.search_text,
+                            cv_file_id=request.cv_file_id,
+                            on_outcome=on_outcome,
+                        )
+                if request.direct_rerank:
+                    enrichments = await asyncio.gather(*(task for _outcome, task in direct_tasks))
+                    direct_results.extend(
+                        (outcome, enrichment)
+                        for (outcome, _task), enrichment in zip(
+                            direct_tasks,
+                            enrichments,
+                            strict=True,
+                        )
                     )
-                    async with PlaywrightEngine(
-                        headless=settings.browser_headless,
-                        timeout_ms=settings.browser_timeout_ms,
-                        artifact_directory=artifact_directory,
-                        storage_state=state,
-                        selector_library=SelectorLibrary(settings.artifact_directory),
-                    ) as browser_engine:
-                        if source == "headhunter":
-                            await service.discover_headhunter_vacancies(
-                                user_id,
-                                headhunter_adapter=HeadHunterBrowserAdapter(browser_engine),
-                                locations=request.locations,
-                                limit=request.limit,
-                                search_text=request.search_text,
-                                cv_file_id=request.cv_file_id,
-                                on_outcome=on_outcome,
+                    direct_results.sort(
+                        key=lambda item: (
+                            float(raw_score)
+                            if isinstance(
+                                (raw_score := item[1].get("match_score", 0)),
+                                str | int | float,
                             )
-                        else:
-                            await service.discover_linkedin_vacancies(
-                                user_id,
-                                linkedin_adapter=LinkedInBrowserAdapter(browser_engine),
-                                locations=request.locations,
-                                limit=request.limit,
-                                search_text=request.search_text,
-                                cv_file_id=request.cv_file_id,
-                                on_outcome=on_outcome,
-                            )
+                            else 0.0
+                        ),
+                        reverse=True,
+                    )
+                    for outcome, enrichment in direct_results[: request.limit]:
+                        await publish_outcome(source, outcome, enrichment)
         except Exception as error:  # noqa: BLE001 - one source must not end the whole stream
-            await queue.put({"event": "source_error", "source": source, "error": str(error)})
+            await queue.put(
+                {"event": "source_error", "source": source, "error": type(error).__name__}
+            )
         finally:
             await queue.put({"event": "source_complete", "source": source})
             if enrichment_tasks:
                 await asyncio.gather(*enrichment_tasks, return_exceptions=True)
+            unfinished_direct_tasks = [task for _outcome, task in direct_tasks if not task.done()]
+            if unfinished_direct_tasks:
+                await asyncio.gather(*unfinished_direct_tasks, return_exceptions=True)
             await queue.put({"event": "_source_finished", "source": source})
 
     async def event_stream() -> AsyncIterator[bytes]:
@@ -1611,27 +3029,39 @@ async def import_greenhouse_vacancy(
 async def import_headhunter_vacancy(
     request: HeadHunterImportRequest,
     session: Annotated[Session, Depends(session_scope)],
-    adapter: Annotated[HeadHunterBrowserAdapter, Depends(headhunter_browser_adapter)],
 ) -> ImportedVacancyResponse:
-    """Import one hh.ru vacancy by URL using a real browser (not api.hh.ru).
+    """Import one hh.ru vacancy by URL using the browser-worker (not api.hh.ru).
 
     api.hh.ru's anonymous access is CAPTCHA-limited in practice, so extraction reads the public
     vacancy page directly through Chromium instead — no login/session is required for this.
     """
+    settings = get_settings()
+    browser_client = BrowserWorkerClient(settings.browser_worker_url)
     try:
-        extracted = await adapter.extract_vacancy(str(request.source_url))
+        data = await browser_client.extract_headhunter(
+            user_id="anonymous", url=str(request.source_url)
+        )
+        source_url = required_mapping_string(data, "source_url", default=str(request.source_url))
+        title = required_mapping_string(data, "title")
+        company = required_mapping_string(data, "company")
+        location = required_mapping_string(data, "location")
+        description_text = required_mapping_string(data, "description_text")
+        required_skills = required_mapping_string_list(data, "required_skills")
+        requires_sensitive_review = data.get("requires_sensitive_review", False)
+        if not isinstance(requires_sensitive_review, bool):
+            raise ValueError("Browser worker returned invalid sensitive-review flag")
         vacancy = RecruitmentService(session).create_vacancy(
-            source_url=extracted.source_url,
-            title=extracted.title,
-            company=extracted.company,
-            required_skills=list(extracted.required_skills),
+            source_url=source_url,
+            title=title,
+            company=company,
+            required_skills=required_skills,
             preferred_skills=[],
-            location=extracted.location,
-            description_text=extracted.description_text,
+            location=location,
+            description_text=description_text,
             adapter_name="headhunter",
-            source_evidence_url=extracted.source_url,
-            application_fields=[asdict(field) for field in extracted.form_fields],
-            requires_sensitive_review=extracted.requires_sensitive_review,
+            source_evidence_url=source_url,
+            application_fields=[],
+            requires_sensitive_review=requires_sensitive_review,
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -1710,6 +3140,9 @@ def application_match_details(
     application = session.get(ApplicationRow, application_id)
     if application is None:
         raise HTTPException(status_code=404, detail="Application not found")
+    # Ownership validation: application must belong to a known user
+    if application.user_id is None:
+        raise HTTPException(status_code=404, detail="Application not found")
     aggregate = session.get(ApplicationMatchResultRow, application_id)
     if aggregate is None:
         raise HTTPException(status_code=404, detail="Match details have not been calculated")
@@ -1736,12 +3169,8 @@ def application_match_details(
             source_fragment=requirement.source_fragment,
             evidence_id=evidence.id if evidence is not None else None,
             evidence_text=evidence.evidence_text if evidence is not None else None,
-            evidence_experience_level=(
-                evidence.experience_level if evidence is not None else None
-            ),
-            evidence_source_fragment=(
-                evidence.source_fragment if evidence is not None else None
-            ),
+            evidence_experience_level=(evidence.experience_level if evidence is not None else None),
+            evidence_source_fragment=(evidence.source_fragment if evidence is not None else None),
             lexical_score=requirement_match.lexical_score,
             dense_score=requirement_match.dense_score,
             hybrid_score=requirement_match.hybrid_score,
@@ -1751,6 +3180,9 @@ def application_match_details(
             match_level=requirement_match.match_level,
             explanation=requirement_match.explanation,
             retrieval_model_versions=requirement_match.retrieval_model_versions_json,
+            entailment_relation=requirement_match.entailment_relation,
+            evidence_strength=requirement_match.evidence_strength,
+            is_hard_blocker=requirement_match.is_hard_blocker,
         )
         for requirement_match, requirement, evidence in rows
     ]
@@ -1770,6 +3202,10 @@ def application_match_details(
         work_format_score=aggregate.work_format_score,
         location_score=aggregate.location_score,
         domain_score=aggregate.domain_score,
+        language_score=aggregate.language_score,
+        semantic_similarity=aggregate.semantic_similarity,
+        reranker_score=aggregate.reranker_score,
+        requirements_match=aggregate.requirements_match,
         blocker_count=aggregate.blocker_count,
         matched_required_count=aggregate.matched_required_count,
         missing_required_count=aggregate.missing_required_count,
@@ -1781,6 +3217,20 @@ def application_match_details(
         started_at=aggregate.started_at,
         calculated_at=aggregate.calculated_at,
         requirements=requirement_details,
+        required_score=aggregate.required_score,
+        preferred_score=aggregate.preferred_score,
+        bonus_score=aggregate.bonus_score,
+        confidence=aggregate.confidence,
+        raw_score_before_blockers=float(
+            cast(Any, aggregate.explanation_json.get("raw_score_before_blockers", 0))
+        ),
+        blocker_penalty=float(cast(Any, aggregate.explanation_json.get("blocker_penalty", 0))),
+        calibration_version=str(aggregate.explanation_json.get("calibration_version", "identity")),
+        recommendations=list(cast(Any, aggregate.explanation_json.get("recommendations", []))),
+        hard_blockers=list(cast(Any, aggregate.explanation_json.get("hard_blockers", []))),
+        hard_blockers_unresolved=list(
+            cast(Any, aggregate.explanation_json.get("hard_blockers_unresolved", []))
+        ),
     )
 
 
@@ -1800,7 +3250,7 @@ def prepare_browser_review(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return _workflow_task_response(task)
+    return _workflow_task_response(task, session)
 
 
 @app.post(
@@ -1836,7 +3286,7 @@ def apply_headhunter(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return _workflow_task_response(task)
+    return _workflow_task_response(task, session)
 
 
 @app.post(
@@ -1873,7 +3323,7 @@ def apply_linkedin(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DuplicateEntityError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return _workflow_task_response(task)
+    return _workflow_task_response(task, session)
 
 
 @app.get(
@@ -1885,14 +3335,47 @@ def get_application_task(
     session: Annotated[Session, Depends(session_scope)],
 ) -> WorkflowTaskResponse:
     task = session.scalar(
-        select(WorkflowTaskRow).where(WorkflowTaskRow.application_id == application_id)
+        select(WorkflowTaskRow)
+        .where(WorkflowTaskRow.application_id == application_id)
+        .order_by(WorkflowTaskRow.created_at.desc())
     )
     if task is None:
         raise HTTPException(status_code=404, detail="Workflow task not found")
-    return _workflow_task_response(task)
+    return _workflow_task_response(task, session)
 
 
-def _workflow_task_response(task: WorkflowTaskRow) -> WorkflowTaskResponse:
+@app.get("/v1/workflow-tasks/{task_id}", response_model=WorkflowTaskResponse)
+def get_workflow_task(
+    task_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> WorkflowTaskResponse:
+    task = session.get(WorkflowTaskRow, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Workflow task not found")
+    return _workflow_task_response(task, session)
+
+
+def _workflow_task_response(task: WorkflowTaskRow, session: Session) -> WorkflowTaskResponse:
+    active_states = ("running", "scheduled", "retry_scheduled")
+    queue_position: int | None = None
+    if task.state in active_states:
+        ordered_ids = list(
+            session.scalars(
+                select(WorkflowTaskRow.id)
+                .where(
+                    WorkflowTaskRow.queue_name == task.queue_name,
+                    WorkflowTaskRow.state.in_(active_states),
+                )
+                .order_by(WorkflowTaskRow.priority.desc(), WorkflowTaskRow.created_at)
+            )
+        )
+        if task.id in ordered_ids:
+            queue_position = ordered_ids.index(task.id) + 1
+    aggregate = (
+        session.get(ApplicationMatchResultRow, task.application_id)
+        if task.idempotency_key.startswith("matching-v2:") and task.application_id is not None
+        else None
+    )
     return WorkflowTaskResponse(
         id=task.id,
         application_id=task.application_id,
@@ -1901,6 +3384,18 @@ def _workflow_task_response(task: WorkflowTaskRow) -> WorkflowTaskResponse:
         state=task.state,
         attempt_number=task.attempt_number,
         priority=task.priority,
+        queue_position=queue_position,
+        pipeline_status=aggregate.status if aggregate is not None else None,
+        pipeline_started_at=aggregate.started_at if aggregate is not None else None,
+        pipeline_updated_at=aggregate.updated_at if aggregate is not None else None,
+        calculated_at=aggregate.calculated_at if aggregate is not None else None,
+        requirements_total=aggregate.requirements_total if aggregate is not None else None,
+        requirements_processed=aggregate.requirements_processed if aggregate is not None else None,
+        llm_calls_made=aggregate.llm_calls_made if aggregate is not None else None,
+        refresh_requested=task.refresh_requested,
+        scheduled_for=task.scheduled_for,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
         transitions=[
             TaskTransitionResponse(
                 previous_state=transition.previous_state,
@@ -1909,6 +3404,7 @@ def _workflow_task_response(task: WorkflowTaskRow) -> WorkflowTaskResponse:
                 worker=transition.worker,
                 attempt_number=transition.attempt_number,
                 evidence=transition.evidence,
+                occurred_at=transition.occurred_at,
             )
             for transition in task.transitions
         ],
@@ -2204,15 +3700,33 @@ def resume_human_action(
 
 
 @app.delete("/v1/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_user(
+async def delete_user(
     user_id: str,
     session: Annotated[Session, Depends(session_scope)],
     storage: Annotated[DocumentStorage, Depends(document_storage)],
     evidence_storage: Annotated[EvidenceArtifactStorage, Depends(evidence_artifact_storage)],
 ) -> Response:
     try:
+        cv_file_ids = tuple(
+            session.scalars(select(CvFileRow.id).where(CvFileRow.user_id == user_id)).all()
+        )
+        vacancy_ids = tuple(
+            session.scalars(
+                select(ApplicationRow.vacancy_id)
+                .where(ApplicationRow.user_id == user_id)
+                .distinct()
+            ).all()
+        )
         stored_paths, evidence_paths, browser_state_paths = RecruitmentService(session).delete_user(
             user_id
+        )
+        resume_rag_jobs = ResumeRagJobService(session)
+        for cv_file_id in cv_file_ids:
+            resume_rag_jobs.delete_for_cv(cv_file_id)
+        await RagSyncService(session, get_settings()).delete_owner_documents(
+            user_id,
+            cv_file_ids=cv_file_ids,
+            vacancy_ids=vacancy_ids,
         )
         for stored_path in stored_paths:
             storage.delete(stored_path)

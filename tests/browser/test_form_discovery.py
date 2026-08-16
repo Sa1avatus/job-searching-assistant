@@ -21,6 +21,10 @@ def test_discovery_returns_typed_accessible_fields(tmp_path: Path) -> None:
         assert fields_by_id["authorization"].semantic_category == "work_authorization"
         assert fields_by_id["authorization"].options == ("Select an option", "Yes", "No")
         assert all(field.source_locator for field in fields)
+        email_candidates = fields_by_id["email"].locator_candidates
+        assert email_candidates[0].startswith("label:")
+        assert "id:email" in email_candidates
+        assert len(email_candidates) >= 3
 
     asyncio.run(run_discovery())
 

@@ -9,3 +9,6 @@ __pycache__/
 tasks/
 debug.log
 *.pyc
+
+# Embedded git worktrees must never be staged
+.worktrees/

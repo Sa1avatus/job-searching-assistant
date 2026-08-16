@@ -35,9 +35,11 @@ class FakeRedisClient:
         return True
 
     async def eval(self, script: str, numkeys: int, *keys_and_args: str) -> int:
-        key, expected_value = keys_and_args
+        key, expected_value, *extra_args = keys_and_args
         if self.values.get(key) != expected_value:
             return 0
+        if extra_args:
+            return 1
         del self.values[key]
         return 1
 

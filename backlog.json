@@ -67,7 +67,7 @@
         "Official API fixture passes",
         "Read-only live smoke passes"
       ],
-      "status": "in_progress"
+      "status": "completed"
     },
     {
       "id": "LI-001",
@@ -297,6 +297,271 @@
         "Search only ever creates awaiting_review applications, never submits",
         "Accept button uses the real apply-headhunter endpoint with explicit confirmation",
         "LinkedIn not yet integrated into this UI"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "MATCH-SKILLS-001",
+      "title": "Use structured vacancy skills in Matching v2",
+      "description": "Build a versioned matching source from description, required skills, and preferred skills, with alias-aware deduplication.",
+      "category": "matching",
+      "priority": 0,
+      "expected_impact": "Matching explanations and scores cover the same key skills shown in the UI",
+      "complexity": "medium",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Every structured skill has a requirement",
+        "Changing structured skills changes the matching content version",
+        "Aliases do not create duplicate requirements"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "MATCH-COVERAGE-001",
+      "title": "Expose explicit key-skill evaluation coverage",
+      "description": "Record whether every vacancy key skill was evaluated and distinguish match, insufficient evidence, evaluation error, missing, and not evaluated states.",
+      "category": "matching",
+      "priority": 0,
+      "expected_impact": "Explanations cannot silently omit key skills",
+      "complexity": "medium",
+      "dependencies": ["MATCH-SKILLS-001"],
+      "acceptance_criteria": [
+        "Coverage is persisted in explanation JSON",
+        "Dashboard renders every key skill and state",
+        "Regression test rejects silent omissions"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "DIRECT-RERANK-001",
+      "title": "Make Direct to reranker a server-side search mode",
+      "description": "When selected, ingest owner-scoped RAG context, schedule detailed matching with a forced refresh, wait for completion, and emit results ordered by the calculated score.",
+      "category": "matching",
+      "priority": 0,
+      "expected_impact": "Search results are shown after available RAG and reranker processing rather than reranked by a later UI click",
+      "complexity": "large",
+      "dependencies": ["MATCH-SKILLS-001"],
+      "acceptance_criteria": [
+        "Flag is sent to the server",
+        "RAG ingestion precedes matching scheduling",
+        "External reranker is used when configured",
+        "Unavailable external services preserve local fallback results"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "MATCH-ERROR-001",
+      "title": "Add safe diagnostics and retry for evaluation errors",
+      "description": "Persist non-sensitive evaluator failure codes and expose a bounded user-triggered retry without treating technical errors as missing skills.",
+      "category": "matching",
+      "priority": 0,
+      "expected_impact": "Users can distinguish and recover from technical evaluation failures",
+      "complexity": "medium",
+      "dependencies": ["MATCH-COVERAGE-001"],
+      "acceptance_criteria": [
+        "Failure codes contain no provider response bodies",
+        "Retry is bounded and explicit",
+        "Technical failures do not become missing skills"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "MATCH-BACKFILL-001",
+      "title": "Backfill stale matching explanations",
+      "description": "Provide a bounded owner-scoped operation to recalculate existing results created before the versioned structured-skill source.",
+      "category": "matching",
+      "priority": 0,
+      "expected_impact": "Existing saved vacancies receive current explanations without manual per-card work",
+      "complexity": "medium",
+      "dependencies": ["MATCH-SKILLS-001"],
+      "acceptance_criteria": [
+        "Only owner-scoped applications are scheduled",
+        "Progress and failures are visible",
+        "Previous results remain available until replacement succeeds"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SEC-AUDIT-001",
+      "title": "Complete cross-user endpoint audit",
+      "description": "Verify ownership enforcement and negative tests for every user-owned API, artifact, browser, matching, email, and RAG path.",
+      "category": "security",
+      "priority": 0,
+      "expected_impact": "Closes remaining tenant-isolation uncertainty",
+      "complexity": "large",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Every user-owned endpoint has a negative cross-user test",
+        "Artifacts and background jobs enforce ownership",
+        "Audit results update SEC-001 status"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "QUALITY-BASELINE-001",
+      "title": "Restore green static quality gates",
+      "description": "Separate mechanical formatting from behavioral fixes, then resolve Ruff and mypy failures without weakening checks.",
+      "category": "quality",
+      "priority": 0,
+      "expected_impact": "New regressions are visible instead of hidden by existing failures",
+      "complexity": "large",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Ruff check passes",
+        "Ruff format check passes",
+        "Mypy passes",
+        "Full pytest remains green"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "MATCH-EVAL-001",
+      "title": "Calibrate Matching v2 on reviewed evaluation data",
+      "description": "Measure required-skill coverage, ranking quality, confidence calibration, and error slices before promoting matching beyond shadow mode.",
+      "category": "matching",
+      "priority": 1,
+      "expected_impact": "Evidence-based score and rollout decisions",
+      "complexity": "large",
+      "dependencies": ["MATCH-COVERAGE-001", "MATCH-ERROR-001"],
+      "acceptance_criteria": [
+        "Human-reviewed production-like fixtures exist",
+        "Quality thresholds and slices are reported",
+        "Rollback criteria are documented"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "RAG-COLLECTIONS-001",
+      "title": "Provision and authorize the JSA RAG collections",
+      "description": "Create and authorize the profiles, resumes, and vacancies collections in the selected RAG project, then verify owner-scoped access with the JSA service key.",
+      "category": "rag",
+      "priority": 0,
+      "expected_impact": "Makes the collection contract usable by the running application and exposes resume documents in RAG administration.",
+      "complexity": "small",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "All three collections exist in the configured RAG project",
+        "The JSA service key can ingest and search each collection",
+        "Cross-owner reads are rejected",
+        "No private document content is written to logs"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "RAG-RESUME-SYNC-001",
+      "title": "Synchronize analysed resumes with RAG",
+      "description": "Ingest the selected resume into the resumes collection after successful analysis, refresh it when the analysed fields change, and let the operator retry synchronization manually.",
+      "category": "rag",
+      "priority": 0,
+      "expected_impact": "Resume documents appear without requiring a Direct to reranker search first.",
+      "complexity": "medium",
+      "dependencies": ["RAG-COLLECTIONS-001"],
+      "acceptance_criteria": [
+        "Successful resume analysis schedules owner-scoped ingestion",
+        "Retries are bounded and idempotent",
+        "RAG failure does not lose the authoritative resume record",
+        "Synchronization status is visible to the operator",
+        "An operator can manually retry a reviewed resume without re-uploading it"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "RAG-PROFILE-SYNC-001",
+      "title": "Synchronize reviewed profile facts with RAG",
+      "description": "Refresh the profiles collection after confirmed fact creation, update, import, or deletion while excluding unverified facts.",
+      "category": "rag",
+      "priority": 0,
+      "expected_impact": "RAG profile context stays aligned with facts approved by the user.",
+      "complexity": "medium",
+      "dependencies": ["RAG-COLLECTIONS-001"],
+      "acceptance_criteria": [
+        "Only verified facts are ingested",
+        "Every supported fact mutation triggers an idempotent refresh",
+        "Deleted facts disappear after synchronization",
+        "RAG failure does not block the authoritative profile update"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "RAG-BACKFILL-001",
+      "title": "Backfill existing profiles, resumes, and vacancies into RAG",
+      "description": "Provide a bounded owner-scoped operation that populates the canonical collections from existing PostgreSQL records.",
+      "category": "rag",
+      "priority": 1,
+      "expected_impact": "Existing users receive complete RAG coverage without manually re-uploading data.",
+      "complexity": "medium",
+      "dependencies": ["RAG-RESUME-SYNC-001", "RAG-PROFILE-SYNC-001"],
+      "acceptance_criteria": [
+        "Backfill is owner-scoped and resumable",
+        "Progress, skipped records, and sanitized failures are reported",
+        "Repeated runs do not create duplicate logical documents",
+        "Batch size and retry count are bounded"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "RAG-DELETE-001",
+      "title": "Propagate resume and profile deletion to RAG",
+      "description": "Add explicit owner-scoped deletion support so removed source records do not leave stale RAG documents.",
+      "category": "rag",
+      "priority": 1,
+      "expected_impact": "Reduces stale search context and supports expected personal-data lifecycle behavior.",
+      "complexity": "medium",
+      "dependencies": ["RAG-COLLECTIONS-001"],
+      "acceptance_criteria": [
+        "Deleting a resume removes its logical RAG document",
+        "Deleting the last profile fact refreshes or removes the profile document",
+        "Deletion retries are idempotent and owner-scoped",
+        "Failures are visible without exposing document content"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "RAG-E2E-001",
+      "title": "Add a real RAG integration smoke test",
+      "description": "Exercise collection discovery, owner-scoped ingestion, indexing, search, and cleanup against the configured local RAG service.",
+      "category": "quality",
+      "priority": 1,
+      "expected_impact": "Confirms that unit-tested contracts work across the actual service boundary.",
+      "complexity": "medium",
+      "dependencies": ["RAG-COLLECTIONS-001", "RAG-DELETE-001"],
+      "acceptance_criteria": [
+        "Smoke test uses synthetic content only",
+        "Profile, resume, and vacancy round trips pass",
+        "Cross-owner isolation is verified",
+        "Synthetic documents are cleaned up"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "RAG-SYNC-STATUS-001",
+      "title": "Show RAG synchronization status in the dashboard",
+      "description": "Display per-resume RAG sync status (not_scheduled, scheduled, running, completed, failed) with failure code, attempt count, last sync time, and manual retry button.",
+      "category": "rag",
+      "priority": 0,
+      "expected_impact": "Operators can see why a resume is missing from RAG and retry without re-uploading.",
+      "complexity": "small",
+      "dependencies": ["RAG-RESUME-SYNC-001"],
+      "acceptance_criteria": [
+        "Dashboard shows RAG sync status for each resume",
+        "Failure code is displayed without exposing document content",
+        "Retry button triggers a new sync task"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "BACKLOG-CLEANUP-001",
+      "title": "Reconcile backlog with actual implementation state",
+      "description": "Close completed items, update statuses, add missing items from the stabilization plan, and align version with changelog.",
+      "category": "quality",
+      "priority": 1,
+      "expected_impact": "Backlog reflects actual project state instead of stale assumptions.",
+      "complexity": "small",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "All completed items are marked completed",
+        "New items from the plan are added",
+        "Version number reflects current release"
       ],
       "status": "completed"
     }

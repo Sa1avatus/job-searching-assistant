@@ -17,6 +17,19 @@ def test_prompt_registry_loads_and_renders_active_version() -> None:
     assert "Python" in rendered
 
 
+def test_vacancy_extraction_prompt_uses_schema_field_name() -> None:
+    registry_path = Path(__file__).parents[2] / "prompts" / "registry.json"
+    registry = PromptRegistry.load(registry_path)
+
+    rendered = registry.render(
+        "extract_vacancy_requirements",
+        {"vacancy_id": "vacancy-1", "source_text": "Python is required."},
+    )
+
+    assert "requirements field must be an array" in rendered
+    assert "do not return an atomic_requirements field" in rendered
+
+
 def test_prompt_registry_rejects_multiple_active_versions() -> None:
     first = PromptDefinition(
         name="test",

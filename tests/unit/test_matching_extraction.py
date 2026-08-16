@@ -88,6 +88,40 @@ def test_extraction_models_reject_unknown_or_invalid_fields() -> None:
         )
 
 
+def test_extraction_models_tolerate_explicit_nulls_for_defaulted_fields() -> None:
+    # json_object mode (no schema enforcement) sometimes emits nulls for fields
+    # that have defaults; they must fall back to the default, not fail the run.
+    evidence = CandidateEvidence.model_validate(
+        {
+            "text": "Built production services",
+            "normalized_text": "built production services",
+            "evidence_type": "skill_statement",
+            "experience_level": None,
+            "is_verified": None,
+            "source_fragment": "Built production services",
+            "confidence": 0.9,
+        }
+    )
+    assert evidence.experience_level is ExperienceLevel.UNKNOWN
+    assert evidence.is_verified is False
+
+    requirement = VacancyRequirement.model_validate(
+        {
+            "text": "Python",
+            "normalized_text": "python",
+            "requirement_type": "hard_skill",
+            "importance": None,
+            "weight": None,
+            "is_blocker": None,
+            "source_fragment": "Python",
+            "confidence": 0.9,
+        }
+    )
+    assert requirement.importance is RequirementImportance.UNKNOWN
+    assert requirement.weight == 1.0
+    assert requirement.is_blocker is False
+
+
 def test_fake_extractors_are_deterministic_and_return_independent_copies() -> None:
     async def run() -> None:
         vacancy_extractor = FakeVacancyRequirementExtractor({"vacancy-1": _vacancy_extraction()})

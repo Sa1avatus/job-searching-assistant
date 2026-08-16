@@ -2,173 +2,206 @@
 
 [Русский](README.ru.md) | **English**
 
-A recruitment assistant with a personal dashboard for resume analysis, vacancy discovery, candidate matching, cover-letter drafting, application review, and explicitly enabled browser submission. HeadHunter and LinkedIn search uses the user's saved browser sessions rather than job-seeker APIs.
+Job Searching Assistant is a local, review-first recruitment platform. It imports and discovers
+vacancies, analyses resumes, calculates explainable matches, drafts application materials, and
+prepares supported browser forms for human review. Real HeadHunter and LinkedIn submission is
+disabled by default and requires explicit configuration and user confirmation.
 
-Current stable version: **1.0.0**.
+Current version: **1.5.5**.
 
-HeadHunter's changeable browser selectors and confirmation texts are stored in
-`config/browser/headhunter_apply.json`. Docker Compose mounts this profile read-only into the API
-and browser worker. If HeadHunter changes its response form, update the relevant selector list and
-restart `api` and `browser-worker`; Python code does not need to be changed. The profile is
-validated at adapter startup and an invalid or incomplete file stops the flow safely.
+## Current release
 
-## Features
+- Matching recalculation is split into a fast **smart recalculation** (reuses cached LLM
+  results; unchanged content returns immediately) and a **full recalculation** for after
+  changing the LLM model. Decomposition/entailment results are cached in Redis with
+  model-aware keys, entailment stops early after a strong confirmation, entailment pairs
+  are evaluated in **batched LLM calls** (5 pairs per call by default), and simple skills
+  skip the LLM entirely — cutting cold-run time and making repeated runs near-instant.
+  Entailment classification can additionally be routed to a smaller local model via
+  `APP_MATCHING_ENTAILMENT_MODEL` (e.g. `qwen3:1.5b`) while extraction and decomposition
+  keep using the matching model selected in the Model tab.
+- LLM models are configured **per purpose** in the Model tab: a dedicated model for
+  **matching** (extraction, decomposition, entailment) and a separate one for **materials
+  generation** (cover letters, screening answers, resume analysis). Matching falls back to
+  the materials model until a matching-specific model is saved.
+- The LLM provider adapts to OpenAI-compatible endpoints that only accept `text` and
+  `json_object` response formats (such as the local-code-worker gateway): structured
+  matching requests automatically fall back to `json_object` when `json_schema` is
+  rejected, keeping extraction/decomposition/entailment working.
 
-- Searches HeadHunter and LinkedIn through isolated Playwright browser sessions and imports public Greenhouse boards.
-- Analyses multiple resumes and uses the selected resume for discovery, matching, and application materials.
-- Shows discovered vacancies progressively while matching scores and cover letters are generated.
-- Keeps higher-scoring vacancies at the top and filters previously rejected, submitted, or blacklisted results.
-- Supports review, editing, manual continuation, audited retries, and explicit submission controls.
-- Persists application state in PostgreSQL, coordinates workers through Redis, and uses OpenSearch as a rebuildable matching index.
+- Matching v2.3 decomposes vacancy requirements into claims and distinguishes confirmed,
+  partial, insufficient, failed, and missing evidence.
+- Application materials receive the same vacancy key skills shown on the vacancy card. A skill is
+  emphasized only when it is also present in verified candidate facts; vacancy requirements are
+  never turned into candidate claims automatically.
+- Optional RAG search and profile, resume, and vacancy ingestion are scoped by the owning user.
+- **Direct to reranker** waits for owner-scoped RAG ingestion and detailed matching before showing
+  search results. Available external RAG and reranker services refine evidence ordering; unavailable
+  services fall back to local hybrid matching without discarding the discovered vacancy.
+- Profile facts can be imported from supported files or extracted from a selected resume and
+  reviewed before they affect matching or generated text.
 
-## Architecture
+See [`CHANGELOG.md`](CHANGELOG.md) for the complete version history.
 
-```mermaid
-flowchart LR
-    User["User"] --> Dashboard["Dashboard and review queue"]
-    Dashboard --> API["FastAPI"]
-    API --> Postgres[("PostgreSQL\nprofiles, vacancies, applications")]
-    API --> Redis[("Redis\ntasks and leases")]
-    Redis --> Dispatcher["Dispatcher"]
-    Dispatcher --> Browser["Playwright browser worker"]
-    Browser --> HH["HeadHunter"]
-    Browser --> LinkedIn["LinkedIn"]
-    API --> Greenhouse["Greenhouse public boards"]
-    API --> LLM["Configured LLM provider"]
-    API --> OpenSearch[("OpenSearch\nderived matching index")]
-    Browser -->|"status and evidence"| Postgres
-    LLM -->|"scores and drafts"| API
-```
+## What is included
 
-PostgreSQL is the source of truth. Redis provides dispatch coordination and leases. OpenSearch contains derived matching data and can be rebuilt without losing business data. Browser sessions are stored in root-confined encrypted files; PostgreSQL keeps only their lifecycle metadata.
+- FastAPI dashboard and review queue;
+- PostgreSQL as the business-data source of truth;
+- Redis-backed task coordination and worker leases;
+- a rebuildable OpenSearch matching index;
+- isolated Playwright sessions for HeadHunter, LinkedIn, Greenhouse, and configured sites;
+- user-selected Anthropic, Gemini, or OpenAI-compatible material generation;
+- encrypted browser state, LLM keys, and sensitive autofill values;
+- controlled fixtures for browser and end-to-end verification.
 
-## Quick start with Docker Compose
+The dashboard is available locally at `http://127.0.0.1:8000/dashboard` and on the trusted LAN at
+`http://192.168.1.93:8000/dashboard`; the corresponding review pages use `/review`. Compose exposes
+only port `8000` to the LAN. PostgreSQL, Redis, OpenSearch, the browser desktop, browser worker, and
+matching-model ports remain bound to loopback. LAN access runs the API in production mode and
+requires `APP_API_KEY` or `APP_API_CLIENTS_JSON`; `scripts/setup.ps1` generates `APP_API_KEY` in the
+ignored local `.env` when it is missing.
 
-### 1. Requirements
+## Quick start on Windows
 
-- Windows 10 or 11 with WSL 2;
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) with the WSL 2 engine;
-- [Git for Windows](https://git-scm.com/download/win);
-- at least 8 GB RAM and 10 GB free disk space.
-
-Optional local detailed-matching models require at least 16 GB RAM and approximately 12 GB of additional disk space.
-
-### 2. Install and start
-
-Open PowerShell:
+Requirements: Windows 10/11, Docker Desktop with WSL 2, Git for Windows, at least 8 GB RAM, and
+10 GB free disk space.
 
 ```powershell
 git clone https://github.com/Sa1avatus/job-searching-assistant.git
-cd job-searching-assistant
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+Set-Location job-searching-assistant
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```
 
-The setup script creates `.env`, generates encryption material for browser sessions and saved LLM keys, builds the containers, waits for their health checks, and prints the dashboard address.
+The setup script creates ignored local configuration, generates encryption material when missing,
+ensures the shared local Worker network exists, builds the containers, applies migrations, waits for
+health checks, and prints the dashboard address. It does not delete existing Docker volumes.
 
-Open `http://127.0.0.1:8000/dashboard`, then:
-
-1. Create a user in **Access**.
-2. Select an LLM provider and model in **Model**.
-3. Upload and analyse one or more resumes in **Resume**.
-4. Sign in to hh.ru and LinkedIn in **Site sessions**.
-5. Select a resume and start a search.
-
-Never commit `.env`: it contains secrets.
-
-### 3. Stop, restart, or update
+To stop or restart without deleting data:
 
 ```powershell
-docker compose --profile browser stop
-docker compose --profile browser up -d
+docker compose down
+docker compose --profile browser up -d --wait
 ```
 
-To update an existing installation:
+Never run `docker compose down -v` unless you intentionally want to delete local PostgreSQL, Redis,
+OpenSearch, and model data.
+
+## First use
+
+1. Create a local user in **Access**.
+2. Select an LLM provider and model in **Model** — separately for matching and for materials
+   generation — if you want resume analysis or drafted materials.
+3. Upload and review one or more resumes.
+4. Capture user-owned site sessions in **Site sessions** where a connector requires authentication.
+5. Select a resume and start vacancy discovery.
+6. Review generated data and every external action before approval.
+
+### Manual email import
+
+The **All vacancies** panel can import application correspondence without connecting an IMAP
+mailbox. Select up to 100 `.eml` files, an `.mbox` mailbox export, ZIP archives containing EML
+files, or a mixture of these formats. The combined upload is limited to 50 MB and processing is
+bounded to 500 messages per import. Attached EML messages are classified separately, so a forwarded
+or exported rejection can update the matching application without its text being merged into the
+outer message. Plain-text and HTML-only bodies are supported; the sender display name may be used as
+a conservative company hint when linking a message. The completion summary distinguishes unknown
+messages from recognized messages that could not be linked safely. Uploaded source files are
+processed in memory (with a temporary file only while reading mbox data) and are not retained by the
+application.
+
+HeadHunter dashboard discovery uses the saved user session. The lower-level read-only adapter can
+also inspect public vacancy pages without a session, but this is not the dashboard workflow.
+LinkedIn search requires both a captured session and `APP_ENABLE_LINKEDIN_APPLY=true`. Greenhouse
+discovery reads public boards; its browser preparation stops before submission.
+
+## Optional detailed matching
+
+The bundled BGE model service requires an NVIDIA-capable Docker setup, at least 16 GB RAM, and
+roughly 12 GB additional disk space. Its first start downloads several gigabytes:
 
 ```powershell
-git pull
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -EnableDetailedMatching
 ```
 
-Docker volumes preserve PostgreSQL, Redis, OpenSearch, and downloaded models during normal rebuilds. Do not run `docker compose down -v` unless you intentionally want to delete all local application data.
+Matching v2 remains in shadow mode by default. PostgreSQL keeps authoritative records; OpenSearch
+can be rebuilt.
 
-### 4. Optionally enable detailed matching
+### RAG collections
 
-Only enable the bundled BGE models on a sufficiently powerful machine:
+JSA keeps different business objects in separate owner-scoped RAG collections:
+
+- `profiles` — reviewed profile facts;
+- `resumes` — analysed resume summaries, skills, and search keywords;
+- `vacancies` — vacancy descriptions and attributes.
+
+The collections must exist in the RAG project and be authorized for JSA's service API key before
+ingestion. A reviewed resume is synchronized after its analysed profile is confirmed, and reviewed
+profile facts are synchronized after creation, editing, deletion, or batch confirmation. Existing
+documents are updated with optimistic locking. Fact imports also refresh the reviewed profile after
+persistence. Deleting a resume, the last verified profile fact, or the owning user removes the
+corresponding owner-scoped RAG documents. **Direct to reranker** performs another refresh before
+matching. Resume synchronization runs through the durable dispatcher with bounded retries. Its
+current state, attempt count, last safe failure code, and successful synchronization time are
+returned with each resume and shown in the resume panel.
+
+The resume panel also provides **Send to RAG** for an explicit durable retry of one confirmed
+resume. The action is rejected when the resume has not been confirmed or RAG is not configured,
+does not duplicate an active task, and never changes the authoritative local resume record on
+synchronization failure.
+
+Existing records can be synchronized in bounded owner-scoped batches:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -EnableDetailedMatching
+recruitment-assistant rag-backfill --user-id USER_ID --batch-size 50
 ```
 
-The first run downloads several gigabytes. Standard browser search, resume analysis, cover letters, status management, and application review do not require these local models.
+While either `resumes_has_more` or `vacancies_has_more` is true, pass both returned cursors to
+`--after-resume-id` and `--after-vacancy-id` in the next invocation. The command is idempotent and
+prints counts, continuation flags, and cursors only; it never prints profile or resume content.
+Running it contacts the configured RAG service and should be an explicit operator action.
+Aggregate `rag_sync_*` and `rag_delete_*` counters are available on the existing `/metrics`
+endpoint. They contain counts only and no document content or identifiers.
 
-### 5. Manual start
+Legacy matching explanations can be scheduled for replacement in bounded owner-scoped pages:
 
 ```powershell
-Copy-Item .env.example .env
-# Set APP_BROWSER_STATE_ENCRYPTION_KEY in .env to a Fernet-compatible random key.
-docker compose --profile browser up --build -d --wait
-Invoke-RestMethod http://127.0.0.1:8000/health
+recruitment-assistant matching-backfill --user-id USER_ID --batch-size 50
 ```
 
-## Dashboard and review flow
+Pass `next_application_cursor` as `--after-application-id` while `has_more` is true. Only stale,
+failed, or pre-source-v2 results are scheduled; current results and applications without an
+existing detailed result are skipped. The previous score and explanation remain readable until the
+replacement calculation succeeds.
 
-The dashboard is available at `http://127.0.0.1:8000/dashboard`; the detailed review queue is at `http://127.0.0.1:8000/review`. Set `APP_HTTP_PORT` in `.env` to use another host port.
-
-The dashboard contains saved vacancies, search, the company blacklist, resumes, browser sessions, LLM configuration, and local access settings. Search results appear progressively. Matching and cover-letter generation continue in the background, and vacancy cards are reordered as scores become available.
-
-Real submission is disabled by default. Set `APP_ENABLE_LINKEDIN_APPLY=true` to enable LinkedIn Easy Apply. Set `APP_ENABLE_HEADHUNTER_APPLY=true` only when final hh.ru submission should be available. CAPTCHA, SMS, 2FA, legal declarations, and unknown required questions always require human action.
-
-## Main API routes
-
-| Route | Purpose |
-| --- | --- |
-| `GET /health`, `GET /ready` | Check service health and readiness. |
-| `GET /metrics` | Read application metrics. |
-| `POST /v1/assessments` | Assess a vacancy against a profile. |
-| `POST /v1/users` | Create a local user. |
-| `GET /v1/users/{user_id}/vacancies` | List filtered and paginated saved vacancies. |
-| `GET /v1/users/{user_id}/cv-files` | List uploaded resumes. |
-| `POST /v1/users/{user_id}/cv-files` | Upload a validated resume. |
-| `GET /v1/users/{user_id}/browser-sessions` | Inspect saved site-session state. |
-| `POST /v1/vacancies/import-greenhouse` | Import a public Greenhouse vacancy. |
-| `POST /v1/vacancies/import-headhunter` | Import a vacancy through the hh.ru browser session. |
-| `POST /v1/vacancies/import-linkedin-reference` | Save a policy-safe LinkedIn reference. |
-| `GET /v1/review-queue` | List applications awaiting review. |
-| `POST /v1/applications/{application_id}/decision` | Record a review decision. |
-| `POST /v1/applications/{application_id}/retry` | Retry a recoverable task with audit history. |
-| `GET /v1/applications/{application_id}/match-details` | Read explainable matching evidence. |
-
-See [`docs/commands.md`](docs/commands.md), [`docs/architecture.md`](docs/architecture.md), [`docs/security.md`](docs/security.md), [`docs/compliance-matrix.md`](docs/compliance-matrix.md), and [`docs/known-limitations.md`](docs/known-limitations.md) for the complete verified behavior.
-
-## Local development without Docker
+## Local development
 
 Python 3.12 or newer is required:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-playwright install chromium
-python -m app.cli assess --profile examples/profile.json --vacancy examples/vacancy.json
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m playwright install chromium
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
-## Verification
+See [`docs/commands.md`](docs/commands.md) for service and diagnostic commands and
+[`docs/testing.md`](docs/testing.md) for selecting safe checks.
 
-```powershell
-python -m pytest -q
-```
+## Documentation
 
-## Current limitations
+- [`docs/product-scope.md`](docs/product-scope.md) — product capabilities and non-negotiable policy;
+- [`docs/architecture.md`](docs/architecture.md) — component boundaries and data flow;
+- [`docs/database.md`](docs/database.md) — persistence and migration rules;
+- [`docs/browser-automation.md`](docs/browser-automation.md) — browser sessions and external effects;
+- [`docs/security.md`](docs/security.md) — secrets, access, and personal data;
+- [`docs/known-limitations.md`](docs/known-limitations.md) — verified gaps and connector risks;
+- [`docs/adapter-guide.md`](docs/adapter-guide.md) — site-specific behavior;
+- [`docs/matching-architecture.md`](docs/matching-architecture.md) — matching v2 entry point.
 
-- Real submission requires both a feature flag and explicit confirmation in the dashboard.
-- LinkedIn automation can trigger platform restrictions and should only be used with an account whose risk the user accepts.
-- External-site selectors may require maintenance after site redesigns.
-- Scanned or image-only resumes require OCR before upload.
-- Matching v2 remains in shadow mode by default and does not replace the dashboard score until its services are deliberately enabled.
+## Safety
 
-## Security
-
-- Never commit `.env`, browser-session files, credentials, API keys, or real application evidence.
-- Saved LLM keys and browser state are encrypted with `APP_BROWSER_STATE_ENCRYPTION_KEY`.
+- `.env`, browser state, resumes, screenshots, and real application evidence are local and ignored.
+- Generated or model-provided text cannot directly control Playwright or persistence.
+- CAPTCHA, 2FA, sensitive declarations, unknown required answers, and cross-host navigation stop for
+  human review.
 - Automated tests use controlled fixtures and never submit real applications.
-- Unverified profile facts, sensitive declarations, CAPTCHA, 2FA, and unknown required answers cannot be silently submitted.

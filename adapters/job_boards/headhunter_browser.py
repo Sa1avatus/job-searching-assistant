@@ -126,6 +126,28 @@ class HeadHunterBrowserAdapter:
         hostname = (urlparse(url).hostname or "").casefold()
         return hostname == _HOST_SUFFIX or hostname.endswith(f".{_HOST_SUFFIX}")
 
+    async def has_submitted_application(self, url: str) -> bool:
+        if not self.supports_url(url):
+            raise ValueError("URL is not a supported hh.ru host")
+        page = await self._browser_engine.new_page()
+        navigation = await self._browser_engine.navigate(page, url)
+        if not navigation.is_successful:
+            raise RuntimeError(f"hh.ru navigation failed: {navigation.error_category}")
+        await self._raise_if_captcha(page)
+        if not self.supports_url(page.url):
+            raise RuntimeError("hh.ru navigation left the trusted host")
+        await self._raise_if_logged_out(page)
+        marker = page.locator(",".join(self._apply_profile.already_applied_markers))
+        marker_text = page.get_by_text(
+            re.compile(
+                r"^\s*(?:"
+                + "|".join(map(re.escape, self._apply_profile.already_applied_texts))
+                + r")(?:\s|$)",
+                re.IGNORECASE,
+            )
+        )
+        return await marker.count() > 0 or await marker_text.count() > 0
+
     async def apply(
         self,
         url: str,
@@ -146,9 +168,7 @@ class HeadHunterBrowserAdapter:
 
         actions: list[BrowserActionResult] = []
         response_button = page.locator(",".join(self._apply_profile.response_buttons)).first
-        already_applied_marker = page.locator(
-            ",".join(self._apply_profile.already_applied_markers)
-        )
+        already_applied_marker = page.locator(",".join(self._apply_profile.already_applied_markers))
         already_applied_text = page.get_by_text(
             re.compile(
                 r"^\s*(?:"
@@ -157,10 +177,7 @@ class HeadHunterBrowserAdapter:
                 re.IGNORECASE,
             )
         )
-        if (
-            await already_applied_marker.count() > 0
-            or await already_applied_text.count() > 0
-        ):
+        if await already_applied_marker.count() > 0 or await already_applied_text.count() > 0:
             checkpoint = await self._browser_engine.capture_review_checkpoint(
                 page, target="already-applied"
             )
@@ -176,9 +193,7 @@ class HeadHunterBrowserAdapter:
         if cross_country_action is not None:
             actions.append(cross_country_action)
             if not cross_country_action.is_successful:
-                raise ApplyBlocked(
-                    "The cross-country warning could not be confirmed"
-                )
+                raise ApplyBlocked("The cross-country warning could not be confirmed")
 
         await self._wait_for_response_form(page, response_button)
         await self._raise_if_captcha(page)
@@ -212,10 +227,7 @@ class HeadHunterBrowserAdapter:
             save_letter_button = page.locator(
                 ",".join(self._apply_profile.cover_letter_save_buttons)
             ).first
-            if (
-                await save_letter_button.count() > 0
-                and await save_letter_button.is_visible()
-            ):
+            if await save_letter_button.count() > 0 and await save_letter_button.is_visible():
                 save_letter = await self._click(
                     page, save_letter_button, "save-cover-letter", already_ok=False
                 )
@@ -234,9 +246,7 @@ class HeadHunterBrowserAdapter:
         if cross_country_action is not None:
             actions.append(cross_country_action)
             if not cross_country_action.is_successful:
-                raise ApplyBlocked(
-                    "The cross-country warning could not be confirmed"
-                )
+                raise ApplyBlocked("The cross-country warning could not be confirmed")
 
         await self._raise_if_captcha(page)
         confirmation = page.locator(",".join(self._apply_profile.confirmation_markers))
@@ -517,9 +527,7 @@ class HeadHunterBrowserAdapter:
             screenshot_path=checkpoint.screenshot_path,
         )
 
-    async def _handle_cross_country_dialog(
-        self, page: Page
-    ) -> BrowserActionResult | None:
+    async def _handle_cross_country_dialog(self, page: Page) -> BrowserActionResult | None:
         heading_pattern = re.compile(
             r"^\s*(?:"
             + "|".join(map(re.escape, self._apply_profile.cross_country_headings))
@@ -528,9 +536,7 @@ class HeadHunterBrowserAdapter:
         )
         continue_pattern = re.compile(
             r"^(?:"
-            + "|".join(
-                map(re.escape, self._apply_profile.cross_country_continue_buttons)
-            )
+            + "|".join(map(re.escape, self._apply_profile.cross_country_continue_buttons))
             + r")$",
             re.IGNORECASE,
         )
@@ -561,19 +567,15 @@ class HeadHunterBrowserAdapter:
         ).first
         try:
             button_is_available = (
-                await continue_button.count() > 0
-                and await continue_button.is_visible()
+                await continue_button.count() > 0 and await continue_button.is_visible()
             )
         except Exception:
             button_is_available = False
         if not button_is_available:
-            continue_button = dialog.get_by_role(
-                "button", name=continue_pattern
-            ).first
+            continue_button = dialog.get_by_role("button", name=continue_pattern).first
             try:
                 button_is_available = (
-                    await continue_button.count() > 0
-                    and await continue_button.is_visible()
+                    await continue_button.count() > 0 and await continue_button.is_visible()
                 )
             except Exception:
                 button_is_available = False

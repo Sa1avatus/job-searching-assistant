@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import quote, urlparse
@@ -55,11 +57,18 @@ _LINKEDIN_DESCRIPTION_SELECTORS = (
 _LINKEDIN_PROMO_FRAGMENTS = (
     "job search smarter with premium",
     "see jobs where you'd be a top applicant",
+    "top applicant",
     "message hiring managers with inmail",
     "get personalized job recommendations",
     "get personalized cover letter and resume tips",
     "try premium for",
     "millions of other members use premium",
+    "get insider access to live talks",
+    "insider access to live talks",
+    "1-month free trial",
+    "free trial",
+    "easy to cancel",
+    "we'll remind you",
 )
 _LINKEDIN_FOOTER_MARKERS = {
     "looking for talent?",
@@ -106,6 +115,17 @@ def is_meaningful_linkedin_description(text: str) -> bool:
         for fragment in (*_LINKEDIN_PROMO_FRAGMENTS, *_LINKEDIN_FOOTER_MARKERS)
     )
     return chrome_hits < 3
+
+
+def select_best_linkedin_description(raw_candidates: Iterable[str]) -> str:
+    """Return the longest meaningful cleaned description from all DOM candidates."""
+    candidates = {
+        cleaned
+        for raw_text in raw_candidates
+        if (cleaned := clean_linkedin_description_text(raw_text))
+        and is_meaningful_linkedin_description(cleaned)
+    }
+    return max(candidates, key=lambda value: (len(value), value.count("\n")), default="")
 
 
 async def has_submitted_application_marker(page: Page, *, timeout_ms: int = 5_000) -> bool:
@@ -173,6 +193,18 @@ class LinkedInBrowserAdapter:
     def supports_url(self, url: str) -> bool:
         hostname = (urlparse(url).hostname or "").casefold()
         return hostname == _HOST_SUFFIX or hostname.endswith(f".{_HOST_SUFFIX}")
+
+    async def has_submitted_application(self, url: str) -> bool:
+        if not self.supports_url(url):
+            raise ValueError("URL is not a supported linkedin.com host")
+        page = await self._browser_engine.new_page()
+        navigation = await self._browser_engine.navigate(page, url)
+        if not navigation.is_successful:
+            raise RuntimeError(f"LinkedIn navigation failed: {navigation.error_category}")
+        await self._raise_if_challenge_url(page)
+        if not self.supports_url(page.url):
+            raise RuntimeError("LinkedIn navigation left the trusted host")
+        return await has_submitted_application_marker(page)
 
     async def apply(
         self,
@@ -351,9 +383,7 @@ class LinkedInBrowserAdapter:
                     if not isinstance(snapshot, dict):
                         continue
                     href = str(snapshot.get("href", ""))
-                    job_id_match = re.search(
-                        r"/jobs/view/(?:[^/?#-]+-)*(\d{5,})", href or ""
-                    )
+                    job_id_match = re.search(r"/jobs/view/(?:[^/?#-]+-)*(\d{5,})", href or "")
                     if job_id_match is None or job_id_match.group(1) in seen_job_ids:
                         continue
                     job_id = job_id_match.group(1)
@@ -374,17 +404,13 @@ class LinkedInBrowserAdapter:
                     artifact_directory=self._browser_engine.artifact_directory,
                     action_name="search",
                     target="linkedin-result-identifiers-not-parsed",
-                    error=RuntimeError(
-                        "LinkedIn result elements did not expose parseable job ids"
-                    ),
+                    error=RuntimeError("LinkedIn result elements did not expose parseable job ids"),
                 )
             return hits
         finally:
             await page.close()
 
-    async def _navigate_search_with_retry(
-        self, page: Page, search_url: str
-    ) -> BrowserActionResult:
+    async def _navigate_search_with_retry(self, page: Page, search_url: str) -> BrowserActionResult:
         navigation = await self._browser_engine.navigate(page, search_url)
         if (
             not navigation.is_successful
@@ -438,33 +464,19 @@ class LinkedInBrowserAdapter:
             if await location_locator.count() > 0
             else ""
         )
-        description_text = ""
+        raw_description_candidates = await self._semantic_description_candidates(page)
         for selector in _LINKEDIN_DESCRIPTION_SELECTORS:
-            candidate = page.locator(selector).first
-            if await candidate.count() == 0:
-                continue
-            candidate_text = clean_linkedin_description_text(await candidate.inner_text())
-            if is_meaningful_linkedin_description(candidate_text):
-                description_text = candidate_text
-                break
-        if not description_text:
-            about_heading = page.get_by_role(
-                "heading", name=re.compile(r"^(?:About the job|О вакансии)$", re.IGNORECASE)
-            ).first
-            if await about_heading.count() > 0:
-                candidate_text = clean_linkedin_description_text(
-                    await about_heading.locator("..").locator("..").inner_text()
-                )
-                if is_meaningful_linkedin_description(candidate_text):
-                    description_text = candidate_text
-        if not description_text:
-            main_content = page.locator("main").first
-            if await main_content.count() > 0:
-                candidate_text = clean_linkedin_description_text(
-                    await main_content.inner_text()
-                )
-                if is_meaningful_linkedin_description(candidate_text):
-                    description_text = candidate_text
+            candidates = page.locator(selector)
+            for index in range(await candidates.count()):
+                try:
+                    raw_description_candidates.append(await candidates.nth(index).inner_text())
+                except PlaywrightTimeoutError:
+                    continue
+        main_content = page.locator("main").first
+        if await main_content.count() > 0:
+            with suppress(PlaywrightTimeoutError):
+                raw_description_candidates.append(await main_content.inner_text())
+        description_text = select_best_linkedin_description(raw_description_candidates)
         publication_locator = page.locator(
             "time[datetime],.jobs-unified-top-card__posted-date"
         ).first
@@ -531,6 +543,27 @@ class LinkedInBrowserAdapter:
             employment_text=employment_text,
             application_submitted=application_submitted,
         )
+
+    @staticmethod
+    async def _semantic_description_candidates(page: Page) -> list[str]:
+        markers = page.get_by_text(
+            re.compile(r"^(?:About the job|О вакансии)$", re.IGNORECASE),
+            exact=True,
+        )
+        candidates: list[str] = []
+        for _ in range(20):
+            candidates = []
+            for index in range(await markers.count()):
+                with suppress(PlaywrightTimeoutError):
+                    candidates.append(
+                        await markers.nth(index).evaluate(
+                            "element => element.parentElement?.parentElement?.innerText || ''"
+                        )
+                    )
+            if select_best_linkedin_description(candidates):
+                break
+            await page.wait_for_timeout(500)
+        return candidates
 
     async def _raise_if_challenge_url(self, page: Page) -> None:
         current_url = page.url.casefold()

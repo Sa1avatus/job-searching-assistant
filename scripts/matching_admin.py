@@ -61,7 +61,7 @@ async def _reindex(*, user_id: str | None = None, cv_file_id: str | None = None)
     with SessionFactory() as session:
         async with (
             httpx.AsyncClient(
-                base_url=settings.matching_model_service_url,
+                base_url=settings.resolved_embedding_service_url,
                 timeout=settings.matching_model_timeout_seconds,
                 trust_env=False,
             ) as model_http,

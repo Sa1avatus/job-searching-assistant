@@ -15,7 +15,7 @@ def create_store(root_directory: Path, key: bytes) -> EncryptedBrowserStateStore
     return EncryptedBrowserStateStore(
         root_directory,
         encryption_key=key.decode("ascii"),
-        max_state_bytes=4096,
+        max_state_bytes=8192,
     )
 
 

@@ -11,24 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field
 _MAX_TEXTS = 128
 _MAX_TEXT_CHARACTERS = 8_000
 _MAX_PAIRS = 128
-_EMBEDDING_MODEL_FILES = (
-    "config.json",
-    "pytorch_model.bin",
-    "sentencepiece.bpe.model",
-    "special_tokens_map.json",
-    "tokenizer.json",
-    "tokenizer_config.json",
-    "colbert_linear.pt",
-    "sparse_linear.pt",
-)
-_RERANKER_MODEL_FILES = (
-    "config.json",
-    "model.safetensors",
-    "sentencepiece.bpe.model",
-    "special_tokens_map.json",
-    "tokenizer.json",
-    "tokenizer_config.json",
-)
 
 
 class StrictModel(BaseModel):
@@ -69,10 +51,12 @@ class RerankResponse(StrictModel):
 
 class ModelRuntime:
     def __init__(self) -> None:
-        self.embedding_model_name = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
+        self.embedding_model_name = os.getenv(
+            "EMBEDDING_MODEL_NAME", "intfloat/multilingual-e5-small"
+        )
         self.embedding_model_revision = os.getenv("EMBEDDING_MODEL_REVISION", "main")
         self.reranker_model_name = os.getenv(
-            "RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3"
+            "RERANKER_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-2-v2"
         )
         self.reranker_model_revision = os.getenv("RERANKER_MODEL_REVISION", "main")
         self.device = os.getenv("MODEL_DEVICE", "cpu")
@@ -81,32 +65,19 @@ class ModelRuntime:
         self.reranker_model: Any = None
 
     def load(self) -> None:
-        from FlagEmbedding import BGEM3FlagModel, FlagReranker
-        from huggingface_hub import snapshot_download
+        from sentence_transformers import CrossEncoder, SentenceTransformer
 
-        use_fp16 = self.device != "cpu"
         cache_dir = os.getenv("HF_HUB_CACHE")
-        embedding_model_path = snapshot_download(
-            repo_id=self.embedding_model_name,
+        self.embedding_model = SentenceTransformer(
+            self.embedding_model_name,
             revision=self.embedding_model_revision,
-            cache_dir=cache_dir,
-            allow_patterns=list(_EMBEDDING_MODEL_FILES),
+            cache_folder=cache_dir,
+            device=self.device,
         )
-        reranker_model_path = snapshot_download(
-            repo_id=self.reranker_model_name,
+        self.reranker_model = CrossEncoder(
+            self.reranker_model_name,
             revision=self.reranker_model_revision,
-            cache_dir=cache_dir,
-            allow_patterns=list(_RERANKER_MODEL_FILES),
-        )
-        self.embedding_model = BGEM3FlagModel(
-            embedding_model_path,
-            devices=self.device,
-            use_fp16=use_fp16,
-        )
-        self.reranker_model = FlagReranker(
-            reranker_model_path,
-            devices=self.device,
-            use_fp16=use_fp16,
+            device=self.device,
         )
 
     @property
@@ -145,15 +116,15 @@ def embeddings(request: EmbeddingRequest) -> EmbeddingResponse:
     if runtime.embedding_model is None:
         raise HTTPException(status_code=503, detail="Embedding model is not loaded")
     texts = [_bounded_text(text) for text in request.texts]
+    # E5 models expect "query: " prefix for queries, but we use raw texts
+    # since this service embeds both queries and documents uniformly.
     output = runtime.embedding_model.encode(
         texts,
         batch_size=runtime.batch_size,
-        max_length=_MAX_TEXT_CHARACTERS,
-        return_dense=True,
-        return_sparse=False,
-        return_colbert_vecs=False,
+        show_progress_bar=False,
+        normalize_embeddings=True,
     )
-    vectors = output["dense_vecs"].tolist()
+    vectors = output.tolist()
     dimensions = len(vectors[0])
     return EmbeddingResponse(
         vectors=vectors,
@@ -172,12 +143,12 @@ def rerank(request: RerankRequest) -> RerankResponse:
         [_bounded_text(pair.requirement), _bounded_text(pair.evidence)]
         for pair in request.pairs
     ]
-    raw_output = runtime.reranker_model.compute_score(
+    raw_scores = runtime.reranker_model.predict(
         pairs,
         batch_size=runtime.batch_size,
-        normalize=False,
+        show_progress_bar=False,
     )
-    raw_scores = [float(raw_output)] if isinstance(raw_output, (float, int)) else raw_output
+    raw_scores = [float(s) for s in raw_scores]
     scores = [
         RerankScore(
             raw_score=float(raw_score),

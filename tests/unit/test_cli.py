@@ -10,3 +10,5 @@ def test_cli_exposes_required_operational_commands() -> None:
     assert "add-vacancy" in help_text
     assert "list-tasks" in help_text
     assert "review-applications" in help_text
+    assert "rag-backfill" in help_text
+    assert "matching-backfill" in help_text

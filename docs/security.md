@@ -1,5 +1,8 @@
 # Security model
 
+Read this document when changing authentication, encryption, secret handling, file storage,
+retention, external URLs, browser sessions, or model-provider data flow.
+
 - Deployment credentials come from environment variables; `.env` is ignored by version control.
   Per-user LLM API keys may be entered in the dashboard and are stored in PostgreSQL only after
   Fernet authenticated encryption. API responses expose only whether a key is configured.
@@ -7,7 +10,9 @@
   A legacy `APP_API_KEY` is an administrator key; the JSON alternative maps multiple constant-time
   checked keys to least-privilege scopes such as `profiles:write`, `profiles:delete`,
   `vacancies:write`, `applications:write`, `review:read`, and `review:write`.
-- Compose publishes API and PostgreSQL ports on loopback only.
+- Compose publishes the authenticated API on port 8000 to the trusted LAN. PostgreSQL, Redis,
+  OpenSearch, browser-worker (including its noVNC login desktop on `:7900`), and matching-model
+  ports remain on loopback only.
 - Automatic submission is denied for missing facts, unauthorized sources, and sensitive questions.
 - Browser tests target controlled loopback fixtures only and never external accounts.
 - Screenshots and task evidence are stored under `.artifacts`, which is excluded from version control.
@@ -29,3 +34,8 @@
   reject embedded credentials, canonicalize user input, and construct the API URL from validated
   board/job identifiers rather than fetching an arbitrary supplied URL.
 - CI audits resolved runtime dependencies against published vulnerability advisories.
+
+External providers receive only the context required for the selected operation. Do not include
+credentials, browser state, protected answers, unrelated resume data, or raw application evidence.
+See `browser-automation.md` for live-session and submission boundaries and `database.md` for
+personal-data persistence rules.

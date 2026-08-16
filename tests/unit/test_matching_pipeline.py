@@ -20,6 +20,7 @@ from app.matching.extraction import (
 from app.matching.pipeline import MatchingPipeline
 from app.matching.scoring import DeterministicMatchScorer
 from app.matching.semantic import FakeReranker, RetrievalCandidate
+from app.matching.vacancy_source import build_vacancy_matching_source
 from app.storage.database import Base
 from app.storage.tables import (
     ApplicationMatchResultRow,
@@ -63,6 +64,32 @@ class _SessionRetriever:
                 hybrid_score=1,
             ),
         )
+
+
+class _UnavailableReranker:
+    model_name = "external-reranker"
+    model_revision = "unavailable"
+
+    async def rerank(self, requirement_text, candidates):
+        raise RuntimeError("service unavailable")
+
+
+class _ForbiddenRetriever:
+    async def retrieve(self, requirement_text, *, user_id, cv_file_id):
+        raise AssertionError("hard-rejected vacancy must not reach retrieval")
+
+
+class _ForbiddenReranker:
+    model_name = "forbidden-reranker"
+    model_revision = "forbidden"
+
+    async def rerank(self, requirement_text, candidates):
+        raise AssertionError("hard-rejected vacancy must not reach reranking")
+
+
+class _ForbiddenIndexer:
+    async def index_cv(self, *, user_id, cv_file_id):
+        raise AssertionError("hard-rejected vacancy must not reach indexing")
 
 
 def _session_factory() -> sessionmaker:
@@ -184,7 +211,8 @@ def test_pipeline_persists_explainable_shadow_result_without_changing_legacy_sco
             assert application.match_score == 42
             assert aggregate.application_id == application.id
             assert aggregate.final_score > 0
-            assert aggregate.scoring_version == "matching-v2.1"
+            assert aggregate.scoring_version == "matching-v3.0"
+            assert aggregate.explanation_json["hard_gate"]["decision"] == "review"
             assert requirement_match is not None
             assert requirement_match.reranker_score is not None
             assert requirement_match.explanation
@@ -248,6 +276,113 @@ def test_pipeline_reuses_unchanged_versioned_extractions() -> None:
     asyncio.run(run())
 
 
+def test_pipeline_deduplicates_duplicate_extraction_rows() -> None:
+    """Duplicate requirements/evidence from the model must not fail the run.
+
+    In json_object mode the schema is not enforced and models can emit the same
+    (normalized_text, type) pair twice; the unique constraints would otherwise
+    raise an IntegrityError and kill the whole recalculation.
+    """
+
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            application = _application(session)
+            requirement = VacancyRequirement(
+                text="Production Python experience",
+                normalized_text="production python experience",
+                requirement_type=RequirementType.HARD_SKILL,
+                importance=RequirementImportance.REQUIRED,
+                is_blocker=False,
+                source_fragment="Production Python experience is required.",
+                confidence=0.95,
+            )
+            vacancy_extractor = FakeVacancyRequirementExtractor(
+                {
+                    application.vacancy_id: VacancyExtraction(
+                        requirements=[requirement, requirement.model_copy()],
+                        confidence=0.95,
+                    )
+                }
+            )
+            evidence = CandidateEvidence(
+                text="Built production Python services",
+                normalized_text="built production python services",
+                evidence_type=EvidenceType.SKILL_STATEMENT,
+                skill_name="Python",
+                experience_level=ExperienceLevel.PRODUCTION,
+                source_fragment="Built production Python services",
+                confidence=0.95,
+            )
+            evidence_extractor = FakeCandidateEvidenceExtractor(
+                {
+                    application.selected_cv_file_id or "": CandidateEvidenceExtraction(
+                        evidence=[evidence, evidence.model_copy()],
+                        confidence=0.95,
+                    )
+                }
+            )
+            pipeline = MatchingPipeline(
+                session,
+                vacancy_extractor,
+                evidence_extractor,
+                _SessionRetriever(session),
+                FakeReranker(),
+                DeterministicMatchScorer(),
+            )
+
+            await pipeline.match(
+                application.id,
+                vacancy_source_text="Production Python experience is required.",
+                cv_source_text="Built production Python services",
+            )
+
+            assert len(session.scalars(select(VacancyRequirementRow)).all()) == 1
+            assert len(session.scalars(select(CandidateEvidenceRow)).all()) == 1
+
+    asyncio.run(run())
+
+
+def test_pipeline_covers_every_structured_key_skill_in_explanation() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            application = _application(session)
+            vacancy = session.get(VacancyRow, application.vacancy_id)
+            assert vacancy is not None
+            vacancy.required_skills = ["Python", "PostgreSQL", "Redis"]
+            vacancy.preferred_skills = ["Docker"]
+            session.commit()
+            pipeline = MatchingPipeline(
+                session,
+                _vacancy_extractor(application.vacancy_id),
+                _candidate_extraction(application.selected_cv_file_id or ""),
+                _SessionRetriever(session),
+                FakeReranker(),
+                DeterministicMatchScorer(),
+            )
+
+            aggregate = await pipeline.match(
+                application.id,
+                vacancy_source_text=build_vacancy_matching_source(vacancy),
+                cv_source_text="Built production Python services",
+            )
+
+            requirement_rows = session.scalars(select(VacancyRequirementRow)).all()
+            coverage = aggregate.explanation_json["key_skill_coverage"]
+            assert len(requirement_rows) == 4
+            assert [item["skill"] for item in coverage] == [
+                "Python",
+                "PostgreSQL",
+                "Redis",
+                "Docker",
+            ]
+            assert all(item["evaluated"] for item in coverage)
+            assert all(item["match_level"] != "not_evaluated" for item in coverage)
+
+    asyncio.run(run())
+
+
 def test_pipeline_persists_blocker_when_no_evidence_is_retrieved() -> None:
     async def run() -> None:
         session_factory = _session_factory()
@@ -273,5 +408,179 @@ def test_pipeline_persists_blocker_when_no_evidence_is_retrieved() -> None:
             assert aggregate.eligibility_status == "ineligible"
             assert aggregate.blocker_count == 1
             assert session.scalar(select(ApplicationMatchResultRow)) is not None
+
+    asyncio.run(run())
+
+
+def test_pipeline_uses_hybrid_score_when_reranker_is_unavailable() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            application = _application(session)
+            pipeline = MatchingPipeline(
+                session,
+                _vacancy_extractor(application.vacancy_id),
+                _candidate_extraction(application.selected_cv_file_id or ""),
+                _SessionRetriever(session),
+                _UnavailableReranker(),
+                DeterministicMatchScorer(),
+            )
+
+            aggregate = await pipeline.match(
+                application.id,
+                vacancy_source_text="Production Python experience is required.",
+                cv_source_text="Built production Python services",
+            )
+
+            requirement_match = session.scalar(select(RequirementMatchRow))
+            assert aggregate.status == "scored"
+            assert requirement_match is not None
+            assert requirement_match.hybrid_score == 1
+            assert requirement_match.reranker_score is None
+            assert (
+                requirement_match.retrieval_model_versions_json["reranker"]["status"]
+                == "reranker_unavailable"
+            )
+
+    asyncio.run(run())
+
+
+def test_pipeline_rejects_unrelated_role_before_retrieval_and_reranking() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            application = _application(session)
+            vacancy_extractor = FakeVacancyRequirementExtractor(
+                {
+                    application.vacancy_id: VacancyExtraction(
+                        role="Sous Chef",
+                        requirements=[
+                            VacancyRequirement(
+                                text="Sous Chef",
+                                normalized_text="culinary_hospitality",
+                                requirement_type=RequirementType.ROLE,
+                                importance=RequirementImportance.REQUIRED,
+                                is_blocker=True,
+                                source_fragment="We are hiring a Sous Chef.",
+                                confidence=0.99,
+                            )
+                        ],
+                        confidence=0.99,
+                    )
+                }
+            )
+            candidate_extractor = FakeCandidateEvidenceExtractor(
+                {
+                    application.selected_cv_file_id or "": CandidateEvidenceExtraction(
+                        evidence=[
+                            CandidateEvidence(
+                                text="Software Engineer",
+                                normalized_text="software_engineering",
+                                evidence_type=EvidenceType.ROLE,
+                                skill_name="software_engineering",
+                                source_fragment="Software Engineer",
+                                confidence=0.99,
+                            )
+                        ],
+                        confidence=0.99,
+                    )
+                }
+            )
+            pipeline = MatchingPipeline(
+                session,
+                vacancy_extractor,
+                candidate_extractor,
+                _ForbiddenRetriever(),
+                _ForbiddenReranker(),
+                DeterministicMatchScorer(),
+                evidence_indexer=_ForbiddenIndexer(),
+            )
+
+            aggregate = await pipeline.match(
+                application.id,
+                vacancy_source_text="We are hiring a Sous Chef.",
+                cv_source_text="Software Engineer",
+            )
+
+            assert aggregate.status == "scored"
+            assert aggregate.eligibility_status == "ineligible"
+            assert aggregate.final_score <= 20
+            assert aggregate.explanation_json["hard_gate"]["decision"] == "reject"
+            assert "NON_TECHNICAL_ROLE" in aggregate.explanation_json["hard_gate"]["reason_codes"]
+            assert session.scalar(select(RequirementMatchRow)) is None
+
+    asyncio.run(run())
+
+
+def test_hard_rejection_removes_matches_from_a_previous_successful_run() -> None:
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            application = _application(session)
+            successful_pipeline = MatchingPipeline(
+                session,
+                _vacancy_extractor(application.vacancy_id),
+                _candidate_extraction(application.selected_cv_file_id or ""),
+                _SessionRetriever(session),
+                FakeReranker(),
+                DeterministicMatchScorer(),
+            )
+            await successful_pipeline.match(
+                application.id,
+                vacancy_source_text="Production Python experience is required.",
+                cv_source_text="Built production Python services",
+            )
+            assert session.scalar(select(RequirementMatchRow)) is not None
+
+            rejecting_pipeline = MatchingPipeline(
+                session,
+                FakeVacancyRequirementExtractor(
+                    {
+                        application.vacancy_id: VacancyExtraction(
+                            role="Sous Chef",
+                            requirements=[
+                                VacancyRequirement(
+                                    text="Sous Chef",
+                                    normalized_text="culinary_hospitality",
+                                    requirement_type=RequirementType.ROLE,
+                                    importance=RequirementImportance.REQUIRED,
+                                    is_blocker=True,
+                                    source_fragment="We are hiring a Sous Chef.",
+                                    confidence=0.99,
+                                )
+                            ],
+                            confidence=0.99,
+                        )
+                    }
+                ),
+                FakeCandidateEvidenceExtractor(
+                    {
+                        application.selected_cv_file_id or "": CandidateEvidenceExtraction(
+                            evidence=[
+                                CandidateEvidence(
+                                    text="Software Engineer",
+                                    normalized_text="software_engineering",
+                                    evidence_type=EvidenceType.ROLE,
+                                    skill_name="software_engineering",
+                                    source_fragment="Software Engineer",
+                                    confidence=0.99,
+                                )
+                            ],
+                            confidence=0.99,
+                        )
+                    }
+                ),
+                _ForbiddenRetriever(),
+                _ForbiddenReranker(),
+                DeterministicMatchScorer(),
+            )
+            aggregate = await rejecting_pipeline.match(
+                application.id,
+                vacancy_source_text="We are hiring a Sous Chef.",
+                cv_source_text="Software Engineer",
+            )
+
+            assert aggregate.eligibility_status == "ineligible"
+            assert session.scalars(select(RequirementMatchRow)).all() == []
 
     asyncio.run(run())

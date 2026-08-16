@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol, TypeVar
 
+import httpx
 import structlog
 from pydantic import BaseModel
 
@@ -26,6 +27,15 @@ class ModelRequest:
     prompt: str
     max_cost_usd: float
     timeout_seconds: float = 30
+    response_schema: dict[str, object] | None = None
+    # Per-task inference bounds. Providers apply provider-appropriate defaults when unset.
+    # Keep entailment/decompose small: their outputs are tiny JSON objects, and oversized
+    # context/prediction budgets dominate local-CPU inference latency.
+    max_output_tokens: int | None = None
+    context_size: int | None = None
+    # Optional per-request model name that overrides the provider's default model
+    # (task-specific routing, e.g. a small local model for entailment).
+    model_override: str | None = None
 
 
 class ModelProvider(Protocol):
@@ -39,7 +49,17 @@ class ModelProvider(Protocol):
 
 
 class NoModelAvailableError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+def _is_retryable_provider_error(error: Exception) -> bool:
+    if isinstance(error, TimeoutError | ConnectionError | httpx.TimeoutException):
+        return True
+    if isinstance(error, httpx.HTTPStatusError):
+        return error.response.status_code == 429 or error.response.status_code >= 500
+    return isinstance(error, httpx.NetworkError | httpx.RemoteProtocolError)
 
 
 class ModelRouter:
@@ -52,16 +72,22 @@ class ModelRouter:
         if request.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         provider_errors: list[str] = []
+        retryable_results: list[bool] = []
         for provider in self._providers:
             if not provider.supports(request.task_class):
                 continue
             estimated_cost_usd = provider.estimate_cost_usd(request)
             if estimated_cost_usd < 0 or estimated_cost_usd > request.max_cost_usd:
                 provider_errors.append(f"{provider.name}:budget_exceeded")
+                retryable_results.append(False)
                 continue
             try:
+                provider_request = replace(
+                    request,
+                    response_schema=output_schema.model_json_schema(),
+                )
                 payload = await asyncio.wait_for(
-                    provider.complete(request), timeout=request.timeout_seconds
+                    provider.complete(provider_request), timeout=request.timeout_seconds
                 )
                 return output_schema.model_validate(payload)
             except Exception as error:
@@ -73,5 +99,9 @@ class ModelRouter:
                     error=str(error),
                 )
                 provider_errors.append(f"{provider.name}:{type(error).__name__}: {error}")
+                retryable_results.append(_is_retryable_provider_error(error))
         details = ", ".join(provider_errors) or "no compatible provider"
-        raise NoModelAvailableError(details)
+        raise NoModelAvailableError(
+            details,
+            retryable=bool(retryable_results) and all(retryable_results),
+        )

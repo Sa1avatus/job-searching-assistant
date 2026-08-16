@@ -1,66 +1,90 @@
 # Architecture
 
-The initial platform is a layered modular monolith.
+Read this document when changing service boundaries, cross-component data flow, worker ownership, or
+runtime topology. Open the linked topic document before changing persistence, browser execution, or
+matching internals.
 
-1. `app/domain` owns verified facts, matching, submission policy, and task states.
-2. `app/workflows` coordinates deterministic state changes.
-3. `app/storage` implements PostgreSQL persistence through SQLAlchemy and Alembic.
-4. `app/browser` performs typed Playwright actions and returns structured evidence.
-5. `app/api` exposes validated HTTP contracts.
-6. `app/workers` uses Redis ownership leases and conservative per-domain rate decisions.
-7. `app/prompts` loads validated, versioned prompt definitions independently of model providers.
-8. `app/tools` validates inputs/outputs and enforces scopes/timeouts before deterministic invocation.
-9. `app/workers/retention` periodically removes expired CV rows/files together, then purges other
-   expired artifacts while excluding the database-managed document directory.
-10. `app/workers/dispatcher` atomically claims scheduled SQL tasks with `FOR UPDATE SKIP LOCKED`,
-    acquires a Redis execution lease, records bounded retries and state transitions, and publishes a
-    persistent heartbeat. Database sessions are not held while a handler executes.
-11. `app/workers/browser_worker` owns the Chromium runtime, audits restartable browser sessions, and
-    claims only tasks assigned to the durable `browser` queue. Typed task payloads permit the
-    allowlisted controlled workflow but reject arbitrary target URLs. Playwright cookies and origin
-    storage are serialized outside PostgreSQL with Fernet authenticated encryption;
-    `browser_sessions` contains only lifecycle metadata and a root-confined path.
+## System shape
 
-The Compose API image remains small and does not bundle Chromium. The opt-in `browser` Compose
-profile builds a dedicated image from `Dockerfile.browser`; the worker requires an encryption key
-and reports a persistent health/degraded heartbeat after authenticating recoverable state files.
-The restart smoke closes Chromium, reloads encrypted state, and verifies cookie/localStorage recovery.
+The application is a layered modular monolith with separate runtime workers:
 
-Form discovery prefers accessible labels and context, groups related radio controls, and normalizes
-HTML length/range/pattern/file constraints into domain values. `validate_field_answer` runs before
-the generic browser fill action; invalid or unsupported values never reach the page.
+```mermaid
+flowchart LR
+    User["Local user"] --> UI["Dashboard and review queue"]
+    UI --> API["FastAPI"]
+    API --> DB[("PostgreSQL")]
+    API --> Redis[("Redis leases")]
+    API --> Search[("OpenSearch projection")]
+    API --> Models["Configured model provider"]
+    Redis --> Dispatcher["Dispatcher"]
+    Dispatcher --> DB
+    BrowserWorker["Playwright browser worker"] --> DB
+    BrowserWorker --> Sites["Approved external sites"]
+    API --> BrowserState["Encrypted local artifacts"]
+```
 
-Selector recovery is deterministic and bounded. It tries an active adapter mapping, accessible
-label, placeholder, and stable ID up to the configured attempt cap. A fallback is promoted only
-after a real action succeeds; prior versions remain inactive but reversible in root-confined JSON.
-Corrupted selector metadata falls back to ordinary semantic resolution instead of blocking work.
+PostgreSQL owns business truth and durable task history. Redis coordinates claims and execution
+leases. OpenSearch contains only rebuildable matching evidence. File artifacts are root-confined;
+database rows store controlled metadata and relative references.
 
-Generated or model-provided text cannot call Playwright or persistence directly. It must first be
-validated into domain types, after which deterministic policy decides whether review or execution is
-allowed. A workflow checkpoint is persisted before any future irreversible action.
+## Layers
 
-The current controlled path is: assessment → policy decision → durable task → browser fill → review
-checkpoint. `ApplicationReviewWorkflow` persists the running state before browser work and persists
-the screenshot-backed `waiting_for_user` checkpoint afterward. Final submission is intentionally
-absent until approval and duplicate-verification APIs are implemented and tested.
+1. `app/domain/` owns verified facts, policy, field/value types, matching semantics, failures, and
+   workflow states. It does not import FastAPI, SQLAlchemy, Playwright, Redis, or HTTP clients.
+2. `app/services/` and `app/workflows/` coordinate use cases, transactions, policy decisions, and
+   durable transitions through explicit collaborators.
+3. `app/storage/` implements SQLAlchemy repositories and artifact storage. See `database.md`.
+4. `app/browser/` implements typed Playwright actions, session state, form discovery, evidence, and
+   bounded selector recovery. See `browser-automation.md`.
+5. `adapters/job_boards/` owns source-specific URL validation, read behavior, and application steps.
+6. `app/llm/` and `app/prompts/` provide provider-neutral model calls and validated prompt records.
+7. `app/matching/` orchestrates extraction, indexing, retrieval, reranking, and deterministic
+   scoring. See `matching-architecture.md`.
+8. `app/api/` exposes HTTP schemas and serves `app/static/`; it composes services but should not
+   become the home for domain policy.
+9. `app/workers/` owns durable task dispatch, browser execution, coordination, and retention.
 
-Resume-derived profile data is scoped to `cv_files`, not to the user as a single global profile.
-`users.active_cv_file_id` selects the default resume, while every discovery request may explicitly
-provide a `cv_file_id`. Matching, search keywords, generated materials, and the selected application
-document are therefore grounded in the same resume. Verified non-resume facts such as contact and
-authorization data remain user-scoped. Legacy global skill facts remain a compatibility fallback
-only when no analyzed resume profile is selected.
+ADRs under `docs/adr/` record durable decisions. ADR 0001 defines the modular monolith, ADR 0002
+retains official Playwright, and ADR 0003 defines the intended safe declarative workflow model.
 
-For background execution, the SQL row carries its queue and validated payload. The ordinary
-dispatcher cannot claim `browser` work; the isolated Chromium worker claims it atomically and
-persists screenshot evidence plus `submission=false` when it reaches the review boundary.
+## Durable work
 
-Greenhouse applications enter that queue only through an explicit review API action. The API
-requires all mandatory stored answers, a managed CV when required, and explicit human provenance
-for supplied sensitive answers. The task payload contains only the workflow discriminator; the
-worker reloads the URL, answers, and document path from PostgreSQL, revalidates the exact Greenhouse
-HTTPS host and root-confines the CV path. Redirects away from trusted Greenhouse hosts fail closed.
-When Chromium reaches review, the dispatcher stores the task transition, human-action checkpoint,
-and validated root-confined PNG metadata in one database transaction. The review UI loads that
-image only through the scoped, no-store evidence endpoint. Application-review checkpoints cannot
-be resumed into another browser loop; approve, reject, or skip resolves the checkpoint and task.
+Workflow tasks are persisted in SQL with a typed payload, target queue, attempt count, and transition
+history. The dispatcher atomically claims ordinary work with PostgreSQL locking. A dedicated
+matching worker claims the priority-aware `matching` queue with configurable job concurrency, while
+browser tasks are claimed only by the browser worker. Long-running workers renew their Redis lease
+and SQL claim heartbeat without holding the claim transaction open.
+
+Before a potentially irreversible action, the workflow persists a checkpoint. Human-action states
+are resumed explicitly and at most once. Retries are bounded and must first determine whether the
+previous external action completed.
+
+## Browser and generated content
+
+Model output cannot invoke Playwright or persistence directly. It is validated into domain types;
+deterministic policy then decides whether data can be stored, shown for review, or scheduled for
+browser preparation. Browser state is encrypted outside PostgreSQL, and host validation fails
+closed. Details and connector differences are in `browser-automation.md`.
+
+## Resume and matching ownership
+
+Resume-derived facts are scoped to a `cv_file`, while explicit non-resume facts remain user-scoped.
+Discovery, matching, generated materials, and application document selection use the same selected
+resume. Matching v2 stores explainable results in PostgreSQL and indexes verified evidence into a
+tenant-filtered OpenSearch projection. Shadow mode preserves the legacy visible score until an
+evaluated rollout.
+
+## Runtime topology
+
+Docker Compose defines PostgreSQL, Redis, OpenSearch, API, dispatcher, matching worker, retention,
+an opt-in browser worker, and an opt-in GPU embedding service. API and infrastructure ports are published on
+loopback. The independent reranker is configured as an external HTTP dependency and is not owned
+or started by JSA Compose. The API image includes the visible local browser used to capture site
+sessions; the browser worker owns background automation.
+
+The shared external Docker network `local-code-worker-network` lets the application reach the local
+Worker's OpenAI-compatible endpoint. `scripts/setup.ps1` ensures the network exists without
+starting or configuring the Worker.
+
+Production deployment is not defined. Do not infer production readiness from the local Compose
+topology.

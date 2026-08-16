@@ -192,9 +192,7 @@ def _extract_requirement_section(description_text: str) -> str:
     """Extract the useful requirement block from a structured vacancy."""
     lines = [re.sub(r"\s+", " ", line).strip() for line in description_text.splitlines()]
     lines = [line for line in lines if line]
-    normalized_headings = [
-        re.sub(r"[\s:–—-]+$", "", line.casefold()).strip() for line in lines
-    ]
+    normalized_headings = [re.sub(r"[\s:–—-]+$", "", line.casefold()).strip() for line in lines]
     start_markers = {
         "requirements",
         "requirements & qualifications",

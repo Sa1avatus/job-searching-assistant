@@ -41,9 +41,7 @@ def load_headhunter_apply_profile(
             f"HeadHunter apply profile cannot be read: {profile_path}"
         ) from error
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
-        raise InvalidHeadHunterApplyProfile(
-            "HeadHunter apply profile must use schema_version 1"
-        )
+        raise InvalidHeadHunterApplyProfile("HeadHunter apply profile must use schema_version 1")
 
     profile_values: dict[str, tuple[str, ...]] = {}
     for profile_field in fields(HeadHunterApplyProfile):

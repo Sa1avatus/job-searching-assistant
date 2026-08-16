@@ -25,9 +25,12 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.domain.models import ProfileFact
 from app.domain.policy import SENSITIVE_CATEGORIES
 from app.llm.router import ModelRequest, ModelRouter, ModelTaskClass
+from app.prompts.application_materials import (
+    build_application_materials_prompt,
+    build_materials_language_correction_prompt,
+)
 from app.services.recruitment import EntityNotFoundError, RecruitmentService
 from app.storage.tables import ApplicationRow, VacancyRow
 
@@ -83,48 +86,12 @@ def _matches_language(text: str, language: str) -> bool:
     cyrillic_count = len(re.findall(r"[А-Яа-яЁё]", text))
     latin_count = len(re.findall(r"[A-Za-z]", text))
     if language == "ru":
-        return _is_russian_text(text) or (
-            cyrillic_count >= 3 and cyrillic_count >= latin_count / 3
-        )
-    return latin_count >= 10 and (
-        cyrillic_count < 3 or latin_count >= cyrillic_count * 3
-    )
+        return _is_russian_text(text) or (cyrillic_count >= 3 and cyrillic_count >= latin_count / 3)
+    return latin_count >= 10 and (cyrillic_count < 3 or latin_count >= cyrillic_count * 3)
 
 
 def cover_letter_matches_vacancy_language(vacancy: VacancyRow, text: str) -> bool:
     return not text.strip() or _matches_language(text, detect_vacancy_language(vacancy))
-
-
-def _build_prompt(
-    *,
-    vacancy: VacancyRow,
-    facts: list[ProfileFact],
-    open_fields: list[tuple[str, str]],
-    response_language: str,
-) -> str:
-    fact_lines = "\n".join(f"- [{fact.category}] {fact.name}: {fact.value}" for fact in facts)
-    field_lines = "\n".join(f"- field_id={field_id!r}: {label}" for field_id, label in open_fields)
-    language_instruction = (
-        "Write the cover letter entirely in Russian because the vacancy is in Russian."
-        if response_language == "ru"
-        else "Write the cover letter in English because the vacancy is in English."
-    )
-    return (
-        "You are drafting job-application materials for a real candidate. Use ONLY the facts "
-        "listed below. Do not invent employers, dates, numbers, skills, or achievements that are "
-        "not present in this list. If a screening question cannot be answered from these facts, "
-        "omit it from screening_answers entirely rather than guessing.\n\n"
-        f"Required response language: {language_instruction}\n\n"
-        f"Vacancy title: {vacancy.title}\n"
-        f"Company: {vacancy.company}\n"
-        f"Vacancy description:\n{(vacancy.description_text or '')[:4000]}\n\n"
-        f"Candidate's verified facts:\n{fact_lines or '(none provided)'}\n\n"
-        f"Open screening questions to optionally answer (besides the cover letter):\n"
-        f"{field_lines or '(none)'}\n\n"
-        "Respond with a single JSON object matching exactly this shape:\n"
-        '{"cover_letter_text": "<3-5 short paragraphs, no placeholders>", '
-        '"screening_answers": {"<field_id>": "<answer>", ...}}'
-    )
 
 
 class MaterialsGenerationService:
@@ -185,7 +152,7 @@ class MaterialsGenerationService:
         ]
 
         response_language = detect_vacancy_language(vacancy)
-        prompt = _build_prompt(
+        prompt = build_application_materials_prompt(
             vacancy=vacancy,
             facts=facts,
             open_fields=open_fields,
@@ -199,19 +166,33 @@ class MaterialsGenerationService:
             timeout_seconds=timeout_seconds,
         )
         draft = await self._router.route(request, MaterialsDraft)
+        self._session.refresh(application, attribute_names=["status", "cover_letter_text"])
+        if application.status != "awaiting_review":
+            return GeneratedMaterials(
+                cover_letter_text=application.cover_letter_text,
+                filled_field_ids=(),
+                skipped_sensitive_field_ids=(),
+            )
         if not _matches_language(draft.cover_letter_text, response_language):
             required_language = "Russian" if response_language == "ru" else "English"
             correction_request = ModelRequest(
                 task_name="correct_application_materials_language",
                 task_class=ModelTaskClass.LOW_COST,
-                prompt=(
-                    f"{prompt}\n\nIMPORTANT: The previous response used the wrong language. "
-                    f"Return a newly written cover_letter_text entirely in {required_language}."
+                prompt=build_materials_language_correction_prompt(
+                    prompt,
+                    required_language,
                 ),
                 max_cost_usd=0.05,
                 timeout_seconds=timeout_seconds,
             )
             draft = await self._router.route(correction_request, MaterialsDraft)
+            self._session.refresh(application, attribute_names=["status", "cover_letter_text"])
+            if application.status != "awaiting_review":
+                return GeneratedMaterials(
+                    cover_letter_text=application.cover_letter_text,
+                    filled_field_ids=(),
+                    skipped_sensitive_field_ids=(),
+                )
             if not _matches_language(draft.cover_letter_text, response_language):
                 raise MaterialsLanguageMismatchError(
                     f"The model did not produce a {required_language} cover letter for a "
