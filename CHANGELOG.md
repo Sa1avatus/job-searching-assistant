@@ -28,6 +28,12 @@ semantic versioning for new releases; older historical version numbers are prese
   overridable (default `production`) and the local setup script writes `development`, so the
   sign-in window opens on a local install while a production deployment keeps its API-key
   requirement and browser-login block.
+- The visible sign-in now runs in the browser-worker (which has the Playwright browser stack)
+  instead of the API container. `browser-sessions/{site}/start|confirm|cancel` delegate to the
+  worker's new `/v1/browser/login/*` endpoints; the worker opens the login window on an Xvfb
+  display served over noVNC at `:7900` and saves the captured encrypted session itself. This
+  removes the browser desktop from the API container and fixes the 502 that surfaced once the
+  production guard was lifted.
 
 ### Performance
 

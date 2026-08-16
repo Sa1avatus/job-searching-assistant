@@ -11,7 +11,8 @@ retention, external URLs, browser sessions, or model-provider data flow.
   checked keys to least-privilege scopes such as `profiles:write`, `profiles:delete`,
   `vacancies:write`, `applications:write`, `review:read`, and `review:write`.
 - Compose publishes the authenticated API on port 8000 to the trusted LAN. PostgreSQL, Redis,
-  OpenSearch, browser-desktop, browser-worker, and matching-model ports remain on loopback only.
+  OpenSearch, browser-worker (including its noVNC login desktop on `:7900`), and matching-model
+  ports remain on loopback only.
 - Automatic submission is denied for missing facts, unauthorized sources, and sensitive questions.
 - Browser tests target controlled loopback fixtures only and never external accounts.
 - Screenshots and task evidence are stored under `.artifacts`, which is excluded from version control.

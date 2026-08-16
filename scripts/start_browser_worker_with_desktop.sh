@@ -14,5 +14,4 @@ x11vnc -display "${virtual_display}" -forever -shared -nopw -localhost -rfbport 
 websockify --web=/usr/share/novnc 0.0.0.0:7900 localhost:5900 \
   >/tmp/job-assistant-websockify.log 2>&1 &
 
-alembic upgrade head
-exec uvicorn app.api.main:app --host 0.0.0.0 --port 8000
+exec python -m app.workers.browser_http_server

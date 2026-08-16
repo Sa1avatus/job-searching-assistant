@@ -4,6 +4,7 @@ import secrets
 import sys
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import suppress
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
@@ -120,7 +121,6 @@ from app.api.statistics_schemas import (
     ApplicationSyncResponse,
 )
 from app.browser.session_probe import probe_browser_session
-from app.browser.session_service import BrowserSessionService
 from app.browser.session_store import InvalidBrowserState, delete_browser_state_file
 from app.config import Settings, get_settings
 from app.domain.autofill_keys import InvalidAutofillKey
@@ -172,8 +172,6 @@ from app.services.autofill_value_update import update_autofill_value
 from app.services.autofill_values import InvalidAutofillValue, create_autofill_value
 from app.services.browser_authorization import (
     KNOWN_AUTHORIZATION_SITES,
-    BrowserAuthorizationError,
-    BrowserAuthorizationManager,
     BrowserAuthorizationSite,
 )
 from app.services.browser_handoff import create_browser_handoff
@@ -264,7 +262,6 @@ logger = structlog.get_logger(__name__)
 app = FastAPI(title="Job Searching Assistant", version="1.4.1")
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
-BROWSER_AUTHORIZATION_MANAGER = BrowserAuthorizationManager()
 
 
 def get_application_email_provider(
@@ -1277,6 +1274,32 @@ def _authorization_site(
     return _custom_authorization_site(row)
 
 
+def _authorization_site_payload(site: BrowserAuthorizationSite) -> dict[str, object]:
+    return {
+        "site_key": site.site_key,
+        "login_url": site.login_url,
+        "allowed_hosts": list(site.allowed_hosts),
+        "login_path_markers": list(site.login_path_markers),
+        "allow_subdomains": site.allow_subdomains,
+    }
+
+
+def _worker_http_error(error: httpx.HTTPStatusError) -> HTTPException:
+    try:
+        detail = error.response.json().get("detail", error.response.text)
+    except Exception:
+        detail = error.response.text
+    return HTTPException(status_code=error.response.status_code, detail=str(detail))
+
+
+async def _browser_login_is_waiting(user_id: str, site_key: str) -> bool:
+    try:
+        client = BrowserWorkerClient(get_settings().browser_worker_url)
+        return await client.login_is_waiting(user_id=user_id, site_key=site_key)
+    except Exception:
+        return False
+
+
 @app.get(
     "/v1/users/{user_id}/site-definitions",
     response_model=list[SiteDefinitionResponse],
@@ -1370,7 +1393,9 @@ async def archive_user_site_definition(
         )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    await BROWSER_AUTHORIZATION_MANAGER.cancel(user_id=user_id, site_key=row.site_key)
+    client = BrowserWorkerClient(get_settings().browser_worker_url)
+    with suppress(httpx.HTTPError):
+        await client.login_cancel(user_id=user_id, site_key=row.site_key)
     return _site_definition_response(row)
 
 
@@ -1691,7 +1716,7 @@ async def get_browser_session_statuses(
                 site_name=site_name,
                 is_custom=is_custom,
                 is_authorized=is_authorized,
-                is_waiting_for_login=BROWSER_AUTHORIZATION_MANAGER.is_waiting(
+                is_waiting_for_login=await _browser_login_is_waiting(
                     user_id=user_id, site_key=site_key
                 ),
                 last_url=row.last_url if row is not None else None,
@@ -1724,20 +1749,19 @@ async def start_browser_authorization(
     if session.get(UserRow, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
     site = _authorization_site(session, user_id=user_id, site_key=site_key)
+    client = BrowserWorkerClient(settings.browser_worker_url)
     try:
-        await BROWSER_AUTHORIZATION_MANAGER.start(
+        await client.login_start(
             user_id=user_id,
             site_key=site_key,
-            timeout_ms=settings.browser_timeout_ms,
-            artifact_directory=settings.artifact_directory,
-            site=site,
+            site=_authorization_site_payload(site),
         )
-    except BrowserAuthorizationError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except Exception as error:
+    except httpx.HTTPStatusError as error:
+        raise _worker_http_error(error) from error
+    except httpx.HTTPError as error:
         raise HTTPException(
             status_code=502,
-            detail="Не удалось открыть окно входа. Проверьте локальную установку Chromium",
+            detail="Браузерный воркер недоступен. Запустите browser-worker (--profile browser)",
         ) from error
     return BrowserAuthorizationResponse(site_key=site_key, state="waiting_for_login")
 
@@ -1754,21 +1778,17 @@ async def confirm_browser_authorization(
     if session.get(UserRow, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
     _authorization_site(session, user_id=user_id, site_key=site_key)
+    adapter_name = site_key if site_key in KNOWN_AUTHORIZATION_SITES else "generic"
+    client = BrowserWorkerClient(get_settings().browser_worker_url)
     try:
-        state, last_url = await BROWSER_AUTHORIZATION_MANAGER.confirm(
-            user_id=user_id, site_key=site_key
-        )
-        store = create_session_store(get_settings())
-        BrowserSessionService(session, store).save(
+        await client.login_confirm(
             user_id=user_id,
             site_key=site_key,
-            adapter_name=site_key if site_key in KNOWN_AUTHORIZATION_SITES else "generic",
-            state=state,
-            last_url=last_url,
+            adapter_name=adapter_name,
         )
-    except BrowserAuthorizationError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except (InvalidBrowserState, RuntimeError) as error:
+    except httpx.HTTPStatusError as error:
+        raise _worker_http_error(error) from error
+    except httpx.HTTPError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     return BrowserAuthorizationResponse(site_key=site_key, state="authorized")
 
@@ -1785,7 +1805,9 @@ async def cancel_browser_authorization(
     if session.get(UserRow, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
     _authorization_site(session, user_id=user_id, site_key=site_key)
-    await BROWSER_AUTHORIZATION_MANAGER.cancel(user_id=user_id, site_key=site_key)
+    client = BrowserWorkerClient(get_settings().browser_worker_url)
+    with suppress(httpx.HTTPError):
+        await client.login_cancel(user_id=user_id, site_key=site_key)
     return BrowserAuthorizationResponse(site_key=site_key, state="cancelled")
 
 

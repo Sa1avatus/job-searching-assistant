@@ -122,3 +122,58 @@ class BrowserWorkerClient:
             response.raise_for_status()
         data = response.json()
         return bool(data["submitted"])
+
+    async def login_start(
+        self,
+        *,
+        user_id: str,
+        site_key: str,
+        site: dict[str, object],
+    ) -> dict[str, object]:
+        async with httpx.AsyncClient(
+            timeout=self._timeout, follow_redirects=False, trust_env=False
+        ) as client:
+            response = await client.post(
+                f"{self._base_url}/v1/browser/login/start",
+                json={"user_id": user_id, "site_key": site_key, "site": site},
+            )
+            response.raise_for_status()
+        return cast(dict[str, object], response.json())
+
+    async def login_confirm(
+        self,
+        *,
+        user_id: str,
+        site_key: str,
+        adapter_name: str,
+    ) -> dict[str, object]:
+        async with httpx.AsyncClient(
+            timeout=self._timeout, follow_redirects=False, trust_env=False
+        ) as client:
+            response = await client.post(
+                f"{self._base_url}/v1/browser/login/confirm",
+                json={"user_id": user_id, "site_key": site_key, "adapter_name": adapter_name},
+            )
+            response.raise_for_status()
+        return cast(dict[str, object], response.json())
+
+    async def login_cancel(self, *, user_id: str, site_key: str) -> None:
+        async with httpx.AsyncClient(
+            timeout=self._timeout, follow_redirects=False, trust_env=False
+        ) as client:
+            response = await client.post(
+                f"{self._base_url}/v1/browser/login/cancel",
+                json={"user_id": user_id, "site_key": site_key},
+            )
+            response.raise_for_status()
+
+    async def login_is_waiting(self, *, user_id: str, site_key: str) -> bool:
+        async with httpx.AsyncClient(
+            timeout=10, follow_redirects=False, trust_env=False
+        ) as client:
+            response = await client.get(
+                f"{self._base_url}/v1/browser/login/status",
+                params={"user_id": user_id, "site_key": site_key},
+            )
+            response.raise_for_status()
+        return bool(response.json().get("is_waiting", False))

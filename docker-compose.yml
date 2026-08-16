@@ -96,11 +96,9 @@ services:
       APP_ANTHROPIC_API_KEY: "${APP_ANTHROPIC_API_KEY:-}"
       APP_GEMINI_API_KEY: "${APP_GEMINI_API_KEY:-}"
       APP_MATERIALS_GENERATION_TIMEOUT_SECONDS: "${APP_MATERIALS_GENERATION_TIMEOUT_SECONDS:-120}"
-      DISPLAY: ":99"
-    command: ["/bin/bash", "scripts/start_api_with_browser_desktop.sh"]
+    command: ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "0.0.0.0:${APP_HTTP_PORT:-8000}:8000"
-      - "127.0.0.1:7900:7900"
     depends_on:
       postgres:
         condition: service_healthy
@@ -254,9 +252,11 @@ services:
       APP_ENABLE_LINKEDIN_APPLY: "${APP_ENABLE_LINKEDIN_APPLY:-false}"
       APP_MAX_BROWSER_STATE_BYTES: "2097152"
       APP_WORKER_POLL_SECONDS: "2"
-    command: ["python", "-m", "app.workers.browser_http_server"]
+      DISPLAY: ":99"
+    command: ["/bin/bash", "scripts/start_browser_worker_with_desktop.sh"]
     ports:
       - "127.0.0.1:8080:8080"
+      - "127.0.0.1:7900:7900"
     depends_on:
       postgres:
         condition: service_healthy

@@ -18,9 +18,14 @@ from app.browser.engine import PlaywrightEngine
 from app.browser.selector_library import SelectorLibrary
 from app.browser.session_probe import probe_browser_session
 from app.browser.session_service import BrowserSessionService
-from app.browser.session_store import EncryptedBrowserStateStore
+from app.browser.session_store import EncryptedBrowserStateStore, InvalidBrowserState
 from app.config import Settings, get_settings
 from app.observability.logging import configure_logging
+from app.services.browser_authorization import (
+    BrowserAuthorizationError,
+    BrowserAuthorizationManager,
+    BrowserAuthorizationSite,
+)
 from app.storage.database import SessionFactory
 from app.storage.tables import BrowserSessionRow
 from app.workers.browser_worker import create_session_store
@@ -309,3 +314,95 @@ async def submission_probe(request: SubmissionProbeRequest) -> SubmissionProbeRe
                 request.url
             )
     return SubmissionProbeResponse(submitted=submitted)
+
+
+_auth_manager = BrowserAuthorizationManager()
+
+
+class LoginSiteConfig(StrictModel):
+    site_key: str
+    login_url: str
+    allowed_hosts: list[str]
+    login_path_markers: list[str] = Field(default_factory=list)
+    allow_subdomains: bool = False
+
+
+class LoginStartRequest(StrictModel):
+    user_id: str
+    site_key: str
+    site: LoginSiteConfig
+
+
+class LoginConfirmRequest(StrictModel):
+    user_id: str
+    site_key: str
+    adapter_name: str
+
+
+class LoginCancelRequest(StrictModel):
+    user_id: str
+    site_key: str
+
+
+@app.post("/v1/browser/login/start")
+async def login_start(request: LoginStartRequest) -> dict[str, str]:
+    settings = _get_settings()
+    site = BrowserAuthorizationSite(
+        site_key=request.site.site_key,
+        login_url=request.site.login_url,
+        allowed_hosts=tuple(request.site.allowed_hosts),
+        login_path_markers=tuple(request.site.login_path_markers),
+        allow_subdomains=request.site.allow_subdomains,
+    )
+    try:
+        await _auth_manager.start(
+            user_id=request.user_id,
+            site_key=request.site_key,
+            timeout_ms=settings.browser_timeout_ms,
+            artifact_directory=(
+                settings.artifact_directory / "browser" / "login-capture" / request.site_key
+            ),
+            site=site,
+        )
+    except BrowserAuthorizationError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail="Не удалось открыть окно входа. Проверьте установку Chromium",
+        ) from error
+    return {"site_key": request.site_key, "state": "waiting_for_login"}
+
+
+@app.post("/v1/browser/login/confirm")
+async def login_confirm(request: LoginConfirmRequest) -> dict[str, object]:
+    try:
+        state, last_url = await _auth_manager.confirm(
+            user_id=request.user_id,
+            site_key=request.site_key,
+        )
+    except BrowserAuthorizationError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (InvalidBrowserState, RuntimeError) as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    store = _get_store()
+    with SessionFactory() as session:
+        BrowserSessionService(session, store).save(
+            user_id=request.user_id,
+            site_key=request.site_key,
+            adapter_name=request.adapter_name,
+            state=state,
+            last_url=last_url,
+        )
+    return {"site_key": request.site_key, "state": "authorized", "last_url": last_url}
+
+
+@app.post("/v1/browser/login/cancel")
+async def login_cancel(request: LoginCancelRequest) -> dict[str, str]:
+    await _auth_manager.cancel(user_id=request.user_id, site_key=request.site_key)
+    return {"site_key": request.site_key, "state": "cancelled"}
+
+
+@app.get("/v1/browser/login/status")
+async def login_status(user_id: str, site_key: str) -> dict[str, bool]:
+    return {"is_waiting": _auth_manager.is_waiting(user_id=user_id, site_key=site_key)}
