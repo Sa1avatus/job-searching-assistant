@@ -493,8 +493,15 @@ class ApplicationEmailEventRow(Base):
             name="uq_application_email_events_user_fingerprint",
         ),
         CheckConstraint(
-            "outcome IN ('rejected', 'next_stage', 'unknown')",
+            "outcome IN ('rejected', 'next_stage', 'offer', 'unknown')",
             name="ck_application_email_events_outcome",
+        ),
+        CheckConstraint(
+            "category IS NULL OR category IN ("
+            "'application_received', 'recruiter_contact', 'question', 'test_assignment', "
+            "'interview_invitation', 'interview_reschedule', 'offer', 'rejection', "
+            "'follow_up', 'other')",
+            name="ck_application_email_events_category",
         ),
     )
 
@@ -507,6 +514,14 @@ class ApplicationEmailEventRow(Base):
     outcome: Mapped[str] = mapped_column(String(30))
     status_applied: Mapped[bool] = mapped_column(Boolean, default=False)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Fine-grained email category (EmailCategory) plus the classifier's confidence, persisted
+    # so the review queue can show *which* email needs attention and why it was flagged.
+    category: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    subject: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    candidates: Mapped[list[dict[str, object]] | None] = mapped_column(JSON, nullable=True)
 
 
 class ApplicationTimelineEventRow(Base):

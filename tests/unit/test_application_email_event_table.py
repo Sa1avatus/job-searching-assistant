@@ -9,7 +9,7 @@ from app.storage.database import Base
 from app.storage.tables import ApplicationEmailEventRow, UserRow
 
 
-def test_application_email_event_row_is_privacy_minimal() -> None:
+def test_application_email_event_row_stores_review_fields() -> None:
     assert ApplicationEmailEventRow.__tablename__ == "application_email_events"
     columns = set(ApplicationEmailEventRow.__table__.columns.keys())
     assert columns == {
@@ -20,12 +20,19 @@ def test_application_email_event_row_is_privacy_minimal() -> None:
         "outcome",
         "status_applied",
         "processed_at",
+        "category",
+        "confidence",
+        "subject",
+        "body",
+        "needs_review",
+        "candidates",
     }
 
     assert isinstance(ApplicationEmailEventRow.__table__.c.id.type, String)
     assert isinstance(ApplicationEmailEventRow.__table__.c.message_fingerprint.type, String)
     assert ApplicationEmailEventRow.__table__.c.message_fingerprint.type.length == 64
     assert isinstance(ApplicationEmailEventRow.__table__.c.status_applied.type, Boolean)
+    assert isinstance(ApplicationEmailEventRow.__table__.c.needs_review.type, Boolean)
     assert isinstance(ApplicationEmailEventRow.__table__.c.processed_at.type, DateTime)
 
     application_fk = next(iter(ApplicationEmailEventRow.__table__.c.application_id.foreign_keys))
@@ -48,13 +55,19 @@ def test_application_email_event_row_is_privacy_minimal() -> None:
         for item in ApplicationEmailEventRow.__table__.constraints
         if isinstance(item, CheckConstraint)
     ]
-    assert any(
-        item.name == "ck_application_email_events_outcome"
-        and "rejected" in item.sqltext.text
-        and "next_stage" in item.sqltext.text
-        and "unknown" in item.sqltext.text
-        for item in check_constraints
-    )
+    outcome_constraints = [
+        item for item in check_constraints if item.name == "ck_application_email_events_outcome"
+    ]
+    assert len(outcome_constraints) == 1
+    outcome_sql = outcome_constraints[0].sqltext.text
+    assert "rejected" in outcome_sql
+    assert "next_stage" in outcome_sql
+    assert "offer" in outcome_sql
+    assert "unknown" in outcome_sql
+    category_constraints = [
+        item for item in check_constraints if item.name == "ck_application_email_events_category"
+    ]
+    assert len(category_constraints) == 1
 
 
 def test_application_email_event_fingerprint_is_unique_per_user() -> None:

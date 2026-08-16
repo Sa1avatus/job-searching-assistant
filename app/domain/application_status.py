@@ -14,6 +14,7 @@ ApplicationStatus = Literal[
     "interview",
     "offer",
     "withdrawn",
+    "needs_review",
 ]
 
 APPLICATION_STATUSES: tuple[ApplicationStatus, ...] = get_args(ApplicationStatus)
