@@ -321,6 +321,35 @@ class WorkflowTaskResponse(BaseModel):
     transitions: list[TaskTransitionResponse]
 
 
+class MatchingQueueTaskResponse(BaseModel):
+    id: str
+    application_id: str | None
+    state: str
+    attempt_number: int
+    priority: int
+    queue_position: int | None = None
+    scheduled_for: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class MatchingQueueResponse(BaseModel):
+    paused: bool
+    counts: dict[str, int]
+    tasks: list[MatchingQueueTaskResponse]
+
+
+class MatchingQueuePauseResponse(BaseModel):
+    paused: bool
+
+
+class ClearMatchingQueueResponse(BaseModel):
+    paused: bool
+    cancelled: int
+    interrupted: int
+    remaining_active: int
+
+
 class ReviewDecisionRequest(BaseModel):
     decision: str = Field(pattern="^(approve|reject|skip)$")
 

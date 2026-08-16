@@ -3,6 +3,19 @@
 All notable changes to Job Searching Assistant are documented in this file. The project follows
 semantic versioning for new releases; older historical version numbers are preserved as released.
 
+## [Unreleased]
+
+### Added
+
+- **Matching queue control** in the dashboard: a new "Очередь матчинга" panel shows the durable
+  matching backlog (per-state task counts plus the active task list) and exposes three actions —
+  **stop** (pause the worker from claiming new tasks), **clear** (pause the queue, cancel the
+  pending/scheduled/retry backlog, and interrupt orphaned running tasks), and **resume** (start
+  processing again). Backed by `GET /v1/matching/queue` and
+  `POST /v1/matching/queue/pause|resume|clear`, plus a Redis pause flag
+  (`recruitment:matching:queue:paused`) that the matching worker checks before claiming each task,
+  so a runaway queue can be halted and drained without restarting the worker.
+
 ## [1.5.5] — 2026-08-15
 
 ### Features

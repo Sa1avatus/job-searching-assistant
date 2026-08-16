@@ -28,6 +28,8 @@ Current version: **1.5.5**.
   `json_object` response formats (such as the local-code-worker gateway): structured
   matching requests automatically fall back to `json_object` when `json_schema` is
   rejected, keeping extraction/decomposition/entailment working.
+- A **Matching queue** panel in the dashboard lets you inspect the durable matching backlog and
+  stop, clear, or resume it on demand (see `docs/matching-operations.md`).
 
 - Matching v2.3 decomposes vacancy requirements into claims and distinguishes confirmed,
   partial, insufficient, failed, and missing evidence.

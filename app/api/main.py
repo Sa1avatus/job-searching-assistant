@@ -25,6 +25,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 import httpx
+import redis.asyncio as redis
 import structlog
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
@@ -54,6 +55,7 @@ from app.api.schemas import (
     BrowserHandoffResponse,
     BrowserReviewRequest,
     BrowserSessionStatusResponse,
+    ClearMatchingQueueResponse,
     CompanyBlacklistRequest,
     CompanyBlacklistResponse,
     ConfirmedProfileFactResponse,
@@ -86,6 +88,9 @@ from app.api.schemas import (
     LlmModelsResponse,
     LlmPreferenceResponse,
     LlmPreferenceUpdateRequest,
+    MatchingQueuePauseResponse,
+    MatchingQueueResponse,
+    MatchingQueueTaskResponse,
     PrepareApplicationRequest,
     ProfileFactDetailResponse,
     ProfileFactRequest,
@@ -153,8 +158,14 @@ from app.llm.providers.openai_compatible import OpenAICompatibleProvider
 from app.llm.router import ModelProvider, ModelRouter, NoModelAvailableError
 from app.matching.jobs import (
     BACKGROUND_MATCHING_PRIORITY,
+    MATCHING_QUEUE_NAME,
     MatchingJobNotReadyError,
     MatchingJobService,
+)
+from app.matching.queue_admin import (
+    clear_matching_queue,
+    matching_queue_is_paused,
+    set_matching_queue_paused,
 )
 from app.observability.logging import configure_logging
 from app.observability.metrics import metrics
@@ -437,6 +448,15 @@ async def reranker_http_client() -> AsyncIterator[httpx.AsyncClient | None]:
         trust_env=False,
     ) as client:
         yield client
+
+
+async def matching_queue_redis() -> AsyncIterator[redis.Redis]:
+    settings = get_settings()
+    client = redis.Redis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        yield client
+    finally:
+        await client.aclose()
 
 
 def _configured_secret(secret: SecretStr | None) -> str | None:
@@ -3408,6 +3428,90 @@ def _workflow_task_response(task: WorkflowTaskRow, session: Session) -> Workflow
             )
             for transition in task.transitions
         ],
+    )
+
+
+@app.get("/v1/matching/queue", response_model=MatchingQueueResponse)
+async def get_matching_queue(
+    session: Annotated[Session, Depends(session_scope)],
+    redis_client: Annotated[redis.Redis, Depends(matching_queue_redis)],
+) -> MatchingQueueResponse:
+    paused = await matching_queue_is_paused(redis_client)
+    counts = {
+        state: count
+        for state, count in session.execute(
+            select(WorkflowTaskRow.state, func.count())
+            .where(WorkflowTaskRow.queue_name == MATCHING_QUEUE_NAME)
+            .group_by(WorkflowTaskRow.state)
+        ).all()
+    }
+    active_states = ("pending", "scheduled", "retry_scheduled", "running")
+    rows = list(
+        session.scalars(
+            select(WorkflowTaskRow)
+            .where(
+                WorkflowTaskRow.queue_name == MATCHING_QUEUE_NAME,
+                WorkflowTaskRow.state.in_(active_states),
+            )
+            .order_by(WorkflowTaskRow.priority.desc(), WorkflowTaskRow.created_at)
+        )
+    )
+    tasks = [
+        MatchingQueueTaskResponse(
+            id=row.id,
+            application_id=row.application_id,
+            state=row.state,
+            attempt_number=row.attempt_number,
+            priority=row.priority,
+            queue_position=index + 1,
+            scheduled_for=row.scheduled_for,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+        for index, row in enumerate(rows)
+    ]
+    return MatchingQueueResponse(paused=paused, counts=counts, tasks=tasks)
+
+
+@app.post("/v1/matching/queue/pause", response_model=MatchingQueuePauseResponse)
+async def pause_matching_queue(
+    redis_client: Annotated[redis.Redis, Depends(matching_queue_redis)],
+) -> MatchingQueuePauseResponse:
+    await set_matching_queue_paused(redis_client, paused=True)
+    return MatchingQueuePauseResponse(paused=True)
+
+
+@app.post("/v1/matching/queue/resume", response_model=MatchingQueuePauseResponse)
+async def resume_matching_queue(
+    redis_client: Annotated[redis.Redis, Depends(matching_queue_redis)],
+) -> MatchingQueuePauseResponse:
+    await set_matching_queue_paused(redis_client, paused=False)
+    return MatchingQueuePauseResponse(paused=False)
+
+
+@app.post("/v1/matching/queue/clear", response_model=ClearMatchingQueueResponse)
+async def clear_matching_queue_endpoint(
+    session: Annotated[Session, Depends(session_scope)],
+    redis_client: Annotated[redis.Redis, Depends(matching_queue_redis)],
+) -> ClearMatchingQueueResponse:
+    report = clear_matching_queue(session)
+    # Clearing also pauses the queue so the backlog cannot immediately refill.
+    await set_matching_queue_paused(redis_client, paused=True)
+    remaining = session.scalar(
+        select(func.count())
+        .select_from(WorkflowTaskRow)
+        .where(
+            WorkflowTaskRow.queue_name == MATCHING_QUEUE_NAME,
+            WorkflowTaskRow.state.in_(
+                ("pending", "scheduled", "retry_scheduled", "running")
+            ),
+        )
+    )
+    return ClearMatchingQueueResponse(
+        paused=True,
+        cancelled=report.cancelled,
+        interrupted=report.interrupted,
+        remaining_active=remaining or 0,
     )
 
 

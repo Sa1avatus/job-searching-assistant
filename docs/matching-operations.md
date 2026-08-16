@@ -74,3 +74,21 @@ docker compose run --rm matching-worker python -m app.matching.queue_repair --ap
 
 The first command is a dry run. The applied repair preserves task rows and transition history,
 migrates only the newest active request, and terminalizes superseded legacy work.
+
+## Queue control (dashboard)
+
+The dashboard "Очередь матчинга" panel (backed by `app/matching/queue_admin.py`) manages the durable
+`matching` queue without restarting the worker:
+
+- `GET /v1/matching/queue` — pause state, per-state task counts, and the active task list.
+- `POST /v1/matching/queue/pause` — set the `recruitment:matching:queue:paused` Redis flag; the
+  worker stops claiming new tasks (already-running tasks finish).
+- `POST /v1/matching/queue/resume` — clear the flag and resume claiming.
+- `POST /v1/matching/queue/clear` — pause the queue, cancel every `pending`/`scheduled`/
+  `retry_scheduled` task, interrupt orphaned `running` tasks, and reset their application match
+  aggregates to `failed` so cards do not hang in "processing". Task rows and transition history are
+  preserved.
+
+Clearing is the safe way to stop a runaway recalculation backlog (for example after an OOM-killed
+worker left hundreds of `retry_scheduled` tasks): it terminates the backlog without deleting rows,
+and the pause flag keeps the queue from refilling until you resume.

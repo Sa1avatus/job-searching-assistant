@@ -12,6 +12,7 @@ import structlog
 from app.config import Settings, get_settings
 from app.domain.models import TaskState
 from app.matching.jobs import MATCHING_QUEUE_NAME, RETRY_MATCHING_PRIORITY
+from app.matching.queue_admin import matching_queue_is_paused
 from app.matching.runtime import MatchingRuntime
 from app.observability.logging import configure_logging
 from app.storage.database import SessionFactory
@@ -68,10 +69,15 @@ async def _periodic_recovery(
 async def _run_slot(
     dispatcher: DurableTaskDispatcher,
     stopped: asyncio.Event,
+    redis_client: redis.Redis,
     *,
     poll_seconds: float,
 ) -> None:
     while not stopped.is_set():
+        if await matching_queue_is_paused(redis_client):
+            with suppress(TimeoutError):
+                await asyncio.wait_for(stopped.wait(), timeout=poll_seconds)
+            continue
         processed = await dispatcher.run_once()
         if not processed:
             with suppress(TimeoutError):
@@ -124,7 +130,12 @@ async def run_worker() -> None:
     )
     tasks = [
         asyncio.create_task(
-            _run_slot(dispatcher, stopped, poll_seconds=settings.worker_poll_seconds)
+            _run_slot(
+                dispatcher,
+                stopped,
+                redis_client,
+                poll_seconds=settings.worker_poll_seconds,
+            )
         )
         for dispatcher in dispatchers
     ]

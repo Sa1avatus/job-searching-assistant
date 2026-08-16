@@ -332,6 +332,7 @@
       <button class="menu-button" type="button" data-menu="resume" aria-expanded="false">Резюме</button>
       <button class="menu-button" type="button" data-menu="sessions" aria-expanded="false">Сессии сайтов</button>
       <button class="menu-button" type="button" data-menu="model" aria-expanded="false">Модель</button>
+      <button class="menu-button" type="button" data-menu="queue" aria-expanded="false">Очередь матчинга</button>
       <button class="menu-button" type="button" data-menu="access" aria-expanded="false">Профиль и доступ</button>
     </nav>
     <div class="dashboard-content">
@@ -539,6 +540,20 @@
       <div id="llm-materials-state" class="task-state"></div>
     </section>
 
+    <section class="step" data-panel="queue">
+      <h2>Очередь матчинга</h2>
+      <div class="hint">Очередь задач перерасчёта матчинга, которые обращаются к локальной модели. «Остановить» запрещает воркеру брать новые задачи. «Очистить» останавливает обработку, отменяет все ожидающие задачи и прерывает зависшие. «Продолжить» снова запускает обработку.</div>
+      <div class="actions" style="margin-top:12px;">
+        <button id="matching-queue-pause" type="button">Остановить обработку</button>
+        <button id="matching-queue-resume" type="button" class="primary">Продолжить обработку</button>
+        <button id="matching-queue-clear" type="button" class="danger">Очистить очередь</button>
+        <button id="matching-queue-refresh" type="button">Обновить очередь</button>
+      </div>
+      <div id="matching-queue-state" class="task-state"></div>
+      <div id="matching-queue-summary" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;"></div>
+      <div id="matching-queue-list" class="vacancy-list" style="margin-top:12px;"></div>
+    </section>
+
     <section class="step" data-panel="sessions">
       <h2>Сессии сайтов</h2>
       <div class="hint">Вход выполняется вручную в Chromium на локальном браузерном экране. Приложение не получает пароль, код подтверждения или CAPTCHA — сохраняются только зашифрованные cookies и состояние сайта.</div>
@@ -701,6 +716,12 @@
       'Резюме': 'Resumes',
       'Сессии сайтов': 'Site sessions',
       'Модель': 'Model',
+      'Очередь матчинга': 'Matching queue',
+      'Очередь задач перерасчёта матчинга, которые обращаются к локальной модели. «Остановить» запрещает воркеру брать новые задачи. «Очистить» останавливает обработку, отменяет все ожидающие задачи и прерывает зависшие. «Продолжить» снова запускает обработку.': 'Queue of matching recalculation tasks that call the local model. "Pause" stops the worker from taking new tasks. "Clear" stops processing, cancels all pending tasks, and interrupts stuck ones. "Resume" starts processing again.',
+      'Остановить обработку': 'Pause processing',
+      'Продолжить обработку': 'Resume processing',
+      'Очистить очередь': 'Clear queue',
+      'Обновить очередь': 'Refresh queue',
       'Профиль и доступ': 'Profile and access',
       'Все сохранённые вакансии': 'All saved vacancies',
       'Синхронизировать отклики': 'Sync applications',
@@ -1817,6 +1838,89 @@
       return true;
     }
 
+    const MATCHING_STATE_LABELS = {
+      pending: ['ожидает', 'pending'],
+      scheduled: ['запланирована', 'scheduled'],
+      retry_scheduled: ['на повторе', 'retry scheduled'],
+      running: ['выполняется', 'running'],
+      completed: ['завершена', 'completed'],
+      failed: ['с ошибкой', 'failed'],
+      cancelled: ['отменена', 'cancelled'],
+      interrupted: ['прервана', 'interrupted'],
+      waiting_for_user: ['ждёт решения', 'awaiting user'],
+      waiting_for_external_system: ['ждёт систему', 'awaiting system'],
+    };
+    const matchingStateLabel = state => {
+      const pair = MATCHING_STATE_LABELS[state] || [state, state];
+      return currentLanguage === 'en' ? pair[1] : pair[0];
+    };
+
+    async function loadMatchingQueue() {
+      const summary = document.querySelector('#matching-queue-summary');
+      const list = document.querySelector('#matching-queue-list');
+      const stateNode = document.querySelector('#matching-queue-state');
+      const data = await asJson(await fetchWithTimeout('/v1/matching/queue', {headers: headers(false)}));
+      stateNode.textContent = data.paused
+        ? (currentLanguage === 'en'
+          ? 'Queue is paused — the worker is not taking new tasks.'
+          : 'Очередь остановлена — воркер не берёт новые задачи.')
+        : (currentLanguage === 'en'
+          ? 'Queue is running.'
+          : 'Очередь обрабатывается.');
+      summary.replaceChildren();
+      Object.keys(MATCHING_STATE_LABELS).forEach(key => {
+        const count = (data.counts || {})[key];
+        if (count == null) return;
+        summary.append(element('span', `${matchingStateLabel(key)}: ${count}`, 'badge'));
+      });
+      list.replaceChildren();
+      const tasks = data.tasks || [];
+      if (tasks.length === 0) {
+        list.append(element('div', currentLanguage === 'en'
+          ? 'No active matching tasks.'
+          : 'Нет активных задач матчинга.', 'hint'));
+        return;
+      }
+      tasks.forEach(task => {
+        const row = element('div');
+        row.style.cssText = 'display:flex;gap:12px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid #2b3859;font-size:13px;';
+        const position = task.queue_position ? `#${task.queue_position}` : '—';
+        const app = task.application_id ? task.application_id.slice(0, 8) : '—';
+        const when = new Date(task.created_at).toLocaleTimeString();
+        row.append(
+          element('span', position),
+          element('span', app),
+          element('span', matchingStateLabel(task.state)),
+          element('span', `pr ${task.priority} · try ${task.attempt_number}`),
+          element('span', when)
+        );
+        list.append(row);
+      });
+    }
+
+    async function setMatchingQueuePaused(paused) {
+      const endpoint = paused ? '/v1/matching/queue/pause' : '/v1/matching/queue/resume';
+      await asJson(await fetchWithTimeout(endpoint, {method: 'POST', headers: headers(false)}));
+      await loadMatchingQueue();
+    }
+
+    async function clearMatchingQueue() {
+      const confirmed = window.confirm(currentLanguage === 'en'
+        ? 'Stop the matching queue and cancel all pending tasks?'
+        : 'Остановить очередь матчинга и отменить все ожидающие задачи?');
+      if (!confirmed) return;
+      const result = await asJson(await fetchWithTimeout('/v1/matching/queue/clear', {method: 'POST', headers: headers(false)}));
+      showStatus(currentLanguage === 'en'
+        ? `Queue cleared: ${result.cancelled} cancelled, ${result.interrupted} interrupted.`
+        : `Очередь очищена: отменено ${result.cancelled}, прервано ${result.interrupted}.`);
+      await loadMatchingQueue();
+    }
+
+    document.querySelector('#matching-queue-pause').addEventListener('click', () => setMatchingQueuePaused(true).catch(showError));
+    document.querySelector('#matching-queue-resume').addEventListener('click', () => setMatchingQueuePaused(false).catch(showError));
+    document.querySelector('#matching-queue-clear').addEventListener('click', () => clearMatchingQueue().catch(showError));
+    document.querySelector('#matching-queue-refresh').addEventListener('click', () => loadMatchingQueue().catch(showError));
+
     document.querySelectorAll('[data-menu]').forEach(button => {
       button.addEventListener('click', () => {
         const expanded = activatePanel(button.dataset.menu, {toggle: true});
@@ -1824,6 +1928,7 @@
 
         if (button.dataset.menu === 'vacancies') loadSavedVacancies().catch(showError);
         if (button.dataset.menu === 'blacklist') loadCompanyBlacklist().catch(showError);
+        if (button.dataset.menu === 'queue') loadMatchingQueue().catch(showError);
       });
     });
 
