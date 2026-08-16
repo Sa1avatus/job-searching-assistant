@@ -13,6 +13,16 @@ semantic versioning for new releases; older historical version numbers are prese
   per-user preference; matching falls back to the materials model until a matching-specific
   model is saved, so existing single-model setups keep working unchanged.
 
+### Fixed
+
+- The application status badge and its change-status popup now sit in the top-right corner
+  of each vacancy card (both search results and the "All vacancies" tab), replacing the
+  status text in the metadata line and the status editor at the bottom of the card.
+- Fixed the saved-vacancy card layout: the topline (company, title, status badge, match
+  meter) was being pushed to the middle of the card by a duplicate `card.append(top, …)`
+  call, so the badge and match score landed below the attribute tags and key skills instead
+  of at the top like the search card. The topline is now the first child again.
+
 ### Performance
 
 - Matching recalculation now distinguishes a **smart recalculation** (reuses cached LLM
@@ -24,7 +34,7 @@ semantic versioning for new releases; older historical version numbers are prese
   prior LLM work instead of re-invoking the model hundreds of times. Cached
   decompositions are rebound to the current requirement row on a cache hit.
 - Entailment evaluation stops early after a strong entailed result and evaluates at most
-  `APP_MATCHING_ENTAILMENT_MAX_CANDIDATES` candidates per claim (default 3), down from
+  `APP_MATCHING_ENTAILMENT_MAX_CANDIDATES` candidates per claim (default 2), down from
   the previous full top-k evaluation.
 - Simple single-skill requirements (e.g. "Docker", "PostgreSQL") are decomposed
   deterministically without an LLM call.

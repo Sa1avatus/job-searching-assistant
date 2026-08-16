@@ -52,7 +52,11 @@ class Settings(BaseSettings):
     matching_worker_concurrency: int = Field(default=2, ge=1, le=8)
     matching_llm_concurrency: int = Field(default=10, ge=1, le=50)
     matching_cache_ttl_seconds: int = Field(default=604_800, ge=60, le=31_536_000)
-    matching_entailment_max_candidates: int = Field(default=3, ge=1, le=10)
+    # Maximum (claim, evidence) candidates evaluated per claim before the strong-match
+    # early-exit. Entailment is ~88% of the LLM call budget, so a lower cap trades a small
+    # amount of recall (the 3rd-ranked candidate is skipped) for a ~1/3 cut in entailment
+    # calls on claims that don't hit a strong entailed on the top candidates.
+    matching_entailment_max_candidates: int = Field(default=2, ge=1, le=10)
     matching_entailment_max_tokens: int = Field(default=512, ge=64, le=8192)
     matching_entailment_context_size: int = Field(default=4096, ge=512, le=32768)
     # Pairs per batched entailment LLM call (1 disables batching). The batch prompt
