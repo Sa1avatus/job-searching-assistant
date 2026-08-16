@@ -121,6 +121,16 @@
     .status-badge[data-status="submitted"] { background: #173f35; color: #6ee7b7; border-color: #2b725e; }
     .status-badge[data-status="interview"] { background: #2a1f4d; color: #c4b5fd; border-color: #5b4a9e; }
     .status-badge[data-status="draft"] { background: #262c3f; color: #93a3d4; border-color: #3a4772; }
+    .status-badge[data-status="needs_review"] { background: #3a2a0f; color: #fbbf24; border-color: #7a5a1e; }
+    .email-review { margin-top: 16px; padding: 14px; border: 1px solid #33416d; border-radius: 10px; background: #1a2036; }
+    .email-review h3 { margin: 0 0 6px; font-size: 16px; }
+    .email-review__list { display: grid; gap: 10px; margin-top: 10px; }
+    .email-review__item { padding: 12px; border: 1px solid #27304d; border-radius: 8px; background: #161c2e; }
+    .email-review__subject { font-weight: 700; }
+    .email-review__meta { color: #8a94b8; font-size: 12px; margin-top: 3px; }
+    .email-review__body { color: #aab5d6; white-space: pre-wrap; max-height: 130px; overflow: auto; margin: 8px 0; font-size: 13px; }
+    .email-review__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .email-review__actions button { font-size: 12px; }
     .cover-letter { margin-top: 14px; }
     .cover-letter__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
     .cover-letter__header label { margin: 0; }
@@ -347,10 +357,15 @@
       <button id="import-application-emails" type="button">Импортировать письма</button>
       <input id="application-email-files" type="file" accept=".eml,.mbox,.zip,message/rfc822,application/zip" multiple hidden>
       <div class="hint">Можно выбрать несколько EML, почтовый ящик mbox или ZIP-архив. Вложенные письма будут обработаны отдельно.</div>
+      <section id="email-review-panel" class="email-review" hidden>
+        <h3>Письма на проверке</h3>
+        <div class="hint">Письма, которые не удалось уверенно связать с вакансией. Свяжите с вакансией или отметьте как не относящееся.</div>
+        <div id="email-review-list" class="email-review__list"></div>
+      </section>
       <div class="vacancy-filters">
         <div><label for="vacancy-query">Текст</label><input id="vacancy-query" placeholder="должность, компания или описание"></div>
         <div><label for="vacancy-source">Источник</label><select id="vacancy-source"><option value="all">Все</option><option value="headhunter">hh.ru</option><option value="linkedin">LinkedIn</option><option value="greenhouse">Greenhouse</option><option value="registry">Реестр</option><option value="other">Другие</option></select></div>
-        <div><label for="vacancy-status">Статус</label><select id="vacancy-status"><option value="all">Все</option><option value="saved">Сохранена</option><option value="awaiting_review">Ожидает решения</option><option value="approved">Принята</option><option value="rejected">Отклонена мной</option><option value="employer_rejected">Отказ работодателя</option><option value="skipped">Пропущена</option><option value="submitted">Отправлена</option><option value="interview">Собеседование</option></select></div>
+        <div><label for="vacancy-status">Статус</label><select id="vacancy-status"><option value="all">Все</option><option value="saved">Сохранена</option><option value="awaiting_review">Ожидает решения</option><option value="approved">Принята</option><option value="rejected">Отклонена мной</option><option value="employer_rejected">Отказ работодателя</option><option value="skipped">Пропущена</option><option value="submitted">Отправлена</option><option value="interview">Собеседование</option><option value="needs_review">На проверке</option></select></div>
         <div><label for="vacancy-location">Локация</label><input id="vacancy-location" placeholder="например, Москва"></div>
         <div><label for="vacancy-score">Соответствие от</label><input id="vacancy-score" type="number" min="0" max="100" value="0"></div>
         <div><label for="vacancy-published-from">Опубликована с</label><input id="vacancy-published-from" type="date"></div>
@@ -2942,14 +2957,81 @@
         {headers: headers(false)}
       ));
       const labels = currentLanguage === 'en'
-        ? {total: 'Total', approved: 'Accepted', rejected: 'Rejected by me', employer_rejected: 'Employer rejections', submitted: 'Submitted', interview: 'Interviews', email_events: 'Emails processed', email_rejections: 'Email rejections', email_next_stages: 'Email next stages'}
-        : {total: 'Всего', approved: 'Принято', rejected: 'Отклонено мной', employer_rejected: 'Отказы работодателей', submitted: 'Отправлено', interview: 'Собеседования', email_events: 'Обработано писем', email_rejections: 'Отказы из почты', email_next_stages: 'Этапы из почты'};
+        ? {total: 'Total', approved: 'Accepted', rejected: 'Rejected by me', employer_rejected: 'Employer rejections', submitted: 'Submitted', interview: 'Interviews', needs_review: 'Need review', email_events: 'Emails processed', email_rejections: 'Email rejections', email_next_stages: 'Email next stages'}
+        : {total: 'Всего', approved: 'Принято', rejected: 'Отклонено мной', employer_rejected: 'Отказы работодателей', submitted: 'Отправлено', interview: 'Собеседования', needs_review: 'На проверке', email_events: 'Обработано писем', email_rejections: 'Отказы из почты', email_next_stages: 'Этапы из почты'};
       container.replaceChildren();
-      ['total', 'approved', 'rejected', 'employer_rejected', 'submitted', 'interview', 'email_events', 'email_rejections', 'email_next_stages'].forEach(key => {
+      ['total', 'approved', 'rejected', 'employer_rejected', 'submitted', 'interview', 'needs_review', 'email_events', 'email_rejections', 'email_next_stages'].forEach(key => {
         const card = element('div', labels[key], 'statistic-card');
         card.append(element('strong', String(statistics[key] || 0)));
         container.append(card);
       });
+    }
+
+    const emailCategoryLabels = {
+      application_received: 'Получено резюме', rejection: 'Отказ', interview_invitation: 'Приглашение на собеседование',
+      interview_reschedule: 'Перенос собеседования', offer: 'Оффер', test_assignment: 'Тестовое задание',
+      question: 'Вопрос', recruiter_contact: 'Контакт рекрутера', follow_up: 'Follow-up', other: 'Прочее'
+    };
+
+    function renderEmailReviewItem(item) {
+      const wrap = element('div', undefined, 'email-review__item');
+      wrap.append(element('div', item.subject || '—', 'email-review__subject'));
+      const confidence = item.confidence != null ? `${Math.round(item.confidence * 100)}%` : '—';
+      const meta = currentLanguage === 'en'
+        ? `Category: ${item.category || '—'} · Confidence: ${confidence}`
+        : `Категория: ${emailCategoryLabels[item.category] || item.category || '—'} · Уверенность: ${confidence}`;
+      wrap.append(element('div', meta, 'email-review__meta'));
+      if (item.body) wrap.append(element('div', item.body.slice(0, 800), 'email-review__body'));
+      const actions = element('div', undefined, 'email-review__actions');
+      (item.candidates || []).forEach(candidate => {
+        const button = element('button', `${candidate.company} — ${candidate.title}`);
+        button.addEventListener('click', () => resolveEmailReview(item.id, 'link', candidate.application_id));
+        actions.append(button);
+      });
+      const dismiss = element('button', currentLanguage === 'en' ? 'Not related' : 'Не относится');
+      dismiss.addEventListener('click', () => resolveEmailReview(item.id, 'dismiss'));
+      actions.append(dismiss);
+      wrap.append(actions);
+      return wrap;
+    }
+
+    async function loadEmailReview() {
+      const container = document.querySelector('#email-review-list');
+      const panel = document.querySelector('#email-review-panel');
+      const userId = userIdInput.value.trim();
+      if (!userId) { panel.hidden = true; return; }
+      let items;
+      try {
+        items = await asJson(await fetchWithTimeout(
+          `/v1/users/${userId}/email-review`,
+          {headers: headers(false)}
+        ));
+      } catch (error) {
+        panel.hidden = true;
+        return;
+      }
+      if (!items.length) { panel.hidden = true; container.replaceChildren(); return; }
+      panel.hidden = false;
+      container.replaceChildren();
+      items.forEach(item => container.append(renderEmailReviewItem(item)));
+    }
+
+    async function resolveEmailReview(eventId, action, applicationId) {
+      const userId = userIdInput.value.trim();
+      try {
+        await asJson(await fetchWithTimeout(
+          `/v1/users/${userId}/email-review/${eventId}/resolve`,
+          {
+            method: 'POST',
+            headers: headers(true),
+            body: JSON.stringify({action, application_id: applicationId || null})
+          }
+        ));
+        await Promise.all([loadEmailReview(), loadApplicationStatistics(), loadSavedVacancies(1)]);
+        showStatus(currentLanguage === 'en' ? 'Email review resolved.' : 'Письмо обработано.');
+      } catch (error) {
+        showError(error);
+      }
     }
 
     document.querySelector('#sync-application-statuses').addEventListener('click', async event => {
@@ -2967,7 +3049,7 @@
           {method: 'POST', headers: headers(false)},
           120000
         ));
-        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1)]);
+        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1), loadEmailReview()]);
         showStatus(currentLanguage === 'en'
           ? `Synchronization complete: ${summary.updated} updated, ${summary.unchanged} unchanged, ${summary.failed} failed.`
           : `Синхронизация завершена: обновлено ${summary.updated}, без изменений ${summary.unchanged}, ошибок ${summary.failed}.`);
@@ -2993,10 +3075,10 @@
           {method: 'POST', headers: headers(false)},
           120000
         ));
-        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1)]);
+        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1), loadEmailReview()]);
         showStatus(currentLanguage === 'en'
-          ? `Email synchronization complete: ${summary.created} new, ${summary.status_updated} statuses updated, ${summary.failed} failed.`
-          : `Синхронизация почты завершена: новых событий ${summary.created}, обновлено статусов ${summary.status_updated}, ошибок ${summary.failed}.`);
+          ? `Email synchronization complete: ${summary.created} new, ${summary.status_updated} statuses updated, ${summary.needs_review} need review, ${summary.failed} failed.`
+          : `Синхронизация почты завершена: новых событий ${summary.created}, обновлено статусов ${summary.status_updated}, на проверке ${summary.needs_review}, ошибок ${summary.failed}.`);
       } catch (error) {
         showError(error);
       } finally {
@@ -3028,7 +3110,7 @@
           {method: 'POST', headers: headers(false), body: form},
           120000
         ));
-        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1)]);
+        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1), loadEmailReview()]);
         showStatus(currentLanguage === 'en'
           ? `Email import complete: ${summary.processed} processed, ${summary.created} new, ${summary.status_updated} statuses updated, ${summary.unknown} unknown, ${summary.unmatched} unmatched, ${summary.failed} failed.`
           : `Импорт писем завершён: обработано ${summary.processed}, новых событий ${summary.created}, обновлено статусов ${summary.status_updated}, не распознано ${summary.unknown}, не привязано к вакансиям ${summary.unmatched}, ошибок ${summary.failed}.`);
@@ -3512,12 +3594,12 @@
       ru: {
         saved: 'Сохранена', awaiting_review: 'Ожидает решения', approved: 'Принята',
         rejected: 'Отклонена мной', employer_rejected: 'Отказ работодателя', skipped: 'Пропущена', submitted: 'Отправлена',
-        interview: 'Собеседование', draft: 'Черновик'
+        interview: 'Собеседование', draft: 'Черновик', needs_review: 'На проверке', offer: 'Оффер', withdrawn: 'Отозвана'
       },
       en: {
         saved: 'Saved', awaiting_review: 'Awaiting decision', approved: 'Accepted',
         rejected: 'Rejected by me', employer_rejected: 'Employer rejection', skipped: 'Skipped', submitted: 'Submitted',
-        interview: 'Interview', draft: 'Draft'
+        interview: 'Interview', draft: 'Draft', needs_review: 'Under review', offer: 'Offer', withdrawn: 'Withdrawn'
       }
     };
     let vacancyPage = 1;
@@ -4414,7 +4496,7 @@
       await Promise.all([
         loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles(),
         loadAutofillValues(), loadSiteDefinitionsForFields(), loadApplicationStatistics(),
-        loadEmailIntegration(), loadProfileFacts()
+        loadEmailIntegration(), loadProfileFacts(), loadEmailReview()
       ]);
       restoreSearchResults();
     }
@@ -4442,6 +4524,7 @@
     loadEmailIntegration().catch(showError);
     loadProfileFacts().catch(showError);
     loadApplicationStatistics().catch(showError);
+    loadEmailReview().catch(showError);
     window.setInterval(() => loadBrowserSessionStatuses(true).catch(() => {}), 300000);
     loadSavedVacancies().catch(showError);
     loadCompanyBlacklist().catch(showError);

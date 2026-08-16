@@ -120,6 +120,7 @@ def test_application_statistics_counts_statuses_for_requested_user() -> None:
         "skipped": 0,
         "submitted": 1,
         "interview": 1,
+        "needs_review": 0,
         "email_events": 3,
         "email_rejections": 1,
         "email_next_stages": 1,

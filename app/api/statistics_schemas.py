@@ -12,6 +12,7 @@ class ApplicationStatisticsResponse(BaseModel):
     skipped: int = Field(ge=0)
     submitted: int = Field(ge=0)
     interview: int = Field(ge=0)
+    needs_review: int = Field(ge=0)
     email_events: int = Field(ge=0)
     email_rejections: int = Field(ge=0)
     email_next_stages: int = Field(ge=0)
