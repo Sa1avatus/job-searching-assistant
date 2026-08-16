@@ -3,7 +3,7 @@
 All notable changes to Job Searching Assistant are documented in this file. The project follows
 semantic versioning for new releases; older historical version numbers are preserved as released.
 
-## [Unreleased]
+## [1.5.5] — 2026-08-15
 
 ### Features
 
@@ -66,7 +66,7 @@ semantic versioning for new releases; older historical version numbers are prese
   incorporate the routed model, so switching it never reuses results produced by
   another model.
 - Version markers are now consistent: `VERSION`, `README`, `README.ru`, and
-  `pyproject.toml` all report 1.5.4.
+  `pyproject.toml` all report 1.5.5.
 - The OpenAI-compatible provider now adapts to servers that only support `text` and
   `json_object` response formats (e.g. the local-code-worker gateway): when a request
   with a `json_schema` `response_format` is rejected with HTTP 400, the provider

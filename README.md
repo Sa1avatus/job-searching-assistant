@@ -7,7 +7,7 @@ vacancies, analyses resumes, calculates explainable matches, drafts application 
 prepares supported browser forms for human review. Real HeadHunter and LinkedIn submission is
 disabled by default and requires explicit configuration and user confirmation.
 
-Current version: **1.5.4**.
+Current version: **1.5.5**.
 
 ## Current release
 
