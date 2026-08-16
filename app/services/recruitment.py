@@ -811,14 +811,14 @@ class RecruitmentService:
         self._session.commit()
         return application
 
-    def get_application_statistics(self, user_id: str) -> tuple[int, dict[ApplicationStatus, int]]:
+    def get_application_statistics(self, user_id: str) -> tuple[int, dict[str, int]]:
         self._require_user(user_id)
         rows = self._session.execute(
             select(ApplicationRow.status, func.count(ApplicationRow.id))
             .where(ApplicationRow.user_id == user_id)
             .group_by(ApplicationRow.status)
         ).all()
-        counts: dict[ApplicationStatus, int] = {status: 0 for status in APPLICATION_STATUSES}
+        counts: dict[str, int] = {status: 0 for status in APPLICATION_STATUSES}
         total = 0
         for status, count in rows:
             total += count

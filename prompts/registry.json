@@ -87,6 +87,17 @@
       "model_task_class": "low_cost",
       "created_on": "2026-08-13",
       "is_active": true
+    },
+    {
+      "name": "classify_application_email",
+      "purpose": "Classify an employer email about a job application and extract the vacancy it refers to.",
+      "version": 1,
+      "template": "Classify an employer email about a job application and extract the vacancy it refers to.\n\nSubject:\n{subject}\n\nBody:\n{body}\n\nClassify into exactly ONE category:\n- application_received: acknowledgement that your application/resume was received (e.g. \"мы получили ваше резюме\", \"thank you for applying\", \"application received\")\n- rejection: the employer declined you (e.g. \"unfortunately\", \"not moving forward\", \"к сожалению\", \"отказ\")\n- interview_invitation: invitation to an interview or call (e.g. \"приглашаем на собеседование\", \"schedule an interview\")\n- interview_reschedule: rescheduling an interview\n- offer: a job offer (e.g. \"предлагаем позицию\", \"offer letter\", \"compensation package\")\n- test_assignment: a test or coding assignment (e.g. \"тестовое задание\")\n- question: the recruiter asks clarifying questions\n- recruiter_contact: a recruiter reached out proactively (sourcing), not tied to a specific application\n- follow_up: a follow-up about an existing application without a clear decision\n- other: anything else (newsletters, notifications, spam)\n\nRules:\n- Support both Russian and English.\n- Extract company and vacancy_title ONLY if clearly mentioned in the email; otherwise return null.\n- confidence is 0..1: how sure you are of the category. Use a low value when ambiguous.\n- summary: one short human-readable sentence describing the email, in the email's language.\n\nReturn JSON with fields: category, confidence, company, vacancy_title, summary.",
+      "input_schema": "ClassifyEmailInput",
+      "output_schema": "EmailClassification",
+      "model_task_class": "low_cost",
+      "created_on": "2026-08-16",
+      "is_active": true
     }
   ]
 }

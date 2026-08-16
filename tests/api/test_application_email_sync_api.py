@@ -62,6 +62,7 @@ def test_application_email_sync_returns_batch_summary() -> None:
         "status_updated": 0,
         "unmatched": 1,
         "unknown": 1,
+        "needs_review": 1,
         "failed": 0,
     }
 

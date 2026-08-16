@@ -94,6 +94,16 @@ _CATEGORY_PATTERNS: dict[EmailCategory, tuple[re.Pattern[str], ...]] = {
             re.IGNORECASE,
         ),
         re.compile(r"\b(?:ваше резюме получено|заявка принята)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(?:получили|получил|получила)\s+(?:ваше|вашу|ваш)\s+"
+            r"(?:резюме|заявку|отклик)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:ваше\s+резюме|резюме|заявка|отклик)\s+"
+            r"(?:получено|получен|получена|принято|принят|принята)\b",
+            re.IGNORECASE,
+        ),
     ),
     EmailCategory.RECRUITER_CONTACT: (
         re.compile(r"\b(?:sourcing|talent acquisition|recruiting team)\b", re.IGNORECASE),

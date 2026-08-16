@@ -6,6 +6,8 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from app.services.application_email_events import ApplicationEmailEventService
+from app.services.email_classification import EmailClassifier
+from app.services.email_vacancy_matcher import EmailVacancyMatcher
 from app.services.recruitment import EntityNotFoundError
 from app.storage.tables import UserRow
 
@@ -31,13 +33,24 @@ class ApplicationEmailSyncSummary:
     status_updated: int
     unmatched: int
     unknown: int
+    needs_review: int
     failed: int
 
 
 class ApplicationEmailSyncService:
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        classifier: EmailClassifier | None = None,
+        matcher: EmailVacancyMatcher | None = None,
+    ) -> None:
         self._session = session
-        self._events = ApplicationEmailEventService(session)
+        self._events = ApplicationEmailEventService(
+            session,
+            classifier=classifier,
+            matcher=matcher,
+        )
 
     async def synchronize(
         self,
@@ -49,20 +62,31 @@ class ApplicationEmailSyncService:
         try:
             messages = await provider.fetch_messages()
         except Exception:  # noqa: BLE001 - provider failure is reported in the summary
-            return ApplicationEmailSyncSummary(0, 0, 0, 0, 0, 0, 1)
+            return ApplicationEmailSyncSummary(0, 0, 0, 0, 0, 0, 0, 1)
 
-        processed = created = duplicates = status_updated = unmatched = unknown = failed = 0
+        processed = created = duplicates = status_updated = unmatched = unknown = 0
+        needs_review = failed = 0
         for message in messages:
             processed += 1
             try:
-                result = self._events.ingest(
-                    user_id,
-                    message.subject,
-                    message.body,
-                    application_id=message.application_id,
-                    company=message.company,
-                    vacancy_title=message.vacancy_title,
-                )
+                if self._events.has_llm:
+                    result = await self._events.ingest_async(
+                        user_id,
+                        message.subject,
+                        message.body,
+                        application_id=message.application_id,
+                        company=message.company,
+                        vacancy_title=message.vacancy_title,
+                    )
+                else:
+                    result = self._events.ingest(
+                        user_id,
+                        message.subject,
+                        message.body,
+                        application_id=message.application_id,
+                        company=message.company,
+                        vacancy_title=message.vacancy_title,
+                    )
             except Exception:  # noqa: BLE001 - one malformed message must not abort the batch
                 failed += 1
                 continue
@@ -76,6 +100,8 @@ class ApplicationEmailSyncService:
                 unmatched += 1
             if result.event.outcome == "unknown":
                 unknown += 1
+            if result.event.needs_review:
+                needs_review += 1
         return ApplicationEmailSyncSummary(
             processed=processed,
             created=created,
@@ -83,5 +109,6 @@ class ApplicationEmailSyncService:
             status_updated=status_updated,
             unmatched=unmatched,
             unknown=unknown,
+            needs_review=needs_review,
             failed=failed,
         )

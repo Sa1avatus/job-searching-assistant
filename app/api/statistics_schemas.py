@@ -32,4 +32,5 @@ class ApplicationEmailSyncResponse(BaseModel):
     status_updated: int = Field(ge=0)
     unmatched: int = Field(ge=0)
     unknown: int = Field(ge=0)
+    needs_review: int = Field(ge=0)
     failed: int = Field(ge=0)
