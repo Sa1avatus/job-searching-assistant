@@ -71,6 +71,9 @@ from app.api.schemas import (
     EffectiveValueResponse,
     EmailIntegrationResponse,
     EmailIntegrationUpdateRequest,
+    EmailReviewCandidateResponse,
+    EmailReviewItemResponse,
+    EmailReviewResolveRequest,
     EmploymentTypeName,
     EvidenceArtifactResponse,
     ExtractedProfileResponse,
@@ -167,11 +170,14 @@ from app.matching.queue_admin import (
     matching_queue_is_paused,
     set_matching_queue_paused,
 )
+from app.matching.rag_client import create_rag_client
+from app.matching.rag_collections import VACANCY_COLLECTION
 from app.observability.logging import configure_logging
 from app.observability.metrics import metrics
 from app.prompts.registry import PromptRegistry
 from app.security.autofill_decryption import decrypt_autofill_value
 from app.security.autofill_encryption import InvalidAutofillValueEncryption
+from app.services.application_email_events import ApplicationEmailEventService
 from app.services.application_email_sync import (
     ApplicationEmailProvider,
     ApplicationEmailSyncService,
@@ -188,6 +194,7 @@ from app.services.browser_authorization import (
 from app.services.browser_handoff import create_browser_handoff
 from app.services.browser_worker_client import BrowserWorkerClient
 from app.services.company_blacklist import CompanyBlacklistService
+from app.services.email_classification import EmailClassifier
 from app.services.email_file_import import (
     MAX_EMAIL_IMPORT_BYTES,
     MAX_EMAIL_IMPORT_FILES,
@@ -195,6 +202,7 @@ from app.services.email_file_import import (
     UploadedEmailImportProvider,
 )
 from app.services.email_integrations import EmailIntegrationService, InvalidEmailIntegration
+from app.services.email_vacancy_matcher import EmailVacancyMatcher
 from app.services.http_adapters import HttpHeadHunterAdapter, HttpLinkedInAdapter
 from app.services.imap_email_provider import ImapApplicationEmailProvider
 from app.services.job_discovery import (
@@ -246,6 +254,7 @@ from app.storage.database import SessionFactory, session_scope
 from app.storage.documents import DocumentStorage, InvalidDocumentError
 from app.storage.evidence_artifacts import EvidenceArtifactStorage, InvalidEvidenceArtifact
 from app.storage.tables import (
+    ApplicationEmailEventRow,
     ApplicationMatchResultRow,
     ApplicationRow,
     AutofillValueRow,
@@ -542,6 +551,31 @@ def build_user_model_providers(
             base_url=preference.base_url,
         ),
     )
+
+
+def build_email_sync_service(
+    session: Session,
+    http_client: httpx.AsyncClient,
+    user_id: str,
+    settings: Settings,
+) -> ApplicationEmailSyncService:
+    """Build the email sync service with the user's LLM router and RAG matcher."""
+    providers = build_user_model_providers(http_client, session, user_id, settings)
+    router = ModelRouter(providers)
+    prompt_registry = PromptRegistry.load(Path(__file__).parents[2] / "prompts" / "registry.json")
+    classifier = EmailClassifier(router, prompt_registry)
+    rag_client = create_rag_client(
+        service_url=settings.rag_service_url,
+        api_key=(
+            settings.rag_api_key.get_secret_value() if settings.rag_api_key is not None else None
+        ),
+        project_id=settings.rag_project_id,
+        collection=VACANCY_COLLECTION,
+        timeout_seconds=settings.rag_timeout_seconds,
+        enabled=settings.rag_enabled,
+    )
+    matcher = EmailVacancyMatcher(session, rag_client)
+    return ApplicationEmailSyncService(session, classifier=classifier, matcher=matcher)
 
 
 async def model_router() -> AsyncIterator[ModelRouter]:
@@ -927,9 +961,11 @@ async def synchronize_application_emails(
     user_id: str,
     session: Annotated[Session, Depends(session_scope)],
     provider: Annotated[ApplicationEmailProvider, Depends(get_application_email_provider)],
+    http_client: Annotated[httpx.AsyncClient, Depends(llm_http_client)],
 ) -> ApplicationEmailSyncResponse:
     try:
-        summary = await ApplicationEmailSyncService(session).synchronize(user_id, provider)
+        service = build_email_sync_service(session, http_client, user_id, get_settings())
+        summary = await service.synchronize(user_id, provider)
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return ApplicationEmailSyncResponse.model_validate(asdict(summary))
@@ -946,6 +982,7 @@ async def import_application_emails(
         File(description="EML files, an mbox mailbox, or ZIP archives containing EML files"),
     ],
     session: Annotated[Session, Depends(session_scope)],
+    http_client: Annotated[httpx.AsyncClient, Depends(llm_http_client)],
 ) -> ApplicationEmailSyncResponse:
     if not files:
         raise HTTPException(status_code=422, detail="At least one email file is required")
@@ -980,10 +1017,70 @@ async def import_application_emails(
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     try:
-        summary = await ApplicationEmailSyncService(session).synchronize(user_id, provider)
+        service = build_email_sync_service(session, http_client, user_id, get_settings())
+        summary = await service.synchronize(user_id, provider)
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return ApplicationEmailSyncResponse.model_validate(asdict(summary))
+
+
+def _email_review_response(event: ApplicationEmailEventRow) -> EmailReviewItemResponse:
+    candidates = [
+        EmailReviewCandidateResponse(
+            application_id=str(item.get("application_id", "")),
+            vacancy_id=str(item.get("vacancy_id", "")),
+            company=str(item.get("company", "")),
+            title=str(item.get("title", "")),
+            score=float(cast(Any, item.get("score", 0.0))),
+        )
+        for item in (event.candidates or [])
+    ]
+    return EmailReviewItemResponse(
+        id=event.id,
+        subject=event.subject,
+        body=event.body,
+        category=event.category,
+        confidence=event.confidence,
+        outcome=event.outcome,
+        application_id=event.application_id,
+        candidates=candidates,
+        processed_at=event.processed_at,
+    )
+
+
+@app.get("/v1/users/{user_id}/email-review", response_model=list[EmailReviewItemResponse])
+def list_email_review(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> list[EmailReviewItemResponse]:
+    return [
+        _email_review_response(event)
+        for event in ApplicationEmailEventService(session).list_review_items(user_id)
+    ]
+
+
+@app.post(
+    "/v1/users/{user_id}/email-review/{event_id}/resolve",
+    response_model=EmailReviewItemResponse,
+)
+def resolve_email_review(
+    user_id: str,
+    event_id: str,
+    request: EmailReviewResolveRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> EmailReviewItemResponse:
+    try:
+        event = ApplicationEmailEventService(session).resolve(
+            user_id,
+            event_id,
+            action=request.action,
+            application_id=request.application_id,
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _email_review_response(event)
 
 
 @app.post("/v1/llm/models", response_model=LlmModelsResponse)

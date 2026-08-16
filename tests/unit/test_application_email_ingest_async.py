@@ -229,3 +229,60 @@ def test_ingest_deterministic_unmatched_newsletter_is_review() -> None:
             assert result.event.application_id is None
     finally:
         engine.dispose()
+
+
+def test_resolve_link_applies_status_and_clears_review() -> None:
+    engine = _engine()
+    try:
+        with Session(engine) as session:
+            _seed_vacancy(session)
+            service = ApplicationEmailEventService(
+                session,
+                classifier=_FakeClassifier(
+                    EmailClassification(category="application_received", confidence=0.3)
+                ),
+                matcher=_FakeMatcher(_candidate()),
+            )
+            event = asyncio.run(
+                service.ingest_async("user-1", "Ваша заявка", "Мы получили ваше резюме.")
+            ).event
+            assert event.needs_review is True
+            assert session.get(ApplicationRow, "application-1").status == "needs_review"
+
+            resolved = service.resolve(
+                "user-1", event.id, action="link", application_id="application-1"
+            )
+
+            assert resolved.resolved is True
+            assert resolved.needs_review is False
+            assert resolved.application_id == "application-1"
+            assert session.get(ApplicationRow, "application-1").status == "approved"
+    finally:
+        engine.dispose()
+
+
+def test_resolve_dismiss_reverts_best_guess_and_unlinks() -> None:
+    engine = _engine()
+    try:
+        with Session(engine) as session:
+            _seed_vacancy(session)
+            service = ApplicationEmailEventService(
+                session,
+                classifier=_FakeClassifier(
+                    EmailClassification(category="application_received", confidence=0.3)
+                ),
+                matcher=_FakeMatcher(_candidate()),
+            )
+            event = asyncio.run(
+                service.ingest_async("user-1", "Ваша заявка", "Мы получили ваше резюме.")
+            ).event
+            assert session.get(ApplicationRow, "application-1").status == "needs_review"
+
+            resolved = service.resolve("user-1", event.id, action="dismiss")
+
+            assert resolved.resolved is True
+            assert resolved.needs_review is False
+            assert resolved.application_id is None
+            assert session.get(ApplicationRow, "application-1").status == "submitted"
+    finally:
+        engine.dispose()

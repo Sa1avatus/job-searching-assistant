@@ -439,6 +439,31 @@ class ReviewItemResponse(ApplicationResponse):
     key_skills: list[str]
 
 
+class EmailReviewCandidateResponse(BaseModel):
+    application_id: str
+    vacancy_id: str
+    company: str
+    title: str
+    score: float
+
+
+class EmailReviewItemResponse(BaseModel):
+    id: str
+    subject: str | None
+    body: str | None
+    category: str | None
+    confidence: float | None
+    outcome: str
+    application_id: str | None
+    candidates: list[EmailReviewCandidateResponse]
+    processed_at: datetime
+
+
+class EmailReviewResolveRequest(BaseModel):
+    action: Literal["link", "dismiss"]
+    application_id: str | None = None
+
+
 class ExtractedProfileResponse(BaseModel):
     skills: list[str]
     experience_summary: str

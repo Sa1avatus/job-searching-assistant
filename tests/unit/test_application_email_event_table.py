@@ -26,6 +26,8 @@ def test_application_email_event_row_stores_review_fields() -> None:
         "body",
         "needs_review",
         "candidates",
+        "resolved",
+        "previous_status",
     }
 
     assert isinstance(ApplicationEmailEventRow.__table__.c.id.type, String)

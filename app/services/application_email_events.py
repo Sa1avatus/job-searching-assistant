@@ -173,6 +173,8 @@ class ApplicationEmailEventService:
         existing = self._find_by_fingerprint(user_id, fingerprint)
 
         if existing is not None:
+            if existing.resolved:
+                return ApplicationEmailEventResult(existing, created=False, status_updated=False)
             event_changed = self._refresh_existing(
                 existing,
                 application_id=application_id,
@@ -373,10 +375,85 @@ class ApplicationEmailEventService:
             return False
         previous_status = application.status
         application.status = _REVIEW_STATUS
+        event.previous_status = previous_status
         self._timeline.record_status_change(
             application.id,
             previous_status,
             _REVIEW_STATUS,
+            source="email_event",
+        )
+        return True
+
+    # ── Review resolution ─────────────────────────────────────────────────
+
+    def resolve(
+        self,
+        user_id: str,
+        event_id: str,
+        *,
+        action: str,
+        application_id: str | None = None,
+    ) -> ApplicationEmailEventRow:
+        """Resolve a review item: link it to an application, or dismiss it."""
+        event = self._session.get(ApplicationEmailEventRow, event_id)
+        if event is None or event.user_id != user_id:
+            raise EntityNotFoundError("Email event not found")
+        if event.resolved:
+            return event
+        target_status = status_for_category(EmailCategory(event.category or "other"))
+
+        if action == "link":
+            if application_id is None:
+                raise ValueError("application_id is required when linking")
+            self._require_owned_application(user_id, application_id)
+            if event.application_id != application_id:
+                self._revert_needs_review(event)
+                event.application_id = application_id
+                event.status_applied = False
+            if target_status is not None:
+                self._apply_status_to(application_id, target_status)
+                event.status_applied = True
+            else:
+                self._revert_needs_review(event)
+        elif action == "dismiss":
+            self._revert_needs_review(event)
+            event.application_id = None
+        else:
+            raise ValueError(f"Unsupported resolve action: {action}")
+
+        event.resolved = True
+        event.needs_review = False
+        self._session.commit()
+        return event
+
+    def _revert_needs_review(self, event: ApplicationEmailEventRow) -> None:
+        if event.application_id is None:
+            return
+        application = self._session.get(ApplicationRow, event.application_id)
+        if application is None or application.status != _REVIEW_STATUS:
+            return
+        previous = event.previous_status or "saved"
+        application.status = previous
+        event.previous_status = None
+        self._timeline.record_status_change(
+            application.id,
+            _REVIEW_STATUS,
+            previous,
+            source="email_event",
+        )
+
+    def _apply_status_to(self, application_id: str, target_status: str) -> bool:
+        application = self._session.get(ApplicationRow, application_id)
+        if application is None:
+            return False
+        previous = application.status
+        if previous == target_status:
+            return False
+        application.status = target_status
+        self._timeline.record_status_change(
+            application_id,
+            previous,
+            target_status,
             source="email_event",
         )
         return True

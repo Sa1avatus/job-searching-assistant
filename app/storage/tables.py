@@ -522,6 +522,8 @@ class ApplicationEmailEventRow(Base):
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
     candidates: Mapped[list[dict[str, object]] | None] = mapped_column(JSON, nullable=True)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    previous_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
 
 class ApplicationTimelineEventRow(Base):
