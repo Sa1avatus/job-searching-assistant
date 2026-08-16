@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     # calls on claims that don't hit a strong entailed on the top candidates.
     matching_entailment_max_candidates: int = Field(default=2, ge=1, le=10)
     matching_entailment_max_tokens: int = Field(default=512, ge=64, le=8192)
-    matching_entailment_context_size: int = Field(default=4096, ge=512, le=32768)
+    matching_entailment_context_size: int = Field(default=8192, ge=512, le=32768)
     # Pairs per batched entailment LLM call (1 disables batching). The batch prompt
     # evaluates several (claim, evidence) pairs in one request, amortizing
     # per-request overhead; batches are packed to fit the context window.
@@ -70,13 +70,13 @@ class Settings(BaseSettings):
     # aligned with decompose/entailment so Ollama does not reload the model on
     # every extraction→decompose stage switch (a 3GB model reload costs 10-30s and
     # queues decompose/entailment calls into the model timeout).
-    matching_extraction_context_size: int = Field(default=4096, ge=512, le=32768)
-    matching_extraction_max_tokens: int = Field(default=4096, ge=64, le=16384)
+    matching_extraction_context_size: int = Field(default=8192, ge=512, le=32768)
+    matching_extraction_max_tokens: int = Field(default=8192, ge=64, le=16384)
     matching_decompose_max_tokens: int = Field(default=2048, ge=64, le=8192)
     # MUST match matching_entailment_context_size: Ollama reloads the model whenever
     # num_ctx changes, and reloading a 3GB model between every decompose/entailment
     # group dominated local-model matching latency.
-    matching_decompose_context_size: int = Field(default=4096, ge=512, le=32768)
+    matching_decompose_context_size: int = Field(default=8192, ge=512, le=32768)
     max_document_bytes: int = Field(default=5_242_880, ge=1_024, le=20_971_520)
     max_evidence_bytes: int = Field(default=10_485_760, ge=1_024, le=52_428_800)
     retention_days: int = Field(default=30, ge=1, le=3650)

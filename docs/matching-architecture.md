@@ -225,10 +225,15 @@ Measures already in place:
 - **Deterministic decomposition**: single-skill requirements (no conjunctions, quantifiers,
   or duration markers) decompose into one atomic claim without an LLM call.
 - **Per-task inference budgets**: entailment uses
-  `APP_MATCHING_ENTAILMENT_MAX_TOKENS`/`APP_MATCHING_ENTAILMENT_CONTEXT_SIZE` and
-  decomposition uses `APP_MATCHING_DECOMPOSE_MAX_TOKENS`/`APP_MATCHING_DECOMPOSE_CONTEXT_SIZE`.
-  The two context sizes must match — Ollama reloads the model on every `num_ctx` change,
-  and reloading a multi-GB model between stages dominated local latency.
+  `APP_MATCHING_ENTAILMENT_MAX_TOKENS`/`APP_MATCHING_ENTAILMENT_CONTEXT_SIZE`,
+  decomposition uses `APP_MATCHING_DECOMPOSE_MAX_TOKENS`/`APP_MATCHING_DECOMPOSE_CONTEXT_SIZE`,
+  and extraction uses `APP_MATCHING_EXTRACTION_MAX_TOKENS`/`APP_MATCHING_EXTRACTION_CONTEXT_SIZE`.
+  All three context sizes must match (default 8192) — Ollama reloads the model on every
+  `num_ctx` change, and reloading a multi-GB model between stages dominated local latency.
+  Extraction is the largest consumer: `num_ctx` is the shared input+output window, so a dense
+  JD (~2.5k input tokens) under a 4096 window truncates the extraction JSON
+  (`finish_reason='length'` → `NoModelAvailableError` → `UngroundedExtractionError` → retry);
+  8192 leaves ~5k output tokens for a typical long vacancy.
 - **Batched entailment** (`APP_MATCHING_ENTAILMENT_BATCH_SIZE`, default 5): concurrent
   (claim, evidence) pairs are collected by a background flusher inside
   `RouterEvidenceEvaluator` and evaluated in one LLM call per batch, cutting the actual

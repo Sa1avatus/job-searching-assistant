@@ -16,6 +16,17 @@ semantic versioning for new releases; older historical version numbers are prese
   (`recruitment:matching:queue:paused`) that the matching worker checks before claiming each task,
   so a runaway queue can be halted and drained without restarting the worker.
 
+### Changed
+
+- **Raised matching inference budgets for dense vacancies.** Extraction `max_tokens` and the
+  extraction/decompose/entailment context windows (`APP_MATCHING_EXTRACTION_MAX_TOKENS`,
+  `APP_MATCHING_EXTRACTION_CONTEXT_SIZE`, `APP_MATCHING_DECOMPOSE_CONTEXT_SIZE`,
+  `APP_MATCHING_ENTAILMENT_CONTEXT_SIZE`) are now 8192 (was 4096). `num_ctx` is the shared
+  input+output window, so a long job description under a 4096 window truncated the extraction
+  JSON (`finish_reason='length'` → `NoModelAvailableError` → `UngroundedExtractionError`),
+  which failed and retried the run. All three contexts stay equal to avoid Ollama model
+  reloads on stage boundaries.
+
 ## [1.5.5] — 2026-08-15
 
 ### Features
