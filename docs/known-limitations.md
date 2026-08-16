@@ -105,5 +105,6 @@ verified beyond controlled fixtures.
 - The personal dashboard (`/dashboard`) drives hh.ru, LinkedIn, and Greenhouse discovery. LinkedIn
   search still requires an explicitly enabled connector and a captured signed-in session.
 - Starting a visible sign-in browser from the dashboard is intentionally restricted to local,
-  non-production installations. An unfinished sign-in window is held in API process memory and
-  must be started again if that process restarts; already saved encrypted sessions remain durable.
+  non-production installations. An unfinished sign-in window is held in the browser worker's
+  process memory and must be started again if that worker restarts; already saved encrypted
+  sessions remain durable.
