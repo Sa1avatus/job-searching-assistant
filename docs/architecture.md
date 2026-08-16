@@ -21,6 +21,7 @@ flowchart LR
     BrowserWorker["Playwright browser worker"] --> DB
     BrowserWorker --> Sites["Approved external sites"]
     API --> BrowserState["Encrypted local artifacts"]
+    BrowserWorker --> BrowserState
 ```
 
 PostgreSQL owns business truth and durable task history. Redis coordinates claims and execution
@@ -79,8 +80,9 @@ evaluated rollout.
 Docker Compose defines PostgreSQL, Redis, OpenSearch, API, dispatcher, matching worker, retention,
 an opt-in browser worker, and an opt-in GPU embedding service. API and infrastructure ports are published on
 loopback. The independent reranker is configured as an external HTTP dependency and is not owned
-or started by JSA Compose. The API image includes the visible local browser used to capture site
-sessions; the browser worker owns background automation.
+or started by JSA Compose. The browser worker owns both background automation and the visible
+local login browser used to capture site sessions (opened on an Xvfb display and exposed over
+noVNC at `:7900`); the API image no longer carries browser binaries.
 
 The shared external Docker network `local-code-worker-network` lets the application reach the local
 Worker's OpenAI-compatible endpoint. `scripts/setup.ps1` ensures the network exists without
