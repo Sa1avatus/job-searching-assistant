@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     # Optional model name for entailment evaluation only (e.g. a small local
     # model for classification). Empty = use the user's configured model.
     matching_entailment_model: str = ""
+    # Extraction reads the full vacancy/candidate source text. Keep its context
+    # aligned with decompose/entailment so Ollama does not reload the model on
+    # every extraction→decompose stage switch (a 3GB model reload costs 10-30s and
+    # queues decompose/entailment calls into the model timeout).
+    matching_extraction_context_size: int = Field(default=4096, ge=512, le=32768)
+    matching_extraction_max_tokens: int = Field(default=4096, ge=64, le=16384)
     matching_decompose_max_tokens: int = Field(default=2048, ge=64, le=8192)
     # MUST match matching_entailment_context_size: Ollama reloads the model whenever
     # num_ctx changes, and reloading a 3GB model between every decompose/entailment

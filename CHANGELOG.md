@@ -65,6 +65,12 @@ semantic versioning for new releases; older historical version numbers are prese
   extraction and decomposition stay on the user's configured model. Cache keys
   incorporate the routed model, so switching it never reuses results produced by
   another model.
+- Extraction now uses an explicit context and output budget
+  (`APP_MATCHING_EXTRACTION_CONTEXT_SIZE`/`APP_MATCHING_EXTRACTION_MAX_TOKENS`,
+  both default 4096) aligned with decompose/entailment, so Ollama stops reloading the
+  model on every extraction→decompose stage switch. The previous implicit default
+  (`num_ctx=8192`, `num_predict=16384`) caused 10-30s model reloads per stage switch and
+  queued decompose/entailment calls into the 120s model timeout.
 - Version markers are now consistent: `VERSION`, `README`, `README.ru`, and
   `pyproject.toml` all report 1.5.5.
 - The OpenAI-compatible provider now adapts to servers that only support `text` and

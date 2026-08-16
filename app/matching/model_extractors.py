@@ -104,11 +104,15 @@ class RouterVacancyRequirementExtractor:
         prompt_registry: PromptRegistry,
         *,
         timeout_seconds: float = 60,
+        context_size: int = 4096,
+        max_output_tokens: int = 4096,
         model_identity: str | None = None,
     ) -> None:
         self._router = router
         self._prompt_registry = prompt_registry
         self._timeout_seconds = timeout_seconds
+        self._context_size = context_size
+        self._max_output_tokens = max_output_tokens
         # Instance attribute so extraction_run_id becomes model-aware: switching the
         # resolved LLM model invalidates cached extraction rows instead of reusing them.
         self.model_name = model_identity or self.model_name
@@ -128,6 +132,8 @@ class RouterVacancyRequirementExtractor:
                 prompt=prompt,
                 max_cost_usd=0.05,
                 timeout_seconds=self._timeout_seconds,
+                context_size=self._context_size,
+                max_output_tokens=self._max_output_tokens,
             ),
             VacancyExtraction,
         )
@@ -154,11 +160,15 @@ class RouterCandidateEvidenceExtractor:
         prompt_registry: PromptRegistry,
         *,
         timeout_seconds: float = 60,
+        context_size: int = 4096,
+        max_output_tokens: int = 4096,
         model_identity: str | None = None,
     ) -> None:
         self._router = router
         self._prompt_registry = prompt_registry
         self._timeout_seconds = timeout_seconds
+        self._context_size = context_size
+        self._max_output_tokens = max_output_tokens
         # Instance attribute so extraction_run_id becomes model-aware (see above).
         self.model_name = model_identity or self.model_name
 
@@ -185,6 +195,8 @@ class RouterCandidateEvidenceExtractor:
                 prompt=prompt,
                 max_cost_usd=0.05,
                 timeout_seconds=self._timeout_seconds,
+                context_size=self._context_size,
+                max_output_tokens=self._max_output_tokens,
             ),
             CandidateEvidenceExtraction,
         )
