@@ -92,7 +92,7 @@ if (-not $apiKeyLine -or $apiKeyLine -eq "APP_API_KEY=") {
     $apiKey = [Convert]::ToBase64String($randomBytes).Replace("+", "-").Replace("/", "_")
     Set-EnvValue -Name "APP_API_KEY" -Value $apiKey
 }
-Set-EnvValue -Name "APP_ENVIRONMENT" -Value "production"
+Set-EnvValue -Name "APP_ENVIRONMENT" -Value "development"
 
 if ($ConfigureOnly) {
     Write-Host "LAN API authentication is configured in the local .env file."

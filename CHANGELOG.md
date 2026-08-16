@@ -22,6 +22,12 @@ semantic versioning for new releases; older historical version numbers are prese
   meter) was being pushed to the middle of the card by a duplicate `card.append(top, …)`
   call, so the badge and match score landed below the attribute tags and key skills instead
   of at the top like the search card. The topline is now the first child again.
+- The dashboard's visible sign-in (`browser-sessions/{site}/start`) was always rejected with
+  403 on local installs because the Compose file hardcoded `APP_ENVIRONMENT=production`,
+  which is reserved for the local-only visible-browser login guard. The value is now
+  overridable (default `production`) and the local setup script writes `development`, so the
+  sign-in window opens on a local install while a production deployment keeps its API-key
+  requirement and browser-login block.
 
 ### Performance
 
