@@ -154,7 +154,7 @@ class RouterVacancyRequirementExtractor:
             requirement_count=len(extraction.requirements),
             requirements=[
                 {
-                    "text": r.requirement_text[:200],
+                    "text": r.text[:200],
                     "type": r.requirement_type,
                     "importance": r.importance,
                     "fragment": r.source_fragment[:200],
