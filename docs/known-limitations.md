@@ -91,9 +91,11 @@ verified beyond controlled fixtures.
 - Skill normalization resolves common aliases (Postgres→postgresql, K8s→kubernetes) during
   extraction. Unknown skills pass through unchanged. Custom aliases can be injected via
   `SkillNormalizer(aliases={...})`.
-- Email classification uses regex patterns for EN and RU. Ambiguous emails (both rejection and
-  next-stage signals, or no signals) produce `UNKNOWN` outcome and appear in the review queue.
-  Automatic status updates only happen for high-confidence outcomes.
+- Email classification is LLM-backed (via the user's materials model) with RAG retrieval to
+  match an email to a saved vacancy; the regex classifier is the fallback when the LLM or RAG
+  is unavailable. Ambiguous emails (low classification confidence, or no unambiguous vacancy)
+  get the `needs_review` status and appear in the email review queue for the user to link or
+  dismiss. Automatic status updates only happen for high-confidence, unambiguous matches.
 - EML/MBOX/ZIP file import providers skip corrupted files gracefully. ZIP import rejects path
   traversal attempts (`../..`, absolute paths) and enforces decompression size limits.
 - Human-action/CAPTCHA checkpoints and encrypted Playwright storage state are durable. The worker

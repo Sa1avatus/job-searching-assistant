@@ -16,6 +16,17 @@ semantic versioning for new releases; older historical version numbers are prese
   (`recruitment:matching:queue:paused`) that the matching worker checks before claiming each task,
   so a runaway queue can be halted and drained without restarting the worker.
 
+- **RAG + LLM email processing with a review queue.** The «Синхронизировать почту» and email
+  import flows now classify each incoming message with the user's LLM and match it to a saved
+  vacancy through semantic RAG retrieval over the rag-platform `vacancies` collection. Confident,
+  unambiguous matches update the vacancy status automatically (application-received → `approved`
+  «Принята», rejection → `employer_rejected`, interview → `interview`, offer → `offer`); ambiguous
+  messages get a new `needs_review` status and appear in a dashboard review panel where the user can
+  link them to a vacancy or dismiss them. Backed by `GET /v1/users/{id}/email-review` and
+  `POST /v1/users/{id}/email-review/{event_id}/resolve`, plus new `category`/`confidence`/
+  `subject`/`body`/`needs_review`/`candidates`/`resolved`/`previous_status` columns (migrations
+  0036/0037) and the `classify_application_email` prompt.
+
 ### Changed
 
 - **Raised matching inference budgets for dense vacancies.** Extraction `max_tokens` and the
@@ -27,7 +38,12 @@ semantic versioning for new releases; older historical version numbers are prese
   which failed and retried the run. All three contexts stay equal to avoid Ollama model
   reloads on stage boundaries.
 
-## [1.5.5] — 2026-08-15
+- **Application-received emails now advance to `approved` («Принята»).** The deterministic regex
+  classifier gained Russian patterns for «мы получили ваше резюме» and similar acknowledgements,
+  and both the regex and LLM paths map `application_received` to `approved` instead of leaving the
+  status untouched.
+
+## [1.5.6] — 2026-08-16
 
 ### Features
 

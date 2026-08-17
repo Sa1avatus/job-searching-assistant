@@ -106,8 +106,12 @@ files, or a mixture of these formats. The combined upload is limited to 50 MB an
 bounded to 500 messages per import. Attached EML messages are classified separately, so a forwarded
 or exported rejection can update the matching application without its text being merged into the
 outer message. Plain-text and HTML-only bodies are supported; the sender display name may be used as
-a conservative company hint when linking a message. The completion summary distinguishes unknown
-messages from recognized messages that could not be linked safely. Uploaded source files are
+a conservative company hint when linking a message. Incoming mail is classified by an LLM and
+matched to a saved vacancy through semantic RAG retrieval: confident, unambiguous matches update
+the vacancy status automatically (e.g. an application-received note sets it to "accepted", a
+rejection to "employer rejected"). The completion summary distinguishes unknown messages from
+recognized messages that could not be linked safely; ambiguous emails land in the **review queue**
+with a `needs_review` status for the user to link or dismiss. Uploaded source files are
 processed in memory (with a temporary file only while reading mbox data) and are not retained by the
 application.
 
