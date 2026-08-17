@@ -743,38 +743,71 @@ def debug_logs(
     since: str | None = None,
     search: str | None = None,
 ) -> Response:
-    """Return recent structured log entries for the debug tab."""
+    """Return recent structured log entries for the debug tab.
+
+    Merges logs from the in-process buffer (API) and the shared Redis
+    buffer (all workers and the API).
+    """
     from app.observability.log_buffer import get_log_buffer
+    from app.observability.redis_log_forwarder import read_redis_logs
 
     valid_levels = {"verbose", "debug", "info", "warning", "error", "critical", "major"}
     if level not in valid_levels:
         valid_str = ", ".join(sorted(valid_levels))
-        raise HTTPException(status_code=422, detail=f"Invalid level. Use: {valid_str}")
+        raise HTTPException(
+            status_code=422, detail=f"Invalid level. Use: {valid_str}"
+        )
     if not 1 <= limit <= 5000:
         raise HTTPException(status_code=422, detail="limit must be 1..5000")
 
-    entries = get_log_buffer().query(
-        min_level=level,
-        limit=limit,
-        since=since,
-        search=search,
+    # In-process buffer (API events)
+    local_entries = get_log_buffer().query(
+        min_level=level, limit=limit, since=since, search=search
     )
+
+    # Redis shared buffer (all workers + API)
+    redis_entries = read_redis_logs(
+        min_level=level, limit=limit, since=since, search=search
+    )
+
+    # Merge: convert both to unified format, deduplicate by timestamp+event
+    seen: set[str] = set()
+    merged: list[dict[str, Any]] = []
+
+    for entry in local_entries:
+        key = f"{entry.timestamp}:{entry.event}"
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(
+            {
+                "timestamp": entry.timestamp,
+                "level": entry.level,
+                "event": entry.event,
+                "logger": entry.logger,
+                "message": entry.message,
+                "fields": entry.fields,
+                "process": "api",
+            }
+        )
+
+    for entry in redis_entries:
+        key = f"{entry.get('timestamp', '')}:{entry.get('event', '')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(entry)
+
+    # Sort by timestamp descending, trim to limit
+    merged.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+    merged = merged[:limit]
+
     import json
 
     payload = {
-        "count": len(entries),
+        "count": len(merged),
         "level_filter": level,
-        "entries": [
-            {
-                "timestamp": e.timestamp,
-                "level": e.level,
-                "event": e.event,
-                "logger": e.logger,
-                "message": e.message,
-                "fields": e.fields,
-            }
-            for e in entries
-        ],
+        "entries": merged,
     }
     return Response(
         content=json.dumps(payload, ensure_ascii=False, default=str),
@@ -784,10 +817,15 @@ def debug_logs(
 
 @app.post("/v1/debug/logs/clear", include_in_schema=False)
 def debug_logs_clear() -> dict[str, str]:
-    """Clear the in-process log buffer."""
+    """Clear both in-process and Redis log buffers."""
     from app.observability.log_buffer import get_log_buffer
+    from app.observability.redis_log_forwarder import _REDIS_LOG_KEY, _get_redis
 
     get_log_buffer().clear()
+    client = _get_redis()
+    if client is not None:
+        with suppress(Exception):
+            client.delete(_REDIS_LOG_KEY)
     return {"status": "cleared"}
 
 

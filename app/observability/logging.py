@@ -7,6 +7,7 @@ from typing import Any
 import structlog
 
 from app.observability.log_buffer import log_buffer_processor
+from app.observability.redis_log_forwarder import redis_log_processor
 
 SENSITIVE_KEY_PARTS = ("api_key", "authorization", "cookie", "password", "secret", "token")
 
@@ -28,6 +29,7 @@ def configure_logging() -> None:
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.processors.add_log_level,
             log_buffer_processor,
+            redis_log_processor,
             structlog.processors.JSONRenderer(),
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),

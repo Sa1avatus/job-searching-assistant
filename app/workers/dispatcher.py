@@ -28,6 +28,7 @@ from app.storage.tables import (
 )
 from app.storage.task_repository import ClaimedTask, SqlTaskRepository
 from app.workers.coordination import RedisCoordinationClient, RedisCoordinator, WorkerLease
+from app.workflows.task import InvalidTaskTransition
 
 logger = structlog.get_logger(__name__)
 
@@ -200,27 +201,34 @@ class DurableTaskDispatcher:
             with self._session_factory() as session:
                 repository = SqlTaskRepository(session)
                 if outcome.state is TaskState.RETRY_SCHEDULED:
-                    if claimed_task.attempt_number >= self._settings.worker_max_attempts:
-                        repository.finish_claim(
-                            claimed_task.task_id,
-                            new_state=TaskState.FAILED,
-                            reason="task exhausted bounded retry attempts",
-                            worker=self._worker_name,
-                            evidence=outcome.evidence,
-                        )
-                    else:
-                        retry_delay = min(
-                            self._settings.worker_retry_seconds
-                            * (2 ** max(claimed_task.attempt_number - 1, 0)),
-                            300,
-                        )
-                        repository.retry_claim(
-                            claimed_task.task_id,
-                            worker=self._worker_name,
-                            reason=outcome.reason,
-                            delay_seconds=retry_delay,
-                            evidence=outcome.evidence,
-                            new_priority=self._retry_priority,
+                    try:
+                        if claimed_task.attempt_number >= self._settings.worker_max_attempts:
+                            repository.finish_claim(
+                                claimed_task.task_id,
+                                new_state=TaskState.FAILED,
+                                reason="task exhausted bounded retry attempts",
+                                worker=self._worker_name,
+                                evidence=outcome.evidence,
+                            )
+                        else:
+                            retry_delay = min(
+                                self._settings.worker_retry_seconds
+                                * (2 ** max(claimed_task.attempt_number - 1, 0)),
+                                300,
+                            )
+                            repository.retry_claim(
+                                claimed_task.task_id,
+                                worker=self._worker_name,
+                                reason=outcome.reason,
+                                delay_seconds=retry_delay,
+                                evidence=outcome.evidence,
+                                new_priority=self._retry_priority,
+                            )
+                    except InvalidTaskTransition as transition_error:
+                        logger.error(
+                            "dispatcher_invalid_transition_on_retry",
+                            task_id=claimed_task.task_id,
+                            transition_error=str(transition_error),
                         )
                 else:
                     evidence = outcome.evidence
@@ -248,48 +256,64 @@ class DurableTaskDispatcher:
                                 commit=False,
                             )
                             evidence = (*evidence, f"artifact:{artifact.id}")
-                    repository.finish_claim(
-                        claimed_task.task_id,
-                        new_state=outcome.state,
-                        reason=outcome.reason,
-                        worker=self._worker_name,
-                        evidence=evidence,
-                    )
+                    try:
+                        repository.finish_claim(
+                            claimed_task.task_id,
+                            new_state=outcome.state,
+                            reason=outcome.reason,
+                            worker=self._worker_name,
+                            evidence=evidence,
+                        )
+                    except InvalidTaskTransition as transition_error:
+                        logger.error(
+                            "dispatcher_invalid_transition_on_success",
+                            task_id=claimed_task.task_id,
+                            desired_state=outcome.state.value,
+                            transition_error=str(transition_error),
+                        )
                     if self._on_claim_completed is not None:
                         self._on_claim_completed(claimed_task.task_id, outcome.state)
         except Exception as error:
             with self._session_factory() as session:
                 repository = SqlTaskRepository(session)
                 is_non_retryable = isinstance(error, NoModelAvailableError) and not error.retryable
-                if is_non_retryable:
-                    repository.finish_claim(
-                        claimed_task.task_id,
-                        new_state=TaskState.FAILED,
-                        reason="task handler failed with a non-retryable model error",
-                        worker=self._worker_name,
-                        evidence=(type(error).__name__, "retryable:false"),
-                    )
-                elif claimed_task.attempt_number >= self._settings.worker_max_attempts:
-                    repository.finish_claim(
-                        claimed_task.task_id,
-                        new_state=TaskState.FAILED,
-                        reason="task exhausted bounded retry attempts",
-                        worker=self._worker_name,
-                        evidence=(type(error).__name__,),
-                    )
-                else:
-                    retry_delay = min(
-                        self._settings.worker_retry_seconds
-                        * (2 ** max(claimed_task.attempt_number - 1, 0)),
-                        300,
-                    )
-                    repository.retry_claim(
-                        claimed_task.task_id,
-                        worker=self._worker_name,
-                        reason="task handler failed and was scheduled for bounded retry",
-                        delay_seconds=retry_delay,
-                        evidence=(type(error).__name__,),
-                        new_priority=self._retry_priority,
+                try:
+                    if is_non_retryable:
+                        repository.finish_claim(
+                            claimed_task.task_id,
+                            new_state=TaskState.FAILED,
+                            reason="task handler failed with a non-retryable model error",
+                            worker=self._worker_name,
+                            evidence=(type(error).__name__, "retryable:false"),
+                        )
+                    elif claimed_task.attempt_number >= self._settings.worker_max_attempts:
+                        repository.finish_claim(
+                            claimed_task.task_id,
+                            new_state=TaskState.FAILED,
+                            reason="task exhausted bounded retry attempts",
+                            worker=self._worker_name,
+                            evidence=(type(error).__name__,),
+                        )
+                    else:
+                        retry_delay = min(
+                            self._settings.worker_retry_seconds
+                            * (2 ** max(claimed_task.attempt_number - 1, 0)),
+                            300,
+                        )
+                        repository.retry_claim(
+                            claimed_task.task_id,
+                            worker=self._worker_name,
+                            reason="task handler failed and was scheduled for bounded retry",
+                            delay_seconds=retry_delay,
+                            evidence=(type(error).__name__,),
+                            new_priority=self._retry_priority,
+                        )
+                except InvalidTaskTransition as transition_error:
+                    logger.error(
+                        "dispatcher_invalid_transition_on_error",
+                        task_id=claimed_task.task_id,
+                        original_error=type(error).__name__,
+                        transition_error=str(transition_error),
                     )
         finally:
             claim_heartbeat.cancel()

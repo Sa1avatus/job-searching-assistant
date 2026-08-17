@@ -4604,6 +4604,7 @@
         const ts = formatTimestamp(e.timestamp);
         const level = e.level.toUpperCase().padEnd(8);
         const logger = e.logger ? `[${e.logger}]` : '';
+        const proc = e.process ? `{${e.process}}` : '';
         let detail = '';
         if (e.fields && Object.keys(e.fields).length > 0) {
           const skip = new Set(['event', 'level', 'timestamp', 'logger']);
@@ -4617,7 +4618,7 @@
             detail = `\n  ${JSON.stringify(extra, null, 0)}`;
           }
         }
-        return `<div style="margin-bottom:2px;white-space:pre-wrap;word-break:break-all;border-left:3px solid ${color};padding-left:6px;"><span style="color:#555;">${ts}</span> <span style="color:${color};font-weight:bold;">${level}</span> <span style="color:#888;">${logger}</span> ${e.message}${detail ? `<span style="color:#555;">${detail}</span>` : ''}</div>`;
+        return `<div style="margin-bottom:2px;white-space:pre-wrap;word-break:break-all;border-left:3px solid ${color};padding-left:6px;"><span style="color:#555;">${ts}</span> <span style="color:${color};font-weight:bold;">${level}</span> <span style="color:#e5c07b;">${proc}</span> <span style="color:#888;">${logger}</span> ${e.message}${detail ? `<span style="color:#555;">${detail}</span>` : ''}</div>`;
       }
 
       async function fetchLogs(append = false) {
