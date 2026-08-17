@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 
+import structlog
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -20,6 +21,8 @@ from app.storage.tables import (
     WorkflowTaskRow,
 )
 from app.storage.task_repository import SqlTaskRepository
+
+logger = structlog.get_logger(__name__)
 
 MATCHING_QUEUE_NAME = "matching"
 INTERACTIVE_MATCHING_PRIORITY = 100

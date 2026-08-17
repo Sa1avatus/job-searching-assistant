@@ -82,12 +82,23 @@ class ModelRouter:
                 retryable_results.append(False)
                 continue
             try:
+                import time as _time
+
+                start = _time.monotonic()
                 provider_request = replace(
                     request,
                     response_schema=output_schema.model_json_schema(),
                 )
                 payload = await asyncio.wait_for(
                     provider.complete(provider_request), timeout=request.timeout_seconds
+                )
+                duration_s = round(_time.monotonic() - start, 3)
+                logger.debug(
+                    "llm_request",
+                    provider=provider.name,
+                    task_name=request.task_name,
+                    task_class=request.task_class.value,
+                    duration_s=duration_s,
                 )
                 return output_schema.model_validate(payload)
             except Exception as error:

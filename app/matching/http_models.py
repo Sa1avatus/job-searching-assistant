@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import time
 from uuid import UUID
 
 import httpx
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from app.matching.semantic import (
@@ -10,6 +12,8 @@ from app.matching.semantic import (
     RerankedCandidate,
     RetrievalCandidate,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 class MatchingModelServiceError(RuntimeError):
@@ -87,8 +91,16 @@ class HttpEmbeddingClient:
                 dimensions=self.dimensions,
                 normalization_method=self.normalization_method,
             )
+        start = time.monotonic()
         response = await self._http_client.post("/v1/embeddings", json={"texts": list(texts)})
+        duration_s = round(time.monotonic() - start, 3)
         _require_success(response, operation="embedding")
+        logger.debug(
+            "embedding_request",
+            count=len(texts),
+            status_code=response.status_code,
+            duration_s=duration_s,
+        )
         payload = _EmbeddingResponse.model_validate(response.json())
         if len(payload.vectors) != len(texts):
             raise MatchingModelServiceError("Embedding response count does not match request")
@@ -130,6 +142,7 @@ class HttpReranker:
         candidate_by_id = {candidate.evidence_id: candidate for candidate in candidates}
         if len(candidate_by_id) != len(candidates):
             raise MatchingModelServiceError("Reranker candidates must have unique evidence IDs")
+        start = time.monotonic()
         try:
             response = await self._http_client.post(
                 "/v1/rerank",
@@ -156,6 +169,13 @@ class HttpReranker:
                 "Reranker transport failed", code="transport_error"
             ) from error
         _require_success(response, operation="reranking", include_body=False)
+        duration_s = round(time.monotonic() - start, 3)
+        logger.debug(
+            "reranker_request",
+            candidates=len(candidates),
+            status_code=response.status_code,
+            duration_s=duration_s,
+        )
         try:
             payload = _RerankResponse.model_validate(response.json())
         except (ValueError, ValidationError) as error:

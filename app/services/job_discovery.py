@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -42,6 +43,8 @@ from app.services.vacancy_metadata import (
     summarize_vacancy,
 )
 from app.storage.tables import ApplicationRow, CvFileRow, UserRow, VacancyRow
+
+logger = structlog.get_logger(__name__)
 
 
 class LinkedInSessionRequiredError(RuntimeError):

@@ -50,6 +50,10 @@ class MatchingRuntime:
         self._redis_client = redis_client
 
     async def run(self, application_id: str) -> None:
+        import structlog
+
+        logger = structlog.get_logger(__name__)
+        logger.info("matching_run_started", application_id=application_id)
         with self._session_factory() as session:
             application = session.get(ApplicationRow, application_id)
             if application is None:

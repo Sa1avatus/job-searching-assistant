@@ -22,6 +22,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+import structlog
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -33,6 +34,8 @@ from app.prompts.application_materials import (
 )
 from app.services.recruitment import EntityNotFoundError, RecruitmentService
 from app.storage.tables import ApplicationRow, VacancyRow
+
+logger = structlog.get_logger(__name__)
 
 
 class NoVerifiedFactsError(RuntimeError):
@@ -126,6 +129,7 @@ class MaterialsGenerationService:
         force_replace_cover_letter: bool = False,
         timeout_seconds: float = 45,
     ) -> GeneratedMaterials:
+        logger.info("materials_generation_started", application_id=application_id)
         application = self._session.get(ApplicationRow, application_id)
         if application is None:
             raise EntityNotFoundError("Application not found")

@@ -7,9 +7,12 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
+import structlog
 from playwright.async_api import Page
 
 from app.browser.engine import PlaywrightEngine
+
+logger = structlog.get_logger(__name__)
 
 BrowserSiteKey = Literal["headhunter", "linkedin"]
 LOGIN_URLS: dict[BrowserSiteKey, str] = {

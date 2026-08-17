@@ -13,8 +13,12 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
+import structlog
+
 from app.services.application_email_sync import ApplicationEmailMessage
 from app.services.imap_email_provider import _decode_header_value
+
+logger = structlog.get_logger(__name__)
 
 _SUPPORTED_UPLOAD_SUFFIXES = frozenset({".eml", ".mbox", ".zip"})
 _DEFAULT_MAX_FILES = 100
@@ -129,11 +133,22 @@ class MboxImportProvider:
                             max_messages=self._max_messages - len(messages),
                         )
                     )
-                except Exception:  # noqa: BLE001
+                except Exception as error:  # noqa: BLE001
+                    err = str(error)[:200]
+                    logger.warning(
+                        "email_mbox_message_failed",
+                        error_type=type(error).__name__,
+                        error=err,
+                    )
                     continue
             mbox.close()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as error:  # noqa: BLE001
+            err = str(error)[:200]
+            logger.error(
+                "email_mbox_parse_failed",
+                error_type=type(error).__name__,
+                error=err,
+            )
         return messages
 
 

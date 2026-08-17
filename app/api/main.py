@@ -1137,6 +1137,15 @@ async def synchronize_application_emails(
         summary = await service.synchronize(user_id, provider)
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    logger.info(
+        "email_sync_complete",
+        user_id=user_id,
+        processed=summary.processed,
+        created=summary.created,
+        status_updated=summary.status_updated,
+        needs_review=summary.needs_review,
+        failed=summary.failed,
+    )
     return ApplicationEmailSyncResponse.model_validate(asdict(summary))
 
 
@@ -2433,6 +2442,12 @@ def recalculate_application_match(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except MatchingJobNotReadyError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    logger.info(
+        "matching_recalculate_scheduled",
+        application_id=application_id,
+        force=force,
+        task_id=task.id,
+    )
     return _workflow_task_response(task, session)
 
 

@@ -3,11 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.services.recruitment import EntityNotFoundError
 from app.storage.tables import ApplicationRow, UserRow, VacancyRow
+
+logger = structlog.get_logger(__name__)
 
 _SYNC_ADAPTERS = frozenset({"headhunter", "linkedin-reference"})
 _TERMINAL_STATUSES = frozenset({"submitted", "interview", "rejected", "employer_rejected"})

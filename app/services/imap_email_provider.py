@@ -9,8 +9,12 @@ from email.header import decode_header
 from email.message import EmailMessage
 from typing import Protocol, cast
 
+import structlog
+
 from app.services.application_email_sync import ApplicationEmailMessage
 from app.services.email_integrations import EmailIntegration
+
+logger = structlog.get_logger(__name__)
 
 
 class ImapClient(Protocol):
@@ -47,9 +51,17 @@ class ImapApplicationEmailProvider:
 
     def _fetch_messages(self) -> list[ApplicationEmailMessage]:
         config = self._integration
+        logger.info(
+            "imap_connecting",
+            host=config.host,
+            port=config.port,
+            mailbox=config.mailbox,
+            use_ssl=config.use_ssl,
+        )
         client = self._client_factory(config.host, config.port, config.use_ssl)
         try:
             _require_ok(client.login(config.username, config.password), "IMAP login failed")
+            logger.info("imap_login_ok", host=config.host)
             _require_ok(
                 client.select(config.mailbox, readonly=True),
                 "IMAP mailbox cannot be opened",
@@ -59,6 +71,11 @@ class ImapApplicationEmailProvider:
                 "IMAP search failed",
             )
             message_ids = search_data[0].split()[-self._max_messages :] if search_data else []
+            logger.info(
+                "imap_messages_found",
+                count=len(message_ids),
+                mailbox=config.mailbox,
+            )
             messages: list[ApplicationEmailMessage] = []
             for message_id in message_ids:
                 _, fetch_data = _require_ok(
@@ -75,6 +92,7 @@ class ImapApplicationEmailProvider:
                         body=_plain_text_body(message),
                     )
                 )
+            logger.info("imap_fetch_complete", messages=len(messages))
             return messages
         finally:
             with suppress(imaplib.IMAP4.error):

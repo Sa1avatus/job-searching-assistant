@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import structlog
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -26,6 +27,8 @@ from app.storage.tables import (
     VacancyRow,
     WorkflowTaskRow,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 class EntityNotFoundError(LookupError):

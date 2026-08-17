@@ -29,6 +29,8 @@ from app.storage.tables import (
 from app.storage.task_repository import ClaimedTask, SqlTaskRepository
 from app.workers.coordination import RedisCoordinationClient, RedisCoordinator, WorkerLease
 
+logger = structlog.get_logger(__name__)
+
 
 @dataclass(frozen=True, slots=True)
 class HumanActionRequest:
@@ -59,8 +61,19 @@ class MatchingTaskHandler:
 
     async def handle(self, claimed_task: ClaimedTask) -> ExecutionOutcome:
         if claimed_task.application_id is None:
+            logger.error("matching_task_no_application_id", task_id=claimed_task.task_id)
             return ExecutionOutcome(TaskState.FAILED, "matching task has no application id")
+        logger.info(
+            "matching_task_started",
+            task_id=claimed_task.task_id,
+            application_id=claimed_task.application_id,
+        )
         await self._runner.run(claimed_task.application_id)
+        logger.info(
+            "matching_task_completed",
+            task_id=claimed_task.task_id,
+            application_id=claimed_task.application_id,
+        )
         return ExecutionOutcome(
             TaskState.COMPLETED,
             "matching v2 calculation completed",
