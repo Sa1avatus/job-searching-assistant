@@ -54,6 +54,22 @@ class NoModelAvailableError(RuntimeError):
         self.retryable = retryable
 
 
+class LLMTimeoutError(TimeoutError):
+    """LLM request timed out."""
+
+
+class LLMTruncatedOutputError(RuntimeError):
+    """LLM output was truncated (finish_reason=length or abort)."""
+
+    def __init__(self, message: str, *, finish_reason: str | None = None) -> None:
+        super().__init__(message)
+        self.finish_reason = finish_reason
+
+
+class LLMInvalidJSONError(RuntimeError):
+    """LLM returned content that is not valid JSON."""
+
+
 def _is_retryable_provider_error(error: Exception) -> bool:
     if isinstance(error, TimeoutError | ConnectionError | httpx.TimeoutException):
         return True
@@ -109,6 +125,13 @@ class ModelRouter:
                     error_type=type(error).__name__,
                     error=str(error),
                 )
+                # Let truncated/invalid JSON errors propagate as-is —
+                # these are NOT "model unavailable" errors.
+                if isinstance(
+                    error,
+                    LLMTruncatedOutputError | LLMInvalidJSONError | LLMTimeoutError,
+                ):
+                    raise
                 provider_errors.append(f"{provider.name}:{type(error).__name__}: {error}")
                 retryable_results.append(_is_retryable_provider_error(error))
         details = ", ".join(provider_errors) or "no compatible provider"

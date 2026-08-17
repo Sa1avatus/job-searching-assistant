@@ -245,6 +245,8 @@ def test_openai_compatible_provider_rejects_invalid_configuration(
 async def test_openai_compatible_provider_rejects_invalid_responses(
     response: httpx.Response,
 ) -> None:
+    from app.llm.router import LLMInvalidJSONError
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: response)) as client:
         provider = OpenAICompatibleProvider(
             client,
@@ -252,7 +254,7 @@ async def test_openai_compatible_provider_rejects_invalid_responses(
             model="model",
             base_url="https://example.test/v1",
         )
-        with pytest.raises(OpenAICompatibleResponseError) as captured:
+        with pytest.raises((OpenAICompatibleResponseError, LLMInvalidJSONError)) as captured:
             await provider.complete(_request())
 
     assert "unique-secret-sentinel" not in str(captured.value)

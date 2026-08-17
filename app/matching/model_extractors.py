@@ -18,6 +18,43 @@ class UngroundedExtractionError(ValueError):
     pass
 
 
+def _stem(word: str) -> str:
+    """Minimal English stemmer for grounding tolerance.
+
+    Handles common morphological variations: plurals (-s, -es, -ies),
+    gerunds (-ing), past tense (-ed), comparatives (-er), nominalizations
+    (-tion, -ment, -ness).  Not a full stemmer — just enough to prevent
+    false rejections from minor LLM paraphrasing.
+    """
+    if len(word) <= 3:
+        return word
+    # -ies → -y (cities → city)
+    if word.endswith("ies") and len(word) > 4:
+        return word[:-3] + "y"
+    # -es → drop (processes → process, but not 'ares')
+    if word.endswith("es") and len(word) > 4 and word[-3] not in "aeiou":
+        return word[:-2]
+    # -s → drop (agents → agent)
+    if word.endswith("s") and not word.endswith("ss") and len(word) > 3:
+        return word[:-1]
+    # -ing → drop (running → runn)
+    if word.endswith("ing") and len(word) > 5:
+        return word[:-3]
+    # -ed → drop (tested → test)
+    if word.endswith("ed") and len(word) > 4:
+        return word[:-2]
+    # -tion → (production → produc)
+    if word.endswith("tion") and len(word) > 5:
+        return word[:-4]
+    # -ment → (deployment → deploy)
+    if word.endswith("ment") and len(word) > 5:
+        return word[:-4]
+    # -ness → (awareness → aware)
+    if word.endswith("ness") and len(word) > 5:
+        return word[:-4]
+    return word
+
+
 def _normalized_source(source_text: str) -> str:
     return " ".join(source_text.casefold().split())
 
@@ -85,16 +122,15 @@ _FUNCTION_WORDS = frozenset(
 def _is_grounded(source_text: str, source_fragment: str) -> bool:
     """Check that every content word of the fragment appears in the source text.
 
-    The historical exact-substring check rejected valid extractions from weaker local
-    models that slightly paraphrase fragments (function-word changes, punctuation,
-    minor reordering). Grounding is still enforced: a fragment is accepted only when
-    all of its significant words exist in the source, so the model cannot introduce
-    skills or facts the source never mentions.
+    Uses stemming to tolerate minor morphological variations (plurals,
+    gerunds, past tense) that LLMs produce when paraphrasing fragments.
+    Content words (nouns, verbs, adjectives, numbers) must still have
+    a stem match in the source text.
     """
-    source_tokens = set(_normalized_source(source_text).split())
+    source_stems = {_stem(token) for token in _normalized_source(source_text).split()}
     fragment_tokens = _normalized_source(source_fragment).split()
-    content_tokens = [token for token in fragment_tokens if token not in _FUNCTION_WORDS]
-    return bool(content_tokens) and all(token in source_tokens for token in content_tokens)
+    content_tokens = [_stem(token) for token in fragment_tokens if token not in _FUNCTION_WORDS]
+    return bool(content_tokens) and all(token in source_stems for token in content_tokens)
 
 
 class RouterVacancyRequirementExtractor:
@@ -162,22 +198,28 @@ class RouterVacancyRequirementExtractor:
                 for r in extraction.requirements[:10]
             ],
         )
-        ungrounded_fragments = [
-            requirement.source_fragment
-            for requirement in extraction.requirements
-            if not _is_grounded(source_text, requirement.source_fragment)
+        ungrounded = [
+            req
+            for req in extraction.requirements
+            if not _is_grounded(source_text, req.source_fragment)
         ]
-        if ungrounded_fragments:
+        if ungrounded:
             logger.warning(
-                "extraction_ungrounded_fragments",
+                "extraction_ungrounded_fragments_filtered",
                 vacancy_id=vacancy_id,
-                ungrounded_count=len(ungrounded_fragments),
-                ungrounded_fragments=ungrounded_fragments[:5],
-                source_text_preview=source_text[:300],
+                ungrounded_count=len(ungrounded),
+                total_count=len(extraction.requirements),
+                ungrounded_fragments=[r.source_fragment[:200] for r in ungrounded[:5]],
             )
+            grounded_requirements = [
+                req
+                for req in extraction.requirements
+                if _is_grounded(source_text, req.source_fragment)
+            ]
+            extraction = extraction.model_copy(update={"requirements": grounded_requirements})
+        if not extraction.requirements:
             raise UngroundedExtractionError(
-                f"Vacancy extraction returned {len(ungrounded_fragments)} "
-                f"ungrounded fragments: {ungrounded_fragments[:3]!r}"
+                f"All {len(ungrounded)} extracted requirements were ungrounded"
             )
         return extraction
 
@@ -254,23 +296,25 @@ class RouterCandidateEvidenceExtractor:
                 for e in extraction.evidence[:10]
             ],
         )
-        ungrounded_fragments = [
-            evidence.source_fragment
-            for evidence in extraction.evidence
-            if not _is_grounded(source_text, evidence.source_fragment)
+        ungrounded = [
+            ev for ev in extraction.evidence if not _is_grounded(source_text, ev.source_fragment)
         ]
-        if ungrounded_fragments:
+        if ungrounded:
             logger.warning(
-                "candidate_extraction_ungrounded_fragments",
+                "candidate_extraction_ungrounded_filtered",
                 user_id=user_id,
                 cv_file_id=cv_file_id,
-                ungrounded_count=len(ungrounded_fragments),
-                ungrounded_fragments=ungrounded_fragments[:5],
-                source_text_preview=source_text[:300],
+                ungrounded_count=len(ungrounded),
+                total_count=len(extraction.evidence),
+                ungrounded_fragments=[ev.source_fragment[:200] for ev in ungrounded[:5]],
             )
+            grounded_evidence = [
+                ev for ev in extraction.evidence if _is_grounded(source_text, ev.source_fragment)
+            ]
+            extraction = extraction.model_copy(update={"evidence": grounded_evidence})
+        if not extraction.evidence:
             raise UngroundedExtractionError(
-                f"Candidate extraction returned {len(ungrounded_fragments)} "
-                f"ungrounded fragments: {ungrounded_fragments[:3]!r}"
+                f"All {len(ungrounded)} extracted evidence items were ungrounded"
             )
         return extraction.model_copy(
             update={

@@ -273,7 +273,22 @@ class OpenAICompatibleProvider(ModelProvider):
                 f"Ollama native API returned empty content; done_reason={done_reason!r}"
             )
 
-        return parse_model_json(content)
+        try:
+            return parse_model_json(content)
+        except OpenAICompatibleResponseError as error:
+            if done_reason in ("length", "abort", "load"):
+                from app.llm.router import LLMTruncatedOutputError
+
+                raise LLMTruncatedOutputError(
+                    f"Ollama output truncated (done_reason={done_reason!r}): "
+                    f"{error}; content_len={len(content)}",
+                    finish_reason=str(done_reason),
+                ) from error
+            from app.llm.router import LLMInvalidJSONError
+
+            raise LLMInvalidJSONError(
+                f"Ollama returned invalid JSON (done_reason={done_reason!r}): {error}"
+            ) from error
 
     async def complete(
         self,
@@ -412,6 +427,17 @@ class OpenAICompatibleProvider(ModelProvider):
         try:
             return parse_model_json(content)
         except OpenAICompatibleResponseError as error:
-            raise OpenAICompatibleResponseError(
-                f"{error}; finish_reason={finish_reason!r}"
+            # Distinguish truncated/aborted output from genuine JSON parse errors
+            if finish_reason in ("length", "abort"):
+                from app.llm.router import LLMTruncatedOutputError
+
+                raise LLMTruncatedOutputError(
+                    f"LLM output truncated (finish_reason={finish_reason!r}): "
+                    f"{error}; content_len={len(content)}",
+                    finish_reason=str(finish_reason),
+                ) from error
+            from app.llm.router import LLMInvalidJSONError
+
+            raise LLMInvalidJSONError(
+                f"LLM returned invalid JSON (finish_reason={finish_reason!r}): {error}"
             ) from error
