@@ -1,4 +1,7 @@
-"""OpenSearch index for vacancy search — BM25 + knn_vector hybrid retrieval."""
+"""OpenSearch index for vacancy search — BM25 + knn_vector hybrid retrieval.
+
+Uses OpenSearch 2.x hybrid query + search pipeline for RRF fusion.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +10,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import httpx
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+_RRF_PIPELINE_NAME = "vacancy-rrf-pipeline"
 
 
 class OpenSearchVacancyIndexError(RuntimeError):
@@ -63,13 +71,42 @@ class OpenSearchVacancyIndex:
         response = await self._http_client.get(f"/_alias/{self._write_alias}")
         if response.status_code == 200:
             aliases = response.json()
-            return next(iter(aliases), None)
+            index_name = next(iter(aliases), None)
+            await self._ensure_rrf_pipeline()
+            return index_name
         if response.status_code != 404:
             self._require_success(response, operation="inspect write alias")
         index_name = self.versioned_index_name()
         await self.create_index(index_name)
         await self.switch_aliases(index_name)
+        await self._ensure_rrf_pipeline()
         return index_name
+
+    async def _ensure_rrf_pipeline(self) -> None:
+        """Create the RRF search pipeline if it doesn't exist."""
+        response = await self._http_client.get(f"/_search/pipeline/{_RRF_PIPELINE_NAME}")
+        if response.status_code == 200:
+            return  # already exists
+        response = await self._http_client.put(
+            f"/_search/pipeline/{_RRF_PIPELINE_NAME}",
+            json={
+                "description": "RRF search pipeline for vacancy hybrid search",
+                "phase_results_processors": [
+                    {
+                        "score-ranker-processor": {
+                            "combination": {
+                                "technique": "rrf",
+                                "parameters": {
+                                    "rank_constant": 60,
+                                },
+                            }
+                        }
+                    }
+                ],
+            },
+        )
+        self._require_success(response, operation="create RRF pipeline")
+        logger.info("rrf_pipeline_created", pipeline=_RRF_PIPELINE_NAME)
 
     async def create_index(self, index_name: str) -> None:
         response = await self._http_client.put(f"/{index_name}", json=self.mapping())
@@ -80,8 +117,18 @@ class OpenSearchVacancyIndex:
             "/_aliases",
             json={
                 "actions": [
-                    {"remove": {"index": f"{self._index_prefix}-v1-*", "alias": self._read_alias}},
-                    {"remove": {"index": f"{self._index_prefix}-v1-*", "alias": self._write_alias}},
+                    {
+                        "remove": {
+                            "index": f"{self._index_prefix}-v1-*",
+                            "alias": self._read_alias,
+                        }
+                    },
+                    {
+                        "remove": {
+                            "index": f"{self._index_prefix}-v1-*",
+                            "alias": self._write_alias,
+                        }
+                    },
                     {"add": {"index": index_name, "alias": self._read_alias}},
                     {
                         "add": {
@@ -107,8 +154,9 @@ class OpenSearchVacancyIndex:
         for document in documents:
             if len(document.embedding) != self._dimensions:
                 raise ValueError(
-                    f"Embedding for {document.vacancy_id} has {len(document.embedding)} "
-                    f"dimensions, expected {self._dimensions}"
+                    f"Embedding for {document.vacancy_id} has "
+                    f"{len(document.embedding)} dimensions, "
+                    f"expected {self._dimensions}"
                 )
             lines.append(
                 json.dumps(
@@ -154,7 +202,7 @@ class OpenSearchVacancyIndex:
                         "query": query_text,
                         "fields": [
                             "title^3",
-                            "company^2",
+                            "company_text^2",
                             "required_skills^2",
                             "preferred_skills",
                             "location",
@@ -162,7 +210,8 @@ class OpenSearchVacancyIndex:
                         ],
                     }
                 },
-            }
+            },
+            operation="bm25",
         )
 
     async def search_knn(
@@ -185,7 +234,8 @@ class OpenSearchVacancyIndex:
                         }
                     }
                 },
-            }
+            },
+            operation="knn",
         )
 
     async def search_rrf(
@@ -198,23 +248,26 @@ class OpenSearchVacancyIndex:
         rrf_size: int,
         rrf_k: int = 60,
     ) -> tuple[VacancySearchHit, ...]:
-        """Hybrid search using OpenSearch's native RRF sub_searches.
+        """Hybrid search using OpenSearch 2.x hybrid query + RRF pipeline.
 
-        This runs BM25 and knn as parallel sub-queries and fuses them with
-        Reciprocal Rank Fusion in a single request — no separate round-trips.
+        OpenSearch 2.x does NOT support 'rrf' as a top-level query type.
+        Instead it uses:
+        - A search pipeline with score-ranker-processor (technique: rrf)
+        - The 'hybrid' query type with a 'queries' array
+        - knn uses 'vector' (not 'query_vector')
         """
-        return await self._search(
-            {
-                "size": rrf_size,
-                "_source": False,
-                "query": {
-                    "rrf": {
-                        "query": {
+        query_body = {
+            "size": rrf_size,
+            "_source": False,
+            "query": {
+                "hybrid": {
+                    "queries": [
+                        {
                             "multi_match": {
                                 "query": query_text,
                                 "fields": [
                                     "title^3",
-                                    "company^2",
+                                    "company_text^2",
                                     "required_skills^2",
                                     "preferred_skills",
                                     "location",
@@ -222,24 +275,83 @@ class OpenSearchVacancyIndex:
                                 ],
                             }
                         },
-                        "knn": {
-                            "field": "embedding",
-                            "query_vector": list(vector),
-                            "k": knn_limit,
+                        {
+                            "knn": {
+                                "embedding": {
+                                    "vector": list(vector),
+                                    "k": knn_limit,
+                                }
+                            }
                         },
-                        "rank_constant": rrf_k,
-                        "rank_window_size": max(bm25_limit, knn_limit),
-                    }
-                },
-            }
+                    ]
+                }
+            },
+        }
+        logger.debug(
+            "vacancy_rrf_request",
+            index=self._read_alias,
+            pipeline=_RRF_PIPELINE_NAME,
+            dimensions=self._dimensions,
+            vector_field="embedding",
+            bm25_fields=[
+                "title^3",
+                "company_text^2",
+                "required_skills^2",
+                "preferred_skills",
+                "location",
+                "description_text",
+            ],
+            knn_k=knn_limit,
+            rrf_size=rrf_size,
+            rrf_k=rrf_k,
+            query_preview=query_text[:200],
+        )
+        return await self._search(
+            query_body,
+            operation="hybrid_rrf",
+            pipeline=_RRF_PIPELINE_NAME,
         )
 
-    async def _search(self, query: dict[str, object]) -> tuple[VacancySearchHit, ...]:
-        response = await self._http_client.post(f"/{self._read_alias}/_search", json=query)
-        self._require_success(response, operation="search")
+    async def _search(
+        self,
+        query: dict[str, object],
+        *,
+        operation: str = "search",
+        pipeline: str | None = None,
+    ) -> tuple[VacancySearchHit, ...]:
+        url = f"/{self._read_alias}/_search"
+        if pipeline:
+            url += f"?search_pipeline={pipeline}"
+        try:
+            response = await self._http_client.post(url, json=query)
+        except Exception as error:
+            logger.error(
+                "opensearch_request_failed",
+                operation=operation,
+                error_type=type(error).__name__,
+                error=str(error)[:500],
+            )
+            raise
+        if response.status_code >= 400:
+            logger.error(
+                "opensearch_search_error",
+                operation=operation,
+                status_code=response.status_code,
+                response_body=response.text[:1000],
+                query_json=json.dumps(query, default=str)[:2000],
+                pipeline=pipeline,
+                index=self._read_alias,
+            )
+            raise OpenSearchVacancyIndexError(
+                f"OpenSearch {operation} failed with "
+                f"HTTP {response.status_code}: {response.text[:500]}"
+            )
         hits = response.json().get("hits", {}).get("hits", [])
         return tuple(
-            VacancySearchHit(vacancy_id=str(hit["_id"]), score=float(hit.get("_score") or 0))
+            VacancySearchHit(
+                vacancy_id=str(hit["_id"]),
+                score=float(hit.get("_score") or 0),
+            )
             for hit in hits
         )
 
@@ -251,10 +363,16 @@ class OpenSearchVacancyIndex:
                 "properties": {
                     "vacancy_id": {"type": "keyword"},
                     "title": {"type": "text", "analyzer": "standard"},
-                    "company": {"type": "keyword", "copy_to": "company_text"},
+                    "company": {
+                        "type": "keyword",
+                        "copy_to": "company_text",
+                    },
                     "company_text": {"type": "text"},
                     "location": {"type": "text"},
-                    "description_text": {"type": "text", "analyzer": "standard"},
+                    "description_text": {
+                        "type": "text",
+                        "analyzer": "standard",
+                    },
                     "required_skills": {"type": "keyword"},
                     "preferred_skills": {"type": "keyword"},
                     "embedding": {
@@ -295,6 +413,6 @@ class OpenSearchVacancyIndex:
     def _require_success(response: httpx.Response, *, operation: str) -> None:
         if response.status_code >= 400:
             raise OpenSearchVacancyIndexError(
-                f"OpenSearch {operation} failed with HTTP {response.status_code}: "
-                f"{response.text[:500]}"
+                f"OpenSearch {operation} failed with "
+                f"HTTP {response.status_code}: {response.text[:500]}"
             )

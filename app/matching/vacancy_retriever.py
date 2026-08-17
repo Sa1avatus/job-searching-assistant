@@ -58,9 +58,10 @@ class VacancyHybridRetriever:
                 metrics.increment("vacancy_search_rrf_total")
                 return [hit.vacancy_id for hit in hits]
         except Exception as error:
-            logger.debug(
+            logger.warning(
                 "vacancy_rrf_native_failed_fallback_python",
                 error_type=type(error).__name__,
+                error=str(error)[:500],
             )
             metrics.increment("vacancy_search_rrf_fallback_total")
 

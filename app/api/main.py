@@ -550,6 +550,32 @@ async def _get_vacancy_retriever():  # type: ignore[return]
             rrf_k=settings.vacancy_search_rrf_k,
         )
         _vacancy_retriever_instance = retriever
+
+        # Populate the vacancy index if empty
+        if embedding_client is not None:
+            try:
+                from app.matching.vacancy_reindex import VacancyReindexService
+
+                with session_scope() as reindex_session:
+                    reindexer = VacancyReindexService(
+                        reindex_session,
+                        embedding_client,
+                        vacancy_index,
+                    )
+                    index_name, count = await reindexer.rebuild()
+                    if count > 0:
+                        logger.info(
+                            "vacancy_index_populated",
+                            index=index_name,
+                            count=count,
+                        )
+            except Exception as error:
+                logger.warning(
+                    "vacancy_index_rebuild_failed",
+                    error_type=type(error).__name__,
+                    error=str(error)[:300],
+                )
+
         return retriever
     except Exception:
         return None
@@ -754,21 +780,15 @@ def debug_logs(
     valid_levels = {"verbose", "debug", "info", "warning", "error", "critical", "major"}
     if level not in valid_levels:
         valid_str = ", ".join(sorted(valid_levels))
-        raise HTTPException(
-            status_code=422, detail=f"Invalid level. Use: {valid_str}"
-        )
+        raise HTTPException(status_code=422, detail=f"Invalid level. Use: {valid_str}")
     if not 1 <= limit <= 5000:
         raise HTTPException(status_code=422, detail="limit must be 1..5000")
 
     # In-process buffer (API events)
-    local_entries = get_log_buffer().query(
-        min_level=level, limit=limit, since=since, search=search
-    )
+    local_entries = get_log_buffer().query(min_level=level, limit=limit, since=since, search=search)
 
     # Redis shared buffer (all workers + API)
-    redis_entries = read_redis_logs(
-        min_level=level, limit=limit, since=since, search=search
-    )
+    redis_entries = read_redis_logs(min_level=level, limit=limit, since=since, search=search)
 
     # Merge: convert both to unified format, deduplicate by timestamp+event
     seen: set[str] = set()
