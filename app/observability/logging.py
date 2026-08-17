@@ -6,6 +6,8 @@ from typing import Any
 
 import structlog
 
+from app.observability.log_buffer import log_buffer_processor
+
 SENSITIVE_KEY_PARTS = ("api_key", "authorization", "cookie", "password", "secret", "token")
 
 
@@ -25,6 +27,7 @@ def configure_logging() -> None:
             redact_sensitive_fields,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.processors.add_log_level,
+            log_buffer_processor,
             structlog.processors.JSONRenderer(),
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),

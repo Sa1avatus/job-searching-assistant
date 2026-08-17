@@ -344,6 +344,7 @@
       <button class="menu-button" type="button" data-menu="model" aria-expanded="false">Модель</button>
       <button class="menu-button" type="button" data-menu="queue" aria-expanded="false">Очередь матчинга</button>
       <button class="menu-button" type="button" data-menu="access" aria-expanded="false">Профиль и доступ</button>
+      <button class="menu-button" type="button" data-menu="debug" aria-expanded="false">Отладка</button>
     </nav>
     <div class="dashboard-content">
     <div id="status" role="status" aria-live="polite"></div>
@@ -681,6 +682,40 @@
     </section>
 
     <section id="results" class="step" data-panel="search"></section>
+
+    <section class="step" data-panel="debug">
+      <h2>Отладка</h2>
+      <div class="debug-controls" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+        <div><label for="debug-level">Уровень</label>
+          <select id="debug-level">
+            <option value="verbose">Verbose</option>
+            <option value="debug" selected>Debug</option>
+            <option value="info">Info</option>
+            <option value="warning">Warning</option>
+            <option value="error">Error</option>
+            <option value="critical">Critical</option>
+            <option value="major">Major</option>
+          </select>
+        </div>
+        <div><label for="debug-interval">Обновление (сек)</label>
+          <input id="debug-interval" type="number" min="1" max="300" value="5" style="width:60px;">
+        </div>
+        <div><label for="debug-limit">Лимит</label>
+          <input id="debug-limit" type="number" min="10" max="5000" value="200" style="width:70px;">
+        </div>
+        <div><label for="debug-search">Фильтр</label>
+          <input id="debug-search" type="search" placeholder="текст для поиска" style="width:160px;">
+        </div>
+        <button id="debug-refresh" type="button" class="action-btn">Обновить</button>
+        <button id="debug-toggle" type="button" class="action-btn">▶ Авто</button>
+        <button id="debug-clear" type="button" class="action-btn" style="background:#666;">Очистить</button>
+        <span id="debug-status" style="font-size:12px;color:#888;"></span>
+      </div>
+      <div id="debug-log-container" style="max-height:70vh;overflow-y:auto;font-family:monospace;font-size:12px;background:#0a0e14;border:1px solid #1a2030;border-radius:6px;padding:8px;">
+        <div id="debug-log-entries"></div>
+      </div>
+    </section>
+
     </div>
   </main>
   <script>
@@ -738,6 +773,7 @@
       'Очистить очередь': 'Clear queue',
       'Обновить очередь': 'Refresh queue',
       'Профиль и доступ': 'Profile and access',
+      'Отладка': 'Debug',
       'Все сохранённые вакансии': 'All saved vacancies',
       'Синхронизировать отклики': 'Sync applications',
       'Синхронизировать почту': 'Sync email',
@@ -4529,6 +4565,149 @@
     loadSavedVacancies().catch(showError);
     loadCompanyBlacklist().catch(showError);
     loadCvFiles().catch(showError);
+
+    // --- Debug log tab ---
+    (() => {
+      const LEVEL_COLORS = {
+        verbose: '#555',
+        debug: '#6a9fb5',
+        info: '#b5d36a',
+        warning: '#e5c07b',
+        error: '#e06c75',
+        critical: '#ff5555',
+        major: '#ff0000',
+      };
+      const debugLevel = document.querySelector('#debug-level');
+      const debugInterval = document.querySelector('#debug-interval');
+      const debugLimit = document.querySelector('#debug-limit');
+      const debugSearch = document.querySelector('#debug-search');
+      const debugRefresh = document.querySelector('#debug-refresh');
+      const debugToggle = document.querySelector('#debug-toggle');
+      const debugClear = document.querySelector('#debug-clear');
+      const debugStatus = document.querySelector('#debug-status');
+      const debugEntries = document.querySelector('#debug-log-entries');
+      const debugContainer = document.querySelector('#debug-log-container');
+
+      let autoTimer = null;
+      let lastTimestamp = null;
+
+      function formatTimestamp(iso) {
+        if (!iso) return '';
+        try {
+          const d = new Date(iso);
+          return d.toLocaleString('ru-RU', {hour12: false, fractionalSecondDigits: 0});
+        } catch { return iso; }
+      }
+
+      function renderEntry(e) {
+        const color = LEVEL_COLORS[e.level] || '#888';
+        const ts = formatTimestamp(e.timestamp);
+        const level = e.level.toUpperCase().padEnd(8);
+        const logger = e.logger ? `[${e.logger}]` : '';
+        let detail = '';
+        if (e.fields && Object.keys(e.fields).length > 0) {
+          const skip = new Set(['event', 'level', 'timestamp', 'logger']);
+          const extra = {};
+          for (const [k, v] of Object.entries(e.fields)) {
+            if (!skip.has(k) && v !== null && v !== undefined && v !== '') {
+              extra[k] = v;
+            }
+          }
+          if (Object.keys(extra).length > 0) {
+            detail = `\n  ${JSON.stringify(extra, null, 0)}`;
+          }
+        }
+        return `<div style="margin-bottom:2px;white-space:pre-wrap;word-break:break-all;border-left:3px solid ${color};padding-left:6px;"><span style="color:#555;">${ts}</span> <span style="color:${color};font-weight:bold;">${level}</span> <span style="color:#888;">${logger}</span> ${e.message}${detail ? `<span style="color:#555;">${detail}</span>` : ''}</div>`;
+      }
+
+      async function fetchLogs(append = false) {
+        const params = new URLSearchParams({
+          level: debugLevel.value,
+          limit: debugLimit.value,
+        });
+        if (append && lastTimestamp) params.set('since', lastTimestamp);
+        const searchVal = debugSearch.value.trim();
+        if (searchVal) params.set('search', searchVal);
+
+        try {
+          const resp = await fetch(`/v1/debug/logs?${params}`);
+          if (!resp.ok) throw new Error(`${resp.status}`);
+          const data = await resp.json();
+
+          if (append && data.entries.length > 0) {
+            // Prepend new entries at top
+            const html = data.entries.reverse().map(renderEntry).join('');
+            debugEntries.insertAdjacentHTML('afterbegin', html);
+            // Cap displayed entries
+            while (debugEntries.children.length > parseInt(debugLimit.value)) {
+              debugEntries.removeChild(debugEntries.lastChild);
+            }
+          } else if (!append) {
+            debugEntries.innerHTML = data.entries.map(renderEntry).join('');
+          }
+
+          if (data.entries.length > 0) {
+            lastTimestamp = data.entries[0].timestamp;
+          }
+          debugStatus.textContent = `${data.count} записей • ${new Date().toLocaleTimeString('ru-RU')}`;
+        } catch (err) {
+          debugStatus.textContent = `Ошибка: ${err.message}`;
+        }
+      }
+
+      debugRefresh.addEventListener('click', () => {
+        lastTimestamp = null;
+        fetchLogs(false);
+      });
+
+      debugToggle.addEventListener('click', () => {
+        if (autoTimer) {
+          clearInterval(autoTimer);
+          autoTimer = null;
+          debugToggle.textContent = '▶ Авто';
+          debugToggle.style.background = '';
+        } else {
+          const sec = Math.max(1, parseInt(debugInterval.value) || 5);
+          autoTimer = setInterval(() => fetchLogs(true), sec * 1000);
+          debugToggle.textContent = '⏸ Стоп';
+          debugToggle.style.background = '#c0392b';
+          fetchLogs(true);
+        }
+      });
+
+      debugClear.addEventListener('click', async () => {
+        try {
+          await fetch('/v1/debug/logs/clear', {method: 'POST'});
+          debugEntries.innerHTML = '';
+          lastTimestamp = null;
+          debugStatus.textContent = 'Очищено';
+        } catch (err) {
+          debugStatus.textContent = `Ошибка: ${err.message}`;
+        }
+      });
+
+      // Load initial data when debug tab is activated
+      const origActivate = window.activatePanel;
+      if (typeof origActivate === 'function') {
+        const wrapper = function(name, opts) {
+          const result = origActivate(name, opts);
+          if (name === 'debug' && result) {
+            lastTimestamp = null;
+            fetchLogs(false);
+          }
+          return result;
+        };
+        // Also hook into menu button clicks
+        document.querySelectorAll('[data-menu="debug"]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            setTimeout(() => {
+              lastTimestamp = null;
+              fetchLogs(false);
+            }, 50);
+          });
+        });
+      }
+    })();
   </script>
 </body>
 </html>

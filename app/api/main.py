@@ -716,6 +716,61 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok", submission_mode=get_settings().submission_mode.value)
 
 
+@app.get("/v1/debug/logs", include_in_schema=False)
+def debug_logs(
+    level: str = "debug",
+    limit: int = 200,
+    since: str | None = None,
+    search: str | None = None,
+) -> Response:
+    """Return recent structured log entries for the debug tab."""
+    from app.observability.log_buffer import get_log_buffer
+
+    valid_levels = {"verbose", "debug", "info", "warning", "error", "critical", "major"}
+    if level not in valid_levels:
+        valid_str = ", ".join(sorted(valid_levels))
+        raise HTTPException(status_code=422, detail=f"Invalid level. Use: {valid_str}")
+    if not 1 <= limit <= 5000:
+        raise HTTPException(status_code=422, detail="limit must be 1..5000")
+
+    entries = get_log_buffer().query(
+        min_level=level,
+        limit=limit,
+        since=since,
+        search=search,
+    )
+    import json
+
+    payload = {
+        "count": len(entries),
+        "level_filter": level,
+        "entries": [
+            {
+                "timestamp": e.timestamp,
+                "level": e.level,
+                "event": e.event,
+                "logger": e.logger,
+                "message": e.message,
+                "fields": e.fields,
+            }
+            for e in entries
+        ],
+    }
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, default=str),
+        media_type="application/json",
+    )
+
+
+@app.post("/v1/debug/logs/clear", include_in_schema=False)
+def debug_logs_clear() -> dict[str, str]:
+    """Clear the in-process log buffer."""
+    from app.observability.log_buffer import get_log_buffer
+
+    get_log_buffer().clear()
+    return {"status": "cleared"}
+
+
 @app.get("/review", include_in_schema=False)
 def review_interface() -> FileResponse:
     return FileResponse(
