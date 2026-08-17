@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+import structlog
 from sqlalchemy.orm import Session
 
 from app.services.application_email_events import ApplicationEmailEventService
@@ -10,6 +11,8 @@ from app.services.email_classification import EmailClassifier
 from app.services.email_vacancy_matcher import EmailVacancyMatcher
 from app.services.recruitment import EntityNotFoundError
 from app.storage.tables import UserRow
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +64,13 @@ class ApplicationEmailSyncService:
             raise EntityNotFoundError("User not found")
         try:
             messages = await provider.fetch_messages()
-        except Exception:  # noqa: BLE001 - provider failure is reported in the summary
+        except Exception as error:  # noqa: BLE001 - provider failure is reported in the summary
+            logger.error(
+                "email_provider_fetch_failed",
+                error_type=type(error).__name__,
+                error=str(error)[:300],
+                user_id=user_id,
+            )
             return ApplicationEmailSyncSummary(0, 0, 0, 0, 0, 0, 0, 1)
 
         processed = created = duplicates = status_updated = unmatched = unknown = 0
@@ -87,7 +96,15 @@ class ApplicationEmailSyncService:
                         company=message.company,
                         vacancy_title=message.vacancy_title,
                     )
-            except Exception:  # noqa: BLE001 - one malformed message must not abort the batch
+            except Exception as error:  # noqa: BLE001 - one malformed message must not abort the batch
+                logger.warning(
+                    "email_message_ingest_failed",
+                    error_type=type(error).__name__,
+                    error=str(error)[:200],
+                    user_id=user_id,
+                    subject=message.subject[:100],
+                    company=message.company,
+                )
                 failed += 1
                 continue
             if result.created:

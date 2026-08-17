@@ -684,6 +684,8 @@ def evidence_artifact_storage() -> EvidenceArtifactStorage:
 async def secure_and_observe_request(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
+    import time as _time
+
     metrics.increment("http_requests_total")
     settings = get_settings()
     api_clients = settings.api_clients()
@@ -704,10 +706,28 @@ async def secure_and_observe_request(
         if "*" not in granted_scopes and required_scope not in granted_scopes:
             metrics.increment("http_authorization_failures_total")
             return Response(status_code=status.HTTP_403_FORBIDDEN)
+    start = _time.monotonic()
     response = await call_next(request)
+    duration_s = round(_time.monotonic() - start, 3)
     response.headers["X-Correlation-ID"] = request.headers.get(
         "x-correlation-id", str(uuid.uuid4())
     )
+    if response.status_code >= 400:
+        logger.warning(
+            "http_error",
+            method=request.method,
+            url=str(request.url.path),
+            status_code=response.status_code,
+            duration_s=duration_s,
+        )
+    elif duration_s > 5:
+        logger.info(
+            "http_slow_request",
+            method=request.method,
+            url=str(request.url.path),
+            status_code=response.status_code,
+            duration_s=duration_s,
+        )
     return response
 
 
