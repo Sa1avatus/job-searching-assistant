@@ -373,6 +373,7 @@
         <div><label for="vacancy-published-to">Опубликована по</label><input id="vacancy-published-to" type="date"></div>
         <div><label for="vacancy-work-format">Формат работы</label><select id="vacancy-work-format"><option value="all">Все</option><option value="remote">Удалённо</option><option value="hybrid">Гибрид</option><option value="office">Офис</option><option value="unspecified">Не указан</option></select></div>
         <div><label for="vacancy-employment-type">Тип занятости</label><select id="vacancy-employment-type"><option value="all">Все</option><option value="full_time">Полная занятость</option><option value="part_time">Частичная занятость</option><option value="contract">Контракт</option><option value="project">Проект</option><option value="temporary">Временная работа</option><option value="internship">Стажировка</option></select></div>
+        <div><label for="vacancy-matching-v2">Matching v2</label><select id="vacancy-matching-v2"><option value="all">Все</option><option value="completed">Рассчитан</option><option value="pending">Не рассчитан</option></select></div>
       </div>
       <div class="filter-actions">
         <button id="apply-vacancy-filters" type="button" class="primary">Применить</button>
@@ -818,6 +819,9 @@
       'Опубликована по': 'Published to',
       'Формат работы': 'Work format',
       'Тип занятости': 'Employment type',
+      'Matching v2': 'Matching v2',
+      'Рассчитан': 'Completed',
+      'Не рассчитан': 'Not calculated',
       'Все': 'All',
       'Удалённо': 'Remote',
       'Гибрид': 'Hybrid',
@@ -4133,6 +4137,7 @@
         min_match_score: document.querySelector('#vacancy-score').value || '0',
         work_format: document.querySelector('#vacancy-work-format').value,
         employment_type: document.querySelector('#vacancy-employment-type').value,
+        matching_v2: document.querySelector('#vacancy-matching-v2').value,
         page: String(requestedPage),
         page_size: '20'
       });
@@ -4177,6 +4182,7 @@
       document.querySelector('#vacancy-published-to').value = '';
       document.querySelector('#vacancy-work-format').value = 'all';
       document.querySelector('#vacancy-employment-type').value = 'all';
+      document.querySelector('#vacancy-matching-v2').value = 'all';
       vacancyPage = 1; loadSavedVacancies().catch(showError);
     });
     document.querySelector('#rerank-filtered').addEventListener('click', async () => {

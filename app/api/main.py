@@ -880,6 +880,7 @@ async def list_saved_vacancies(
     published_to: date | None = None,
     work_format: str = "all",
     employment_type: str = "all",
+    matching_v2: str = "all",
     page: int = 1,
     page_size: int = 20,
 ) -> SavedVacancyPageResponse:
@@ -897,6 +898,8 @@ async def list_saved_vacancies(
         "internship",
     }:
         raise HTTPException(status_code=422, detail="Unsupported employment type")
+    if matching_v2 not in {"all", "completed", "pending"}:
+        raise HTTPException(status_code=422, detail="Unsupported matching_v2 filter")
     if not 0 <= min_match_score <= 100 or page < 1 or not 1 <= page_size <= 100:
         raise HTTPException(status_code=422, detail="Invalid vacancy pagination or score filter")
     if published_from is not None and published_to is not None and published_from > published_to:
@@ -926,6 +929,7 @@ async def list_saved_vacancies(
             published_to=published_to,
             work_format=work_format,
             employment_type=employment_type,
+            matching_v2=matching_v2,
             page=page,
             page_size=page_size,
             vacancy_ids=vacancy_ids,

@@ -12,7 +12,13 @@ from app.services.vacancy_metadata import (
     extract_key_skills,
     summarize_vacancy,
 )
-from app.storage.tables import ApplicationRow, CompanyBlacklistRow, UserRow, VacancyRow
+from app.storage.tables import (
+    ApplicationMatchResultRow,
+    ApplicationRow,
+    CompanyBlacklistRow,
+    UserRow,
+    VacancyRow,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +70,7 @@ class VacancyCatalogService:
         page: int = 1,
         page_size: int = 20,
         vacancy_ids: tuple[str, ...] | None = None,
+        matching_v2: str = "all",
     ) -> SavedVacancyPage:
         if self._session.get(UserRow, user_id) is None:
             raise EntityNotFoundError("User not found")
@@ -94,6 +101,7 @@ class VacancyCatalogService:
             work_format=work_format,
             employment_type=employment_type,
             vacancy_ids=vacancy_ids,
+            matching_v2=matching_v2,
         )
         count_statement = statement.with_only_columns(func.count()).order_by(None)
         total = int(self._session.scalar(count_statement) or 0)
@@ -192,6 +200,7 @@ class VacancyCatalogService:
         work_format: str,
         employment_type: str,
         vacancy_ids: tuple[str, ...] | None = None,
+        matching_v2: str = "all",
     ) -> Select[tuple[ApplicationRow, VacancyRow]]:
         if vacancy_ids is not None:
             # Hybrid search already ranked — use pre-filtered IDs instead of ILIKE
@@ -246,6 +255,24 @@ class VacancyCatalogService:
                 ~VacancyRow.source_url.ilike("%linkedin.com/%"),
                 VacancyRow.adapter_name != "google-registry",
                 VacancyRow.adapter_name != "greenhouse",
+            )
+        if matching_v2 == "completed":
+            statement = statement.where(
+                select(ApplicationMatchResultRow.application_id)
+                .where(
+                    ApplicationMatchResultRow.application_id == ApplicationRow.id,
+                    ApplicationMatchResultRow.status.in_(("scored", "degraded")),
+                )
+                .exists()
+            )
+        elif matching_v2 == "pending":
+            statement = statement.where(
+                ~select(ApplicationMatchResultRow.application_id)
+                .where(
+                    ApplicationMatchResultRow.application_id == ApplicationRow.id,
+                    ApplicationMatchResultRow.status.in_(("scored", "degraded")),
+                )
+                .exists()
             )
         return statement
 
