@@ -555,8 +555,9 @@ async def _get_vacancy_retriever():  # type: ignore[return]
         if embedding_client is not None:
             try:
                 from app.matching.vacancy_reindex import VacancyReindexService
+                from app.storage.database import SessionFactory
 
-                with session_scope() as reindex_session:
+                with SessionFactory() as reindex_session:
                     reindexer = VacancyReindexService(
                         reindex_session,
                         embedding_client,
