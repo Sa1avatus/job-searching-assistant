@@ -121,18 +121,49 @@ class RagHttpClient:
             "use_reranker": True,
             "include_trace": False,
         }
+        url = f"{self._base_url}/v1/retrieval/search"
         started = time.perf_counter()
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.post(
-                f"{self._base_url}/v1/retrieval/search",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "X-Owner-User-Id": owner_user_id,
-                },
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "X-Owner-User-Id": owner_user_id,
+                    },
+                )
+        except Exception as error:
+            duration = time.perf_counter() - started
+            logger.error(
+                "rag_search_request_failed",
+                url=url,
+                method="POST",
+                owner_user_id=owner_user_id,
+                collections=list(collections),
+                query_preview=query[:200],
+                error_type=type(error).__name__,
+                error=str(error)[:500],
+                duration_seconds=round(duration, 3),
+            )
+            raise
+
+        duration = time.perf_counter() - started
+
+        if response.status_code >= 400:
+            logger.error(
+                "rag_search_http_error",
+                url=url,
+                method="POST",
+                status_code=response.status_code,
+                response_body=response.text[:1000],
+                owner_user_id=owner_user_id,
+                collections=list(collections),
+                query_preview=query[:200],
+                duration_seconds=round(duration, 3),
             )
             response.raise_for_status()
-        duration = time.perf_counter() - started
+
         data = response.json()
         results = tuple(
             RagSearchResult(
@@ -160,6 +191,8 @@ class RagHttpClient:
             effective_mode=trace.get("effective_mode", mode),
             degraded=trace.get("degraded", False),
             duration_seconds=round(duration, 3),
+            owner_user_id=owner_user_id,
+            collections=list(collections),
         )
         return RagSearchResponse(
             request_id=str(data.get("request_id", "")),

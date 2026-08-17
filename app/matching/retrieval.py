@@ -292,16 +292,29 @@ class RagAugmentedRetriever:
                 top_k=self._retrieval_limit,
             )
         except Exception as error:
-            metrics.increment("rag_retrieval_fallback_total")
+            metrics.increment("rag_retrieval_error_total")
             logger.warning(
-                "rag_evidence_retrieval_failed",
+                "rag_evidence_retrieval_error",
                 error_type=type(error).__name__,
+                error=str(error)[:500],
                 user_id=user_id,
                 cv_file_id=cv_file_id,
+                query_preview=requirement_text[:200],
+                local_candidates_count=len(local_candidates),
             )
+            # RAG failed — return local candidates as-is so the pipeline
+            # continues with local evidence only. The error is logged above
+            # so it's visible in the debug tab.
             return local_candidates
         if response.degraded or not response.results:
-            metrics.increment("rag_retrieval_fallback_total")
+            metrics.increment("rag_retrieval_empty_total")
+            logger.info(
+                "rag_evidence_retrieval_empty",
+                user_id=user_id,
+                cv_file_id=cv_file_id,
+                result_count=len(response.results),
+                degraded=response.degraded,
+            )
             return local_candidates
 
         augmented = []

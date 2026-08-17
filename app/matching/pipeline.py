@@ -1154,6 +1154,8 @@ class MatchingPipeline:
                 vacancy_id=vacancy.id,
                 application_id=application.id,
                 error_type=type(error).__name__,
+                error=str(error)[:500],
+                query_preview=query[:200],
             )
             return {"error": f"{type(error).__name__}: unavailable"}
 
