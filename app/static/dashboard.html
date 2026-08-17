@@ -4630,7 +4630,7 @@
         if (searchVal) params.set('search', searchVal);
 
         try {
-          const resp = await fetch(`/v1/debug/logs?${params}`);
+          const resp = await fetch(`/v1/debug/logs?${params}`, {headers: headers(false)});
           if (!resp.ok) throw new Error(`${resp.status}`);
           const data = await resp.json();
 
@@ -4677,7 +4677,7 @@
 
       debugClear.addEventListener('click', async () => {
         try {
-          await fetch('/v1/debug/logs/clear', {method: 'POST'});
+          await fetch('/v1/debug/logs/clear', {method: 'POST', headers: headers(false)});
           debugEntries.innerHTML = '';
           lastTimestamp = null;
           debugStatus.textContent = 'Очищено';
