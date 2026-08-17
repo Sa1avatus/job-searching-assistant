@@ -163,6 +163,12 @@ class MatchingPipeline:
         self._start_run(application, cv_file, run_id)
         try:
             self._set_status(application.id, "extracting")
+            logger.info(
+                "matching_stage_extracting",
+                run_id=run_id,
+                application_id=application.id,
+                vacancy_id=vacancy.id,
+            )
             extraction_started = time.perf_counter()
             requirement_rows = await self._extract_requirements(vacancy, vacancy_source_text)
             evidence_rows = await self._extract_evidence(
@@ -171,6 +177,14 @@ class MatchingPipeline:
                 cv_source_text,
             )
             extraction_duration = time.perf_counter() - extraction_started
+            logger.info(
+                "matching_stage_extraction_done",
+                run_id=run_id,
+                application_id=application.id,
+                requirement_count=len(requirement_rows),
+                evidence_count=len(evidence_rows),
+                duration_s=round(extraction_duration, 2),
+            )
             metrics.observe("extraction_duration_seconds", extraction_duration)
             metrics.set_gauge("requirements_per_vacancy", float(len(requirement_rows)))
             self._session.flush()
@@ -204,17 +218,34 @@ class MatchingPipeline:
                 return aggregate
             if self._evidence_indexer is not None:
                 self._set_status(application.id, "indexing")
+                logger.info(
+                    "matching_stage_indexing",
+                    run_id=run_id,
+                    application_id=application.id,
+                )
                 indexing_started = time.perf_counter()
                 await self._evidence_indexer.index_cv(
                     user_id=application.user_id,
                     cv_file_id=cv_file.id,
                 )
                 indexing_duration = time.perf_counter() - indexing_started
+                logger.info(
+                    "matching_stage_indexing_done",
+                    run_id=run_id,
+                    application_id=application.id,
+                    duration_s=round(indexing_duration, 2),
+                )
                 metrics.observe("embedding_duration_seconds", indexing_duration)
                 metrics.set_gauge("evidence_index_size", float(len(evidence_rows)))
 
             self._set_status(application.id, "matching")
             self._set_progress(application.id, requirements_total=len(requirement_rows))
+            logger.info(
+                "matching_stage_scoring",
+                run_id=run_id,
+                application_id=application.id,
+                requirement_count=len(requirement_rows),
+            )
 
             # Choose pipeline: claim-based or legacy
             assessments, claim_result = await self._run_matching(
@@ -222,6 +253,13 @@ class MatchingPipeline:
             )
 
             deterministic_score = self._scorer.score(tuple(assessments))
+            logger.info(
+                "matching_stage_scoring_done",
+                run_id=run_id,
+                application_id=application.id,
+                final_score=round(deterministic_score.final_score, 1),
+                required_score=round(deterministic_score.required_score, 1),
+            )
             self._session.flush()
             rag_context = await self._fetch_rag_context(vacancy, application)
 
@@ -308,6 +346,7 @@ class MatchingPipeline:
                 user_id=application.user_id,
                 total_duration_seconds=total_duration,
                 failure_type=type(error).__name__,
+                error_detail=str(error)[:1000],
                 fallback_used=self._fallback_enabled,
             )
             raise

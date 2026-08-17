@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import structlog
+
 from app.llm.router import ModelRequest, ModelRouter, ModelTaskClass
 from app.matching.extraction import (
     CandidateEvidenceExtraction,
     VacancyExtraction,
 )
 from app.prompts.registry import PromptRegistry
+
+logger = structlog.get_logger(__name__)
 
 _MAX_SOURCE_CHARACTERS = 30_000
 
@@ -118,12 +122,19 @@ class RouterVacancyRequirementExtractor:
         self.model_name = model_identity or self.model_name
 
     async def extract(self, *, vacancy_id: str, source_text: str) -> VacancyExtraction:
+        truncated_text = source_text[:_MAX_SOURCE_CHARACTERS]
         prompt = self._prompt_registry.render(
             "extract_vacancy_requirements",
             {
                 "vacancy_id": vacancy_id,
-                "source_text": source_text[:_MAX_SOURCE_CHARACTERS],
+                "source_text": truncated_text,
             },
+        )
+        logger.debug(
+            "extraction_request",
+            vacancy_id=vacancy_id,
+            source_text_len=len(source_text),
+            source_text_preview=source_text[:500],
         )
         extraction = await self._router.route(
             ModelRequest(
@@ -137,14 +148,36 @@ class RouterVacancyRequirementExtractor:
             ),
             VacancyExtraction,
         )
+        logger.debug(
+            "extraction_response",
+            vacancy_id=vacancy_id,
+            requirement_count=len(extraction.requirements),
+            requirements=[
+                {
+                    "text": r.requirement_text[:200],
+                    "type": r.requirement_type,
+                    "importance": r.importance,
+                    "fragment": r.source_fragment[:200],
+                }
+                for r in extraction.requirements[:10]
+            ],
+        )
         ungrounded_fragments = [
             requirement.source_fragment
             for requirement in extraction.requirements
             if not _is_grounded(source_text, requirement.source_fragment)
         ]
         if ungrounded_fragments:
+            logger.warning(
+                "extraction_ungrounded_fragments",
+                vacancy_id=vacancy_id,
+                ungrounded_count=len(ungrounded_fragments),
+                ungrounded_fragments=ungrounded_fragments[:5],
+                source_text_preview=source_text[:300],
+            )
             raise UngroundedExtractionError(
-                f"Vacancy extraction returned {len(ungrounded_fragments)} ungrounded fragments"
+                f"Vacancy extraction returned {len(ungrounded_fragments)} "
+                f"ungrounded fragments: {ungrounded_fragments[:3]!r}"
             )
         return extraction
 
@@ -188,6 +221,13 @@ class RouterCandidateEvidenceExtractor:
                 "source_text": source_text[:_MAX_SOURCE_CHARACTERS],
             },
         )
+        logger.debug(
+            "candidate_evidence_extraction_request",
+            user_id=user_id,
+            cv_file_id=cv_file_id,
+            source_text_len=len(source_text),
+            source_text_preview=source_text[:500],
+        )
         extraction = await self._router.route(
             ModelRequest(
                 task_name="extract_candidate_evidence",
@@ -200,14 +240,37 @@ class RouterCandidateEvidenceExtractor:
             ),
             CandidateEvidenceExtraction,
         )
+        logger.debug(
+            "candidate_evidence_extraction_response",
+            user_id=user_id,
+            cv_file_id=cv_file_id,
+            evidence_count=len(extraction.evidence),
+            evidence_preview=[
+                {
+                    "skill": e.skill_name,
+                    "type": e.evidence_type,
+                    "fragment": e.source_fragment[:200],
+                }
+                for e in extraction.evidence[:10]
+            ],
+        )
         ungrounded_fragments = [
             evidence.source_fragment
             for evidence in extraction.evidence
             if not _is_grounded(source_text, evidence.source_fragment)
         ]
         if ungrounded_fragments:
+            logger.warning(
+                "candidate_extraction_ungrounded_fragments",
+                user_id=user_id,
+                cv_file_id=cv_file_id,
+                ungrounded_count=len(ungrounded_fragments),
+                ungrounded_fragments=ungrounded_fragments[:5],
+                source_text_preview=source_text[:300],
+            )
             raise UngroundedExtractionError(
-                f"Candidate extraction returned {len(ungrounded_fragments)} ungrounded fragments"
+                f"Candidate extraction returned {len(ungrounded_fragments)} "
+                f"ungrounded fragments: {ungrounded_fragments[:3]!r}"
             )
         return extraction.model_copy(
             update={

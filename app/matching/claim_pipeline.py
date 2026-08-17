@@ -302,6 +302,15 @@ class ClaimMatchPipeline:
 
         gap_analysis = analyze_gaps(gap_inputs) if gap_inputs else None
 
+        logger.info(
+            "claim_pipeline_complete",
+            application_id=application_id,
+            requirement_count=total,
+            assessment_count=len(assessments),
+            relation_counts=relation_counts,
+            gap_count=len(gap_inputs) if gap_inputs else 0,
+        )
+
         return ClaimPipelineResult(
             assessments=assessments,
             requirement_results=requirement_results,
