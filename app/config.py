@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     opensearch_evidence_index_prefix: str = "candidate-evidence"
     opensearch_evidence_read_alias: str = "candidate-evidence-read"
     opensearch_evidence_write_alias: str = "candidate-evidence-write"
+    opensearch_vacancy_index_prefix: str = "vacancies"
+    opensearch_vacancy_read_alias: str = "vacancies-read"
+    opensearch_vacancy_write_alias: str = "vacancies-write"
     embedding_dimensions: int = Field(default=384, ge=1, le=65_536)
     matching_v2_enabled: bool = False
     matching_v2_shadow_mode: bool = True
@@ -34,6 +37,8 @@ class Settings(BaseSettings):
     matching_model_service_url: str = "http://localhost:8090"
     matching_retrieval_top_k: int = Field(default=20, ge=1, le=200)
     matching_reranker_top_k: int = Field(default=5, ge=1, le=50)
+    vacancy_search_top_k: int = Field(default=100, ge=1, le=500)
+    vacancy_search_rrf_k: int = Field(default=60, ge=1, le=500)
     embedding_service_url: str | None = None
     matching_model_timeout_seconds: float = Field(default=120, ge=1, le=600)
     reranker_service_url: str | None = None
@@ -138,6 +143,9 @@ class Settings(BaseSettings):
         "opensearch_evidence_index_prefix",
         "opensearch_evidence_read_alias",
         "opensearch_evidence_write_alias",
+        "opensearch_vacancy_index_prefix",
+        "opensearch_vacancy_read_alias",
+        "opensearch_vacancy_write_alias",
     )
     @classmethod
     def validate_opensearch_name(cls, value: str) -> str:

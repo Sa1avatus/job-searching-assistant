@@ -63,6 +63,7 @@ class VacancyCatalogService:
         employment_type: str = "all",
         page: int = 1,
         page_size: int = 20,
+        vacancy_ids: tuple[str, ...] | None = None,
     ) -> SavedVacancyPage:
         if self._session.get(UserRow, user_id) is None:
             raise EntityNotFoundError("User not found")
@@ -92,20 +93,40 @@ class VacancyCatalogService:
             published_to=published_to,
             work_format=work_format,
             employment_type=employment_type,
+            vacancy_ids=vacancy_ids,
         )
         count_statement = statement.with_only_columns(func.count()).order_by(None)
         total = int(self._session.scalar(count_statement) or 0)
         total_pages = max(1, (total + page_size - 1) // page_size)
         effective_page = min(page, total_pages)
-        rows = self._session.execute(
-            statement.order_by(
-                ApplicationRow.match_score.desc(),
-                ApplicationRow.created_at.desc(),
-                ApplicationRow.id,
+
+        if vacancy_ids:
+            # Preserve hybrid search ordering using CASE WHEN
+            from sqlalchemy import case
+
+            rank_order = {vid: idx for idx, vid in enumerate(vacancy_ids)}
+            order_clause = case(
+                rank_order,
+                value=VacancyRow.id,
             )
-            .offset((effective_page - 1) * page_size)
-            .limit(page_size)
-        ).all()
+            rows = self._session.execute(
+                statement.order_by(
+                    order_clause,
+                    ApplicationRow.id,
+                )
+                .offset((effective_page - 1) * page_size)
+                .limit(page_size)
+            ).all()
+        else:
+            rows = self._session.execute(
+                statement.order_by(
+                    ApplicationRow.match_score.desc(),
+                    ApplicationRow.created_at.desc(),
+                    ApplicationRow.id,
+                )
+                .offset((effective_page - 1) * page_size)
+                .limit(page_size)
+            ).all()
 
         return SavedVacancyPage(
             items=[
@@ -170,18 +191,23 @@ class VacancyCatalogService:
         published_to: date | None,
         work_format: str,
         employment_type: str,
+        vacancy_ids: tuple[str, ...] | None = None,
     ) -> Select[tuple[ApplicationRow, VacancyRow]]:
-        normalized_query = query.strip()
-        if normalized_query:
-            pattern = f"%{normalized_query}%"
-            statement = statement.where(
-                or_(
-                    VacancyRow.title.ilike(pattern),
-                    VacancyRow.company.ilike(pattern),
-                    VacancyRow.location.ilike(pattern),
-                    VacancyRow.description_text.ilike(pattern),
+        if vacancy_ids is not None:
+            # Hybrid search already ranked — use pre-filtered IDs instead of ILIKE
+            statement = statement.where(VacancyRow.id.in_(vacancy_ids))
+        else:
+            normalized_query = query.strip()
+            if normalized_query:
+                pattern = f"%{normalized_query}%"
+                statement = statement.where(
+                    or_(
+                        VacancyRow.title.ilike(pattern),
+                        VacancyRow.company.ilike(pattern),
+                        VacancyRow.location.ilike(pattern),
+                        VacancyRow.description_text.ilike(pattern),
+                    )
                 )
-            )
         if location.strip():
             statement = statement.where(VacancyRow.location.ilike(f"%{location.strip()}%"))
         if status == "all":

@@ -239,3 +239,102 @@ def test_catalog_exposes_and_filters_vacancy_attributes() -> None:
     assert page.items[0].salary_text == "$120,000"
     assert page.items[0].work_format == "remote"
     assert page.items[0].employment_types == ("contract",)
+
+
+def test_catalog_vacancy_ids_prefilters() -> None:
+    """When vacancy_ids is provided, only those vacancies are returned."""
+    session_factory = _session_factory()
+    with session_factory() as session:
+        recruitment = RecruitmentService(session)
+        user = recruitment.create_user("Candidate")
+        v1 = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/v1",
+            title="Python Engineer",
+            company="Alpha",
+            required_skills=[],
+            preferred_skills=[],
+        )
+        v2 = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/v2",
+            title="Data Engineer",
+            company="Beta",
+            required_skills=[],
+            preferred_skills=[],
+        )
+        v3 = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/v3",
+            title="ML Engineer",
+            company="Gamma",
+            required_skills=[],
+            preferred_skills=[],
+        )
+        recruitment.prepare_application(user.id, v1.id)
+        recruitment.prepare_application(user.id, v2.id)
+        recruitment.prepare_application(user.id, v3.id)
+
+        # Filter to only v1 and v3 (simulating hybrid search result)
+        page = VacancyCatalogService(session).list_saved_vacancies(
+            user.id,
+            vacancy_ids=(v1.id, v3.id),
+        )
+
+    assert page.total == 2
+    titles = {item.title for item in page.items}
+    assert titles == {"Python Engineer", "ML Engineer"}
+
+
+def test_catalog_vacancy_ids_preserves_order() -> None:
+    """When vacancy_ids is provided, ordering follows the IDs tuple."""
+    session_factory = _session_factory()
+    with session_factory() as session:
+        recruitment = RecruitmentService(session)
+        user = recruitment.create_user("Candidate")
+        v1 = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/order1",
+            title="First",
+            company="A",
+            required_skills=[],
+            preferred_skills=[],
+        )
+        v2 = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/order2",
+            title="Second",
+            company="B",
+            required_skills=[],
+            preferred_skills=[],
+        )
+        recruitment.prepare_application(user.id, v1.id)
+        recruitment.prepare_application(user.id, v2.id)
+
+        # v2 should come first (hybrid search ranked it higher)
+        page = VacancyCatalogService(session).list_saved_vacancies(
+            user.id,
+            vacancy_ids=(v2.id, v1.id),
+        )
+
+    assert page.total == 2
+    assert page.items[0].title == "Second"
+    assert page.items[1].title == "First"
+
+
+def test_catalog_vacancy_ids_empty_returns_nothing() -> None:
+    """Empty vacancy_ids tuple returns no results."""
+    session_factory = _session_factory()
+    with session_factory() as session:
+        recruitment = RecruitmentService(session)
+        user = recruitment.create_user("Candidate")
+        vacancy = recruitment.create_vacancy(
+            source_url="https://example.test/jobs/empty-test",
+            title="Only",
+            company="A",
+            required_skills=[],
+            preferred_skills=[],
+        )
+        recruitment.prepare_application(user.id, vacancy.id)
+
+        page = VacancyCatalogService(session).list_saved_vacancies(
+            user.id,
+            vacancy_ids=(),
+        )
+
+    assert page.total == 0

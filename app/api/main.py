@@ -475,6 +475,86 @@ def _configured_secret(secret: SecretStr | None) -> str | None:
     return value or None
 
 
+# --- Vacancy hybrid search singleton ---
+
+_vacancy_retriever_instance: object | None = None  # VacancyHybridRetriever | None
+_vacancy_retriever_init_attempted = False
+_vacancy_index_ensured = False
+
+
+async def _get_vacancy_retriever():  # type: ignore[return]
+    """Lazy-initialise the vacancy hybrid retriever.
+
+    Returns VacancyHybridRetriever if OpenSearch + embedding service are
+    configured and reachable, None otherwise.  The instance is cached for
+    the process lifetime.
+    """
+    from app.matching.http_models import HttpEmbeddingClient
+    from app.matching.vacancy_index import OpenSearchVacancyIndex
+    from app.matching.vacancy_retriever import VacancyHybridRetriever
+
+    global _vacancy_retriever_instance, _vacancy_retriever_init_attempted, _vacancy_index_ensured
+    if _vacancy_retriever_init_attempted:
+        if _vacancy_retriever_instance is not None and not _vacancy_index_ensured:
+            retriever = _vacancy_retriever_instance
+            try:
+                await retriever._vacancy_index.ensure_index()
+                _vacancy_index_ensured = True
+            except Exception:
+                pass
+        return _vacancy_retriever_instance
+    _vacancy_retriever_init_attempted = True
+
+    settings = get_settings()
+    try:
+        opensearch_http = httpx.AsyncClient(
+            base_url=settings.opensearch_url,
+            timeout=30,
+            follow_redirects=False,
+        )
+        # Quick health check
+        health = await opensearch_http.get("/_cluster/health")
+        if health.status_code >= 400:
+            await opensearch_http.aclose()
+            return None
+
+        vacancy_index = OpenSearchVacancyIndex(
+            opensearch_http,
+            index_prefix=settings.opensearch_vacancy_index_prefix,
+            read_alias=settings.opensearch_vacancy_read_alias,
+            write_alias=settings.opensearch_vacancy_write_alias,
+            dimensions=settings.embedding_dimensions,
+        )
+        await vacancy_index.ensure_index()
+        _vacancy_index_ensured = True
+
+        embedding_client: HttpEmbeddingClient | None = None
+        if settings.resolved_embedding_service_url:
+            try:
+                model_http = httpx.AsyncClient(
+                    base_url=settings.resolved_embedding_service_url,
+                    timeout=30,
+                    follow_redirects=False,
+                )
+                embedding_client = HttpEmbeddingClient(
+                    model_http,
+                    dimensions=settings.embedding_dimensions,
+                )
+            except Exception:
+                embedding_client = None
+
+        retriever = VacancyHybridRetriever(
+            vacancy_index,
+            embedding_client,
+            top_k=settings.vacancy_search_top_k,
+            rrf_k=settings.vacancy_search_rrf_k,
+        )
+        _vacancy_retriever_instance = retriever
+        return retriever
+    except Exception:
+        return None
+
+
 def llm_is_configured(settings: Settings) -> bool:
     return bool(
         _configured_secret(settings.anthropic_api_key)
@@ -675,7 +755,7 @@ def dashboard_interface() -> FileResponse:
     "/v1/users/{user_id}/vacancies",
     response_model=SavedVacancyPageResponse,
 )
-def list_saved_vacancies(
+async def list_saved_vacancies(
     user_id: str,
     session: Annotated[Session, Depends(session_scope)],
     query: str = "",
@@ -708,6 +788,19 @@ def list_saved_vacancies(
         raise HTTPException(status_code=422, detail="Invalid vacancy pagination or score filter")
     if published_from is not None and published_to is not None and published_from > published_to:
         raise HTTPException(status_code=422, detail="Invalid vacancy publication date range")
+
+    # Hybrid search: BM25 + vector + RRF when query is provided
+    vacancy_ids: tuple[str, ...] | None = None
+    normalized_query = query.strip()
+    if normalized_query:
+        retriever = await _get_vacancy_retriever()
+        if retriever is not None:
+            try:
+                vacancy_ids = tuple(await retriever.search(normalized_query))
+            except Exception:
+                # Hybrid search failed — fall back to ILIKE
+                vacancy_ids = None
+
     try:
         vacancy_page = VacancyCatalogService(session).list_saved_vacancies(
             user_id,
@@ -722,6 +815,7 @@ def list_saved_vacancies(
             employment_type=employment_type,
             page=page,
             page_size=page_size,
+            vacancy_ids=vacancy_ids,
         )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -3599,9 +3693,7 @@ async def clear_matching_queue_endpoint(
         .select_from(WorkflowTaskRow)
         .where(
             WorkflowTaskRow.queue_name == MATCHING_QUEUE_NAME,
-            WorkflowTaskRow.state.in_(
-                ("pending", "scheduled", "retry_scheduled", "running")
-            ),
+            WorkflowTaskRow.state.in_(("pending", "scheduled", "retry_scheduled", "running")),
         )
     )
     return ClearMatchingQueueResponse(
