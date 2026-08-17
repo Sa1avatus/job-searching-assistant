@@ -170,7 +170,7 @@ class RagSyncService:
             select(VacancyRow)
             .join(ApplicationRow, ApplicationRow.vacancy_id == VacancyRow.id)
             .where(ApplicationRow.user_id == user_id)
-            .distinct()
+            .distinct(VacancyRow.id)
             .order_by(VacancyRow.id)
             .limit(batch_size + 1)
         )
