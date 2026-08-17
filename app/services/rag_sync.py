@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from dataclasses import asdict, dataclass
 
 import structlog
@@ -150,6 +151,7 @@ class RagSyncService:
         batch_size: int = 50,
         after_resume_id: str | None = None,
         after_vacancy_id: str | None = None,
+        force: bool = False,
     ) -> RagBackfillResult:
         if batch_size < 1 or batch_size > 100:
             raise ValueError("batch_size must be between 1 and 100")
@@ -180,6 +182,36 @@ class RagSyncService:
 
         resume_batch = resumes[:batch_size]
         vacancy_batch = vacancies[:batch_size]
+
+        # Force mode: delete existing documents before re-ingesting
+        if force:
+            logger.info(
+                "rag_backfill_force_delete",
+                user_id=user_id,
+                resumes=len(resume_batch),
+                vacancies=len(vacancy_batch),
+            )
+            for cv in resume_batch:
+                with contextlib.suppress(Exception):
+                    await self._rag.delete_document(
+                        owner_user_id=user_id,
+                        external_document_id=f"cv:{cv.id}",
+                        collection=RESUME_COLLECTION,
+                    )
+            for vacancy in vacancy_batch:
+                with contextlib.suppress(Exception):
+                    await self._rag.delete_document(
+                        owner_user_id=user_id,
+                        external_document_id=f"vacancy:{vacancy.id}",
+                        collection=VACANCY_COLLECTION,
+                    )
+            with contextlib.suppress(Exception):
+                await self._rag.delete_document(
+                    owner_user_id=user_id,
+                    external_document_id=f"profile:{user_id}",
+                    collection=PROFILE_COLLECTION,
+                )
+
         profile_result = await self.sync_profile(user_id)
         resume_results = [await self.sync_resume(cv.id) for cv in resume_batch]
         vacancy_results = [

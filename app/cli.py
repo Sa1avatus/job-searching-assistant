@@ -140,6 +140,7 @@ def _rag_backfill(args: argparse.Namespace) -> int:
                     batch_size=args.batch_size,
                     after_resume_id=args.after_resume_id,
                     after_vacancy_id=args.after_vacancy_id,
+                    force=args.force,
                 )
             )
     except ValueError as error:
@@ -205,6 +206,9 @@ def build_parser() -> argparse.ArgumentParser:
     rag_backfill.add_argument("--batch-size", type=int, default=50, choices=range(1, 101))
     rag_backfill.add_argument("--after-resume-id")
     rag_backfill.add_argument("--after-vacancy-id")
+    rag_backfill.add_argument(
+        "--force", action="store_true", help="Re-index already processed documents"
+    )
     rag_backfill.set_defaults(handler=_rag_backfill)
 
     matching_backfill = commands.add_parser(
