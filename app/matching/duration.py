@@ -76,13 +76,16 @@ def evaluate_duration(
     Parallel intervals are merged (union) to avoid double-counting.
     """
     if required_years <= 0:
+        # Unknown or missing required_years — cannot determine satisfaction.
+        # Return "unknown" so the pipeline treats this as insufficient evidence
+        # rather than falsely confirming a match.
         return DurationResult(
             claim_id=claim_id,
             required_years=required_years,
             actual_years=0.0,
-            status="matched",
+            status="unknown",
             source_intervals=[],
-            confidence=1.0,
+            confidence=0.0,
         )
 
     if not intervals:

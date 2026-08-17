@@ -558,6 +558,10 @@ class ClaimMatchPipeline:
         elif duration_result.status == "partial":
             relation = "partial"
             strength = 0.4 + 0.3 * (duration_result.actual_years / max(required_years, 1))
+        elif duration_result.status == "unknown":
+            # required_years was 0 or missing — cannot determine satisfaction
+            relation = "insufficient_evidence"
+            strength = 0.0
         else:
             # insufficient_evidence — dates not available, NOT "missing skill"
             relation = "insufficient_evidence"
