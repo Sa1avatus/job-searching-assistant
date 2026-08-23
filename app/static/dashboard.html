@@ -14,74 +14,11 @@
     .eyebrow { color: #8da2fb; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; font-size: 12px; }
     main.dashboard-shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; padding-bottom: 40px; }
     .sidebar { position: sticky; top: 18px; display: grid; gap: 7px; padding: 12px; background: #0e162b; border: 1px solid #263154; border-radius: 18px; }
-    .menu-button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; background: transparent; border-color: transparent; color: #aab5d6; }
-    .menu-button::after { content: '›'; flex: 0 0 auto; color: #7181ad; font-size: 20px; line-height: 1; transform: rotate(0deg); transition: transform .18s ease, color .18s ease; }
-    .menu-button:hover::after { color: #c5cdef; }
+    .menu-button { width: 100%; text-align: left; background: transparent; border-color: transparent; color: #aab5d6; }
     .menu-button.active { background: #1d294d; border-color: #5065a8; color: #fff; }
-    .menu-button.active::after { color: #fff; transform: rotate(90deg); }
     .dashboard-content { min-width: 0; }
     section.step { display: none; background: linear-gradient(145deg, #111a34, #0e162b); border: 1px solid #263154; border-radius: 18px; padding: 22px; margin-bottom: 18px; box-shadow: 0 18px 45px #02061755; }
-    section.step.active { display: block; animation: dashboard-panel-open .16s ease-out; }
-    @keyframes dashboard-panel-open {
-      from { opacity: 0; transform: translateY(-4px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    /* Collapsible blocks inside the active right-hand section. */
-    .dashboard-subsection-toggle {
-      position: relative;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      width: 100%;
-      margin: 10px 0 0 !important;
-      padding: 13px 44px 13px 14px;
-      border: 1px solid #303b60;
-      border-radius: 12px;
-      background: #101831;
-      color: #eef2ff;
-      cursor: pointer;
-      user-select: none;
-      transition: border-color .18s ease, background .18s ease;
-    }
-    .dashboard-subsection-toggle:hover {
-      border-color: #5065a8;
-      background: #14203f;
-    }
-    .dashboard-subsection-toggle::after {
-      content: '›';
-      position: absolute;
-      right: 16px;
-      top: 50%;
-      color: #8da2fb;
-      font-size: 22px;
-      line-height: 1;
-      transform: translateY(-50%) rotate(0deg);
-      transition: transform .18s ease;
-    }
-    .dashboard-subsection-toggle[aria-expanded="true"]::after {
-      transform: translateY(-50%) rotate(90deg);
-    }
-    section.step > h2.dashboard-subsection-toggle {
-      font-size: 18px;
-    }
-    section.step > h3.dashboard-subsection-toggle,
-    section.step > div > h3.dashboard-subsection-toggle {
-      font-size: 17px;
-    }
-    .dashboard-subsection-body {
-      padding: 14px 2px 4px;
-    }
-    .dashboard-subsection-body[hidden] {
-      display: none !important;
-    }
-    .dashboard-nested-subsection {
-      margin-top: 10px !important;
-    }
-    .dashboard-nested-subsection > .dashboard-subsection-toggle {
-      margin-top: 0 !important;
-    }
+    section.step.active { display: block; }
     section.step h2 { margin: 0 0 4px; font-size: 18px; }
     section.step .hint { color: #aab5d6; font-size: 13px; margin-bottom: 14px; }
     input, textarea, button, select { border: 1px solid #303b60; border-radius: 10px; padding: 10px 13px; font: inherit; }
@@ -96,8 +33,6 @@
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
     .row > div { flex: 1; min-width: 220px; }
     label { display: block; font-weight: 700; color: #c5cdef; margin-bottom: 6px; font-size: 13px; }
-    .consent-label { display: flex; align-items: center; gap: 8px; font-weight: 400; margin-top: 10px; cursor: pointer; }
-    .consent-label input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 auto; accent-color: #6ee7b7; }
     #status { min-height: 22px; color: #aab5d6; margin: 4px 0 14px; }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .chip { display: flex; align-items: center; gap: 6px; background: #17224a; border: 1px solid #35437a; border-radius: 999px; padding: 6px 12px; font-size: 13px; }
@@ -110,27 +45,6 @@
     .match-meter { min-width: 128px; color: hsl(calc(var(--match) * 1.2), 76%, 62%); font-weight: 800; text-align: right; }
     .match-meter__track { height: 9px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: #27304d; }
     .match-meter__fill { width: calc(var(--match) * 1%); height: 100%; border-radius: inherit; background: hsl(calc(var(--match) * 1.2), 72%, 46%); transition: width .2s ease; }
-    .card-corner { position: relative; display: flex; flex-direction: column; align-items: flex-end; gap: 9px; min-width: 128px; }
-    .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 800; line-height: 1.2; border: 1px solid transparent; cursor: pointer; }
-    .status-badge[data-status="saved"] { background: #223056; color: #c5cdef; border-color: #33416d; }
-    .status-badge[data-status="awaiting_review"] { background: #342a17; color: #facc15; border-color: #6b5a1e; }
-    .status-badge[data-status="approved"] { background: #173f35; color: #6ee7b7; border-color: #2b725e; }
-    .status-badge[data-status="rejected"] { background: #3a1a24; color: #fca5a5; border-color: #7a2c3a; }
-    .status-badge[data-status="employer_rejected"] { background: #3a241a; color: #fdba74; border-color: #7a4a2c; }
-    .status-badge[data-status="skipped"] { background: #262c3f; color: #93a3d4; border-color: #3a4772; }
-    .status-badge[data-status="submitted"] { background: #173f35; color: #6ee7b7; border-color: #2b725e; }
-    .status-badge[data-status="interview"] { background: #2a1f4d; color: #c4b5fd; border-color: #5b4a9e; }
-    .status-badge[data-status="draft"] { background: #262c3f; color: #93a3d4; border-color: #3a4772; }
-    .status-badge[data-status="needs_review"] { background: #3a2a0f; color: #fbbf24; border-color: #7a5a1e; }
-    .email-review { margin-top: 16px; padding: 14px; border: 1px solid #33416d; border-radius: 10px; background: #1a2036; }
-    .email-review h3 { margin: 0 0 6px; font-size: 16px; }
-    .email-review__list { display: grid; gap: 10px; margin-top: 10px; }
-    .email-review__item { padding: 12px; border: 1px solid #27304d; border-radius: 8px; background: #161c2e; }
-    .email-review__subject { font-weight: 700; }
-    .email-review__meta { color: #8a94b8; font-size: 12px; margin-top: 3px; }
-    .email-review__body { color: #aab5d6; white-space: pre-wrap; max-height: 130px; overflow: auto; margin: 8px 0; font-size: 13px; }
-    .email-review__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-    .email-review__actions button { font-size: 12px; }
     .cover-letter { margin-top: 14px; }
     .cover-letter__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
     .cover-letter__header label { margin: 0; }
@@ -147,7 +61,7 @@
     .more-actions__menu, .status-popup { position: absolute; z-index: 30; right: 0; bottom: calc(100% + 8px); width: min(290px, calc(100vw - 48px)); padding: 7px; border: 1px solid #3a4772; border-radius: 12px; background: #101831; box-shadow: 0 18px 45px #020617cc; }
     .more-actions__menu button, .status-popup button { width: 100%; background: transparent; border-color: transparent; text-align: left; }
     .more-actions__menu button:hover, .status-popup button:hover { background: #1d294d; border-color: #5065a8; }
-    .status-popup { top: calc(100% + 8px); right: 0; bottom: auto; }
+    .status-popup { right: calc(100% + 8px); bottom: 0; }
     a.link-btn { color: #a9baff; text-decoration: none; border: 1px solid #303b60; border-radius: 10px; padding: 10px 13px; font-weight: 700; }
     a.link-btn:hover { border-color: #8da2fb; }
     .empty { border: 1px dashed #344166; border-radius: 18px; padding: 40px; text-align: center; color: #aab5d6; }
@@ -191,98 +105,6 @@
     .blacklist-entry { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid #303b60; border-radius: 12px; background: #101831; }
     .summary-affordance { display: block; color: #8da2fb; font-size: 13px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; cursor: help; }
     .summary-affordance:focus { outline: 1px solid #8da2fb; outline-offset: 2px; }
-
-    /* Profile facts — compact card list */
-    #profile-facts-panel { margin-top: 28px !important; }
-    .facts-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
-    .facts-header__copy { min-width: 0; }
-    .facts-header__copy h3 { margin: 0 0 5px; font-size: 22px; }
-    .facts-header__copy .hint { margin: 0; max-width: 720px; }
-    .facts-add-toggle { flex: 0 0 auto; min-height: 42px; display: inline-flex; align-items: center; gap: 8px; padding-inline: 16px; }
-    .facts-add-toggle__plus { font-size: 20px; line-height: 1; font-weight: 500; }
-
-    .facts-add-form { margin-bottom: 16px; padding: 16px; border: 1px solid #3b4c7d; border-radius: 14px; background: #0d162d; box-shadow: inset 0 1px 0 #ffffff08; }
-    .facts-add-grid { display: grid; grid-template-columns: minmax(130px, .8fr) minmax(190px, 1.35fr) minmax(150px, 1fr) auto; gap: 10px; align-items: end; }
-    .facts-form-actions { display: flex; gap: 8px; align-items: center; }
-    .facts-check { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; margin: 0; white-space: nowrap; font-weight: 700; }
-    .facts-check input { width: 16px; height: 16px; margin: 0; }
-
-    .facts-filters { display: grid; grid-template-columns: minmax(160px, .85fr) minmax(180px, 1.2fr) minmax(160px, 1fr) auto; gap: 10px; align-items: end; margin-bottom: 16px; }
-    .facts-filter-field { min-width: 0; }
-    .facts-filter-field label { margin-bottom: 7px; }
-    .facts-verified-filter { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 4px 1px; color: #c5cdef; font-size: 13px; font-weight: 700; white-space: nowrap; }
-    .facts-switch { position: relative; display: inline-block; width: 44px; height: 24px; flex: 0 0 auto; margin: 0; }
-    .facts-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-    .facts-switch__track { position: absolute; inset: 0; border-radius: 999px; border: 1px solid #3a4772; background: #1a2441; transition: .18s ease; }
-    .facts-switch__track::after { content: ''; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; border-radius: 50%; background: #dbe7ff; box-shadow: 0 1px 4px #02061799; transition: .18s ease; }
-    .facts-switch input:checked + .facts-switch__track { background: #2563eb; border-color: #3b82f6; }
-    .facts-switch input:checked + .facts-switch__track::after { transform: translateX(20px); background: #fff; }
-    .facts-switch input:focus-visible + .facts-switch__track { outline: 2px solid #8da2fb; outline-offset: 2px; }
-
-    #profile-facts-list { display: grid; gap: 10px; }
-    .fact-card { position: relative; display: grid; grid-template-columns: 48px minmax(70px, auto) minmax(190px, 1fr) minmax(100px, .42fr) minmax(145px, auto) 40px; gap: 14px; align-items: center; min-height: 76px; padding: 12px 12px 12px 14px; border: 1px solid #30426d; border-radius: 14px; background: linear-gradient(145deg, #111a34, #0e172d); box-shadow: 0 10px 24px #0206171f; }
-    .fact-card:hover { border-color: #435789; background: linear-gradient(145deg, #131e3b, #101a32); }
-    .fact-icon { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid #6d4bd8; border-radius: 12px; background: linear-gradient(145deg, #6d35c7, #4338a4); color: #fff; font-size: 13px; font-weight: 900; letter-spacing: -.04em; box-shadow: inset 0 1px 0 #ffffff2b; }
-    .fact-icon[data-kind="integration"] { border-color: #158f66; background: linear-gradient(145deg, #0b8f61, #12684f); }
-    .fact-icon[data-kind="language"] { border-color: #3b82f6; background: linear-gradient(145deg, #2563eb, #1e4b9f); }
-    .fact-icon[data-kind="experience"] { border-color: #d08b38; background: linear-gradient(145deg, #b76620, #7c4319); }
-    .fact-category-badge { width: max-content; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 5px 9px; border-radius: 8px; background: #1b2650; border: 1px solid #2b3970; color: #c7d2fe; font-size: 12px; font-weight: 800; }
-    .fact-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f8fafc; font-weight: 700; }
-    .fact-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e2e8f0; }
-    .fact-status { width: max-content; display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border-radius: 999px; background: #0b2f2a; color: #6ee7b7; font-size: 12px; font-weight: 800; }
-    .fact-status.unverified { background: #342a17; color: #facc15; }
-    .fact-status__dot { width: 15px; height: 15px; display: grid; place-items: center; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; line-height: 1; }
-    /* Fact ingestion styles */
-    .fact-source-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 6px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-    .fact-source-badge[data-source="manual"] { background: #1b2650; color: #93a3d4; }
-    .fact-source-badge[data-source="resume"] { background: #1a3320; color: #6ee7b7; }
-    .fact-source-badge[data-source="file"] { background: #2d1b4e; color: #c4b5fd; }
-    .fact-source-badge[data-source="inferred"] { background: #342a17; color: #facc15; }
-    .fact-confidence { font-size: 10px; color: #7a8ab5; }
-    .fact-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-    .facts-actions-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-    .facts-actions-row button { min-height: 36px; padding: 0 14px; font-size: 13px; }
-    .fact-import-result { margin: 12px 0; padding: 12px; border: 1px solid #3b4c7d; border-radius: 10px; background: #0d162d; font-size: 13px; }
-    .fact-import-result .stats { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0; }
-    .fact-import-result .stat { display: inline-flex; align-items: center; gap: 4px; }
-    .fact-import-result .stat .num { font-weight: 800; font-size: 16px; }
-    .batch-list { display: grid; gap: 8px; margin: 12px 0; }
-    .batch-card { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px 14px; border: 1px solid #30426d; border-radius: 10px; background: #111a34; font-size: 13px; }
-    .batch-card .batch-info { color: #c5cdef; }
-    .batch-card .batch-stats { display: flex; gap: 10px; color: #93a3d4; font-size: 12px; }
-    .fact-menu-wrap { position: relative; justify-self: end; }
-    .fact-menu-toggle { width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border-color: transparent; background: transparent; color: #aab5d6; font-size: 24px; line-height: 1; }
-    .fact-menu-toggle:hover, .fact-menu-toggle[aria-expanded="true"] { background: #1d294d; border-color: #5065a8; color: #fff; }
-    .fact-menu { position: absolute; z-index: 40; right: 0; top: calc(100% + 6px); min-width: 165px; padding: 6px; border: 1px solid #3a4772; border-radius: 11px; background: #101831; box-shadow: 0 16px 34px #020617cc; }
-    .fact-menu button { width: 100%; border-color: transparent; background: transparent; text-align: left; padding: 9px 10px; }
-    .fact-menu button:hover { background: #1d294d; border-color: #5065a8; }
-    .fact-menu button[data-action="delete"] { color: #fda4af; }
-
-    .fact-editor { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(130px, .8fr) minmax(190px, 1.35fr) minmax(150px, 1fr) auto; gap: 10px; align-items: end; width: 100%; }
-    .fact-editor__actions { display: flex; gap: 8px; align-items: end; }
-    .fact-editor .facts-check { align-self: end; }
-    .fact-card.is-editing { grid-template-columns: 1fr; padding: 16px; }
-
-    .facts-empty { padding: 32px; }
-    .facts-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #263154; }
-    .facts-count { color: #7f8db4; font-size: 12px; }
-    .facts-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
-    .facts-page-size { display: inline-flex; align-items: center; gap: 7px; margin: 0 6px 0 0; color: #aab5d6; font-size: 12px; font-weight: 700; white-space: nowrap; }
-    .facts-page-size select { width: auto; min-width: 68px; padding: 7px 30px 7px 9px; }
-    .facts-page-button { width: 36px; height: 36px; padding: 0; display: inline-grid; place-items: center; font-size: 17px; }
-    .facts-page-indicator { min-width: 68px; text-align: center; color: #c5cdef; font-size: 13px; font-weight: 700; }
-
-    @media (max-width: 1050px) {
-      .facts-filters { grid-template-columns: 1fr 1fr; }
-      .facts-verified-filter { align-self: end; }
-      .facts-add-grid { grid-template-columns: 1fr 1fr; }
-      .fact-card { grid-template-columns: 44px minmax(65px, auto) minmax(150px, 1fr) minmax(90px, .45fr) 36px; }
-      .fact-meta { grid-column: 3 / 5; grid-row: 2; }
-      .fact-menu-wrap { grid-column: 5; grid-row: 1 / 3; }
-      .fact-icon { grid-row: 1 / 3; }
-      .fact-category-badge { grid-row: 1 / 3; }
-      .fact-editor { grid-template-columns: 1fr 1fr; }
-    }
     @media (max-width: 850px) {
       main.dashboard-shell { grid-template-columns: 1fr; }
       .sidebar { position: static; display: flex; overflow-x: auto; }
@@ -291,24 +113,6 @@
       .card-actions { display: flex; overflow-x: auto; padding-bottom: 3px; }
       .card-actions > button, .card-actions > .link-btn { flex: 0 0 190px; }
       .card-actions > .more-actions { flex: 0 0 44px; }
-    }
-    @media (max-width: 650px) {
-      .facts-header { align-items: stretch; flex-direction: column; }
-      .facts-add-toggle { width: 100%; justify-content: center; }
-      .facts-filters, .facts-add-grid, .fact-editor { grid-template-columns: 1fr; }
-      .facts-verified-filter { justify-content: space-between; padding: 2px 0; }
-      .facts-form-actions, .fact-editor__actions { flex-wrap: wrap; }
-      .fact-card { grid-template-columns: 44px minmax(0, 1fr) 36px; gap: 10px; min-height: 0; }
-      .fact-icon { grid-column: 1; grid-row: 1 / 4; align-self: start; }
-      .fact-category-badge { grid-column: 2; grid-row: 1; }
-      .fact-name { grid-column: 2; grid-row: 2; white-space: normal; }
-      .fact-value { grid-column: 2; grid-row: 3; }
-      .fact-meta { grid-column: 1 / 3; grid-row: 4; margin-top: 2px; }
-      .fact-menu-wrap { grid-column: 3; grid-row: 1 / 4; align-self: start; }
-      .fact-card.is-editing { display: block; }
-      .facts-footer { align-items: stretch; flex-direction: column; }
-      .facts-pagination { justify-content: space-between; }
-      .facts-page-size { margin-right: auto; }
     }
     @media (max-width: 520px) { .vacancy-filters { grid-template-columns: 1fr; } }
   </style>
@@ -336,20 +140,19 @@
   </header>
   <main class="dashboard-shell">
     <nav class="sidebar" aria-label="Разделы личного кабинета">
-      <button class="menu-button" type="button" data-menu="vacancies" aria-expanded="false">Все вакансии</button>
-      <button class="menu-button" type="button" data-menu="search" aria-expanded="false">Поиск</button>
-      <button class="menu-button" type="button" data-menu="blacklist" aria-expanded="false">Чёрный список</button>
-      <button class="menu-button" type="button" data-menu="resume" aria-expanded="false">Резюме</button>
-      <button class="menu-button" type="button" data-menu="sessions" aria-expanded="false">Сессии сайтов</button>
-      <button class="menu-button" type="button" data-menu="model" aria-expanded="false">Модель</button>
-      <button class="menu-button" type="button" data-menu="queue" aria-expanded="false">Очередь матчинга</button>
-      <button class="menu-button" type="button" data-menu="access" aria-expanded="false">Профиль и доступ</button>
-      <button class="menu-button" type="button" data-menu="debug" aria-expanded="false">Отладка</button>
+      <button class="menu-button active" type="button" data-menu="vacancies">Все вакансии</button>
+      <button class="menu-button" type="button" data-menu="search">Поиск</button>
+      <button class="menu-button" type="button" data-menu="blacklist">Чёрный список</button>
+      <button class="menu-button" type="button" data-menu="resume">Резюме</button>
+      <button class="menu-button" type="button" data-menu="sessions">Сессии сайтов</button>
+      <button class="menu-button" type="button" data-menu="model">Модель</button>
+      <button class="menu-button" type="button" data-menu="access">Профиль и доступ</button>
+      <button class="menu-button" type="button" data-menu="annotation">Аннотация</button>
     </nav>
     <div class="dashboard-content">
     <div id="status" role="status" aria-live="polite"></div>
 
-    <section class="step" data-panel="vacancies">
+    <section class="step active" data-panel="vacancies">
       <h2>Все сохранённые вакансии</h2>
       <div class="hint">Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.</div>
       <div id="application-statistics" class="statistics-grid" aria-live="polite"></div>
@@ -358,27 +161,20 @@
       <button id="import-application-emails" type="button">Импортировать письма</button>
       <input id="application-email-files" type="file" accept=".eml,.mbox,.zip,message/rfc822,application/zip" multiple hidden>
       <div class="hint">Можно выбрать несколько EML, почтовый ящик mbox или ZIP-архив. Вложенные письма будут обработаны отдельно.</div>
-      <section id="email-review-panel" class="email-review" hidden>
-        <h3>Письма на проверке</h3>
-        <div class="hint">Письма, которые не удалось уверенно связать с вакансией. Свяжите с вакансией или отметьте как не относящееся.</div>
-        <div id="email-review-list" class="email-review__list"></div>
-      </section>
       <div class="vacancy-filters">
-        <div><label for="vacancy-query">Поиск</label><input id="vacancy-query" placeholder="должность, компания или описание"></div>
+        <div><label for="vacancy-query">Текст</label><input id="vacancy-query" placeholder="должность, компания или описание"></div>
         <div><label for="vacancy-source">Источник</label><select id="vacancy-source"><option value="all">Все</option><option value="headhunter">hh.ru</option><option value="linkedin">LinkedIn</option><option value="greenhouse">Greenhouse</option><option value="registry">Реестр</option><option value="other">Другие</option></select></div>
-        <div><label for="vacancy-status">Статус</label><select id="vacancy-status"><option value="all">Все</option><option value="saved">Сохранена</option><option value="awaiting_review">Ожидает решения</option><option value="approved">Принята</option><option value="rejected">Отклонена мной</option><option value="employer_rejected">Отказ работодателя</option><option value="skipped">Пропущена</option><option value="submitted">Отправлена</option><option value="interview">Собеседование</option><option value="needs_review">На проверке</option></select></div>
+        <div><label for="vacancy-status">Статус</label><select id="vacancy-status"><option value="all">Все</option><option value="saved">Сохранена</option><option value="awaiting_review">Ожидает решения</option><option value="approved">Принята</option><option value="rejected">Отклонена мной</option><option value="employer_rejected">Отказ работодателя</option><option value="skipped">Пропущена</option><option value="submitted">Отправлена</option><option value="interview">Собеседование</option></select></div>
         <div><label for="vacancy-location">Локация</label><input id="vacancy-location" placeholder="например, Москва"></div>
         <div><label for="vacancy-score">Соответствие от</label><input id="vacancy-score" type="number" min="0" max="100" value="0"></div>
         <div><label for="vacancy-published-from">Опубликована с</label><input id="vacancy-published-from" type="date"></div>
         <div><label for="vacancy-published-to">Опубликована по</label><input id="vacancy-published-to" type="date"></div>
         <div><label for="vacancy-work-format">Формат работы</label><select id="vacancy-work-format"><option value="all">Все</option><option value="remote">Удалённо</option><option value="hybrid">Гибрид</option><option value="office">Офис</option><option value="unspecified">Не указан</option></select></div>
         <div><label for="vacancy-employment-type">Тип занятости</label><select id="vacancy-employment-type"><option value="all">Все</option><option value="full_time">Полная занятость</option><option value="part_time">Частичная занятость</option><option value="contract">Контракт</option><option value="project">Проект</option><option value="temporary">Временная работа</option><option value="internship">Стажировка</option></select></div>
-        <div><label for="vacancy-matching-v2">Matching v2</label><select id="vacancy-matching-v2"><option value="all">Все</option><option value="completed">Рассчитан</option><option value="pending">Не рассчитан</option></select></div>
       </div>
       <div class="filter-actions">
         <button id="apply-vacancy-filters" type="button" class="primary">Применить</button>
         <button id="reset-vacancy-filters" type="button">Сбросить</button>
-        <button id="rerank-filtered" type="button" style="margin-left:8px;">🔄 Переранжировать все</button>
       </div>
       <div id="vacancy-summary" class="task-state"></div>
       <div id="vacancy-list" class="vacancy-list"></div>
@@ -425,92 +221,21 @@
         <div><label>Город</label><input id="profile-city" autocomplete="address-level2"></div>
         <div style="flex:0"><button id="save-personal-data" type="button" class="primary">Сохранить личные данные</button></div>
       </div>
-      <label class="consent-label"><input id="store-sensitive-personal-data" type="checkbox"> Я явно разрешаю хранить email и телефон в зашифрованном виде; перед их использованием требуется проверка.</label>
+      <label><input id="store-sensitive-personal-data" type="checkbox"> Я явно разрешаю хранить email и телефон в зашифрованном виде; перед их использованием требуется проверка.</label>
       <div id="personal-data-state" class="task-state"></div>
-      <div id="profile-facts-panel">
-        <div class="facts-header">
-          <div class="facts-header__copy">
-            <h3>Факты обо мне</h3>
-            <div class="hint">Только подтверждённые факты используются для оценки вакансий и сопроводительных писем.</div>
-          </div>
-          <button id="profile-fact-add-toggle" type="button" class="primary facts-add-toggle" aria-expanded="false" aria-controls="profile-fact-form">
-            <span class="facts-add-toggle__plus" aria-hidden="true">+</span>
-            <span>Добавить факт</span>
-          </button>
-        </div>
-
-        <div class="facts-actions-row">
-          <button id="fact-import-file-btn" type="button" class="primary">📁 Импорт из файла</button>
-          <button id="fact-extract-resume-btn" type="button" class="primary">📄 Извлечь из резюме</button>
-          <button id="fact-batch-history-btn" type="button">📋 История импорта</button>
-          <input id="fact-import-file-input" type="file" accept=".txt,.md,.csv,.json,.pdf,.docx" hidden>
-        </div>
-        <div id="fact-import-result" class="fact-import-result" hidden></div>
-        <div id="fact-batch-history" class="batch-list" hidden></div>
-
-        <form id="profile-fact-form" class="facts-add-form" hidden>
-          <div class="facts-add-grid">
+      <div id="profile-facts-panel" style="margin-top:24px;">
+        <h3>Факты обо мне</h3>
+        <div class="hint">Только подтверждённые факты используются для оценки вакансий и сопроводительных писем.</div>
+        <form id="profile-fact-form">
+          <div class="row" style="margin-top:12px;">
             <div><label for="profile-fact-category">Категория</label><input id="profile-fact-category" required maxlength="100" placeholder="skill"></div>
             <div><label for="profile-fact-name">Название</label><input id="profile-fact-name" required maxlength="200" placeholder="Python"></div>
             <div><label for="profile-fact-value">Значение</label><input id="profile-fact-value" required placeholder="5 лет"></div>
-            <div class="facts-form-actions">
-              <label class="facts-check"><input id="profile-fact-verified" type="checkbox" checked> <span>Подтверждён</span></label>
-              <button type="submit" class="primary">Сохранить</button>
-              <button id="profile-fact-add-cancel" type="button">Отмена</button>
-            </div>
+            <div style="flex:0"><label><input id="profile-fact-verified" type="checkbox" checked> Подтверждён</label></div>
+            <div style="flex:0"><button type="submit" class="primary">Добавить факт</button></div>
           </div>
         </form>
-
-        <div class="facts-filters" aria-label="Фильтры фактов">
-          <div class="facts-filter-field">
-            <label for="profile-fact-category-filter">Категория</label>
-            <select id="profile-fact-category-filter"><option value="">Все категории</option></select>
-          </div>
-          <div class="facts-filter-field">
-            <label for="profile-fact-name-filter">Название</label>
-            <input id="profile-fact-name-filter" type="search" placeholder="Поиск по названию">
-          </div>
-          <div class="facts-filter-field">
-            <label for="profile-fact-value-filter">Значение</label>
-            <input id="profile-fact-value-filter" type="search" placeholder="Поиск по значению">
-          </div>
-          <div class="facts-filter-field">
-            <label for="profile-fact-source-filter">Источник</label>
-            <select id="profile-fact-source-filter">
-              <option value="">Все источники</option>
-              <option value="manual">manual</option>
-              <option value="resume">resume</option>
-              <option value="file">file</option>
-              <option value="inferred">inferred</option>
-            </select>
-          </div>
-          <div class="facts-verified-filter">
-            <span>Только подтверждённые</span>
-            <label class="facts-switch" aria-label="Только подтверждённые">
-              <input id="profile-fact-verified-filter" type="checkbox">
-              <span class="facts-switch__track" aria-hidden="true"></span>
-            </label>
-          </div>
-        </div>
-
         <div id="profile-facts-list"></div>
-        <div class="facts-footer">
-          <div id="profile-facts-count" class="facts-count" aria-live="polite"></div>
-          <div class="facts-pagination" aria-label="Пагинация фактов">
-            <label class="facts-page-size" for="profile-facts-page-size">
-              <span>На странице</span>
-              <select id="profile-facts-page-size">
-                <option value="5">5</option>
-                <option value="10" selected>10</option>
-                <option value="20">20</option>
-                <option value="50">50</option>
-              </select>
-            </label>
-            <button id="profile-facts-previous" class="facts-page-button" type="button" aria-label="Предыдущая страница">←</button>
-            <span id="profile-facts-page" class="facts-page-indicator">1 / 1</span>
-            <button id="profile-facts-next" class="facts-page-button" type="button" aria-label="Следующая страница">→</button>
-          </div>
-        </div>
       </div>
       <h3>Настройки отклика</h3>
       <div class="hint">Значения по умолчанию для вопросов работодателя. Их можно будет переопределить для конкретной вакансии.</div>
@@ -526,49 +251,18 @@
 
     <section class="step" data-panel="model">
       <h2>Языковая модель</h2>
-      <div class="hint">Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Для матчинга и генерации материалов настраивается своя модель: получите список доступных моделей, выберите одну и сохраните.</div>
-
-      <h3>Матчинг</h3>
-      <div class="hint">Модель для извлечения требований, декомпозиции навыков и оценки соответствия резюме.</div>
+      <div class="hint">Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Получите список доступных моделей, выберите одну и сохраните.</div>
       <div class="row">
-        <div><label>Провайдер</label><select id="llm-matching-provider"><option value="gemini">Google Gemini</option><option value="anthropic">Anthropic Claude</option><option value="openai_compatible">OpenAI-compatible</option></select></div>
-        <div id="llm-matching-base-url-field" hidden><label>Базовый URL API</label><input id="llm-matching-base-url" type="url" placeholder="https://example.com/v1"></div>
-        <div><label>API-ключ провайдера</label><input id="llm-matching-api-key" type="password" autocomplete="new-password" placeholder="вставьте ключ"></div>
-        <div style="flex:0"><button id="load-matching-models" type="button">Получить модели</button></div>
+        <div><label>Провайдер</label><select id="llm-provider"><option value="gemini">Google Gemini</option><option value="anthropic">Anthropic Claude</option><option value="openai_compatible">OpenAI-compatible</option></select></div>
+        <div id="llm-base-url-field" hidden><label>Базовый URL API</label><input id="llm-base-url" type="url" placeholder="https://example.com/v1"></div>
+        <div><label>API-ключ провайдера</label><input id="llm-api-key" type="password" autocomplete="new-password" placeholder="вставьте ключ"></div>
+        <div style="flex:0"><button id="load-models" type="button">Получить модели</button></div>
       </div>
       <div class="row" style="margin-top:12px;">
-        <div><label>Модель</label><select id="llm-matching-model"><option value="">Сначала получите список моделей</option></select></div>
-        <div style="flex:0"><button id="save-matching-llm" type="button" class="primary">Сохранить настройку</button></div>
+        <div><label>Модель</label><select id="llm-model"><option value="">Сначала получите список моделей</option></select></div>
+        <div style="flex:0"><button id="save-llm" type="button" class="primary">Сохранить настройку</button></div>
       </div>
-      <div id="llm-matching-state" class="task-state"></div>
-
-      <h3 style="margin-top:20px;">Генерация материалов</h3>
-      <div class="hint">Модель для сопроводительных писем, ответов на скрининг и анализа резюме.</div>
-      <div class="row">
-        <div><label>Провайдер</label><select id="llm-materials-provider"><option value="gemini">Google Gemini</option><option value="anthropic">Anthropic Claude</option><option value="openai_compatible">OpenAI-compatible</option></select></div>
-        <div id="llm-materials-base-url-field" hidden><label>Базовый URL API</label><input id="llm-materials-base-url" type="url" placeholder="https://example.com/v1"></div>
-        <div><label>API-ключ провайдера</label><input id="llm-materials-api-key" type="password" autocomplete="new-password" placeholder="вставьте ключ"></div>
-        <div style="flex:0"><button id="load-materials-models" type="button">Получить модели</button></div>
-      </div>
-      <div class="row" style="margin-top:12px;">
-        <div><label>Модель</label><select id="llm-materials-model"><option value="">Сначала получите список моделей</option></select></div>
-        <div style="flex:0"><button id="save-materials-llm" type="button" class="primary">Сохранить настройку</button></div>
-      </div>
-      <div id="llm-materials-state" class="task-state"></div>
-    </section>
-
-    <section class="step" data-panel="queue">
-      <h2>Очередь матчинга</h2>
-      <div class="hint">Очередь задач перерасчёта матчинга, которые обращаются к локальной модели. «Остановить» запрещает воркеру брать новые задачи. «Очистить» останавливает обработку, отменяет все ожидающие задачи и прерывает зависшие. «Продолжить» снова запускает обработку.</div>
-      <div class="actions" style="margin-top:12px;">
-        <button id="matching-queue-pause" type="button">Остановить обработку</button>
-        <button id="matching-queue-resume" type="button" class="primary">Продолжить обработку</button>
-        <button id="matching-queue-clear" type="button" class="danger">Очистить очередь</button>
-        <button id="matching-queue-refresh" type="button">Обновить очередь</button>
-      </div>
-      <div id="matching-queue-state" class="task-state"></div>
-      <div id="matching-queue-summary" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;"></div>
-      <div id="matching-queue-list" class="vacancy-list" style="margin-top:12px;"></div>
+      <div id="llm-state" class="task-state"></div>
     </section>
 
     <section class="step" data-panel="sessions">
@@ -630,7 +324,6 @@
       <div class="row" style="margin-top:16px;">
         <div><label for="resume-selector">Мои резюме</label><select id="resume-selector"></select></div>
         <div style="flex:0"><label>&nbsp;</label><button id="analyze-resume" type="button">Проанализировать выбранное</button></div>
-        <div style="flex:0"><label>&nbsp;</label><button id="send-resume-to-rag" type="button">Отправить в RAG</button></div>
         <div style="flex:0"><label>&nbsp;</label><button id="delete-resume" type="button" class="danger">Удалить выбранное</button></div>
       </div>
       <div id="resume-state" class="hint"></div>
@@ -675,48 +368,69 @@
       <label for="greenhouse-boards">Доски Greenhouse</label>
       <textarea id="greenhouse-boards" placeholder="По одной ссылке на строку, например https://boards.greenhouse.io/company. Если оставить пустым, используются Greenhouse-доски из уже сохранённых вакансий."></textarea>
       <button id="search" type="button" class="primary">Найти вакансии</button>
-      <button id="rerank-all" type="button" style="margin-left:8px;">Переранжировать</button>
-      <label style="margin-left:12px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
-        <input type="checkbox" id="direct-rerank"> Сразу в реранкер
-      </label>
-      <div id="reranker-model-info" class="hint" style="margin-top:8px;"></div>
     </section>
 
     <section id="results" class="step" data-panel="search"></section>
+    <section class="step" data-panel="annotation">
+      <h2>Аннотация для обучения LTR</h2>
+      <div class="hint">Сбор ручной разметки для обучения Learning-to-Rank модели. Выберите режим и резюме, затем размечайте вакансии по одной.</div>
 
-    <section class="step" data-panel="debug">
-      <h2>Отладка</h2>
-      <div class="debug-controls" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-        <div><label for="debug-level">Уровень</label>
-          <select id="debug-level">
-            <option value="verbose">Verbose</option>
-            <option value="debug" selected>Debug</option>
-            <option value="info">Info</option>
-            <option value="warning">Warning</option>
-            <option value="error">Error</option>
-            <option value="critical">Critical</option>
-            <option value="major">Major</option>
+      <div class="row" style="margin-top:16px;">
+        <div>
+          <label for="annotation-mode">Режим</label>
+          <select id="annotation-mode">
+            <option value="pointwise-sample">Pointwise Sample (стратифицированная выборка)</option>
+            <option value="pairwise">Pairwise (попарное сравнение)</option>
           </select>
         </div>
-        <div><label for="debug-interval">Обновление (сек)</label>
-          <input id="debug-interval" type="number" min="1" max="300" value="5" style="width:60px;">
+        <div>
+          <label for="annotation-resume">Резюме</label>
+          <select id="annotation-resume" disabled>
+            <option value="">Сначала загрузите пользователя</option>
+          </select>
         </div>
-        <div><label for="debug-limit">Лимит</label>
-          <input id="debug-limit" type="number" min="10" max="5000" value="200" style="width:70px;">
-        </div>
-        <div><label for="debug-search">Фильтр</label>
-          <input id="debug-search" type="search" placeholder="текст для поиска" style="width:160px;">
-        </div>
-        <button id="debug-refresh" type="button" class="action-btn">Обновить</button>
-        <button id="debug-toggle" type="button" class="action-btn">▶ Авто</button>
-        <button id="debug-clear" type="button" class="action-btn" style="background:#666;">Очистить</button>
-        <span id="debug-status" style="font-size:12px;color:#888;"></span>
+        <div style="flex:0; margin-top:28px;">
+                  <button id="load-annotation-resumes" type="button" class="primary" title="Нажмите для обновления списка (Shift+клик для принудительного обновления)">Загрузить список резюме</button>
+                </div>
       </div>
-      <div id="debug-log-container" style="max-height:70vh;overflow-y:auto;font-family:monospace;font-size:12px;background:#0a0e14;border:1px solid #1a2030;border-radius:6px;padding:8px;">
-        <div id="debug-log-entries"></div>
+
+      <div id="annotation-state" class="task-state" style="margin-top:12px;"></div>
+
+      <!-- Pointwise Sample Mode -->
+      <div id="pointwise-sample-panel" hidden>
+        <div class="hint" style="margin-top:16px;">Режим стратифицированной выборки: система подбирает ~100 наиболее информативных вакансий из 5 страт (current_top, ltr_top, rank_disagreement, middle_rank, random). Существующая pointwise-разметка исключается, pairwise-only остаются eligible.</div>
+
+        <div class="row" style="margin-top:16px;">
+          <div style="flex:1; min-width:300px;">
+            <label>Текущая вакансия для разметки</label>
+            <div id="pointwise-current-vacancy" class="vacancy-card" style="min-height:200px;">
+              <div class="hint">Нажмите «Загрузить выборку» чтобы начать</div>
+            </div>
+          </div>
+          <div style="flex:0 0 280px; display:flex; flex-direction:column; gap:10px;">
+            <div id="pointwise-progress" class="statistic-card">
+              <div>Прогресс</div>
+              <strong id="pointwise-progress-text">0 / 0</strong>
+              <div style="margin-top:8px; font-size:12px; color:#8da2fb;" id="pointwise-strata-breakdown"></div>
+            </div>
+            <button id="pointwise-load-sample" type="button" class="primary" style="width:100%;" disabled>Загрузить выборку</button>
+            <div class="actions" style="gap:8px;">
+              <button id="pointwise-relevant" type="button" class="accept" disabled style="flex:1;">✓ Relevant</button>
+              <button id="pointwise-maybe" type="button" disabled style="flex:1;">? Maybe</button>
+              <button id="pointwise-not-relevant" type="button" class="danger" disabled style="flex:1;">✗ Not Relevant</button>
+            </div>
+            <button id="pointwise-skip" type="button" style="width:100%;" disabled>Пропустить</button>
+          </div>
+        </div>
+
+        <div id="pointwise-sample-state" class="task-state" style="margin-top:12px;"></div>
+      </div>
+
+      <!-- Pairwise Mode (placeholder) -->
+      <div id="pairwise-panel" hidden>
+        <div class="hint" style="margin-top:16px;">Pairwise режим: попарное сравнение вакансий. (В разработке)</div>
       </div>
     </section>
-
     </div>
   </main>
   <script>
@@ -756,7 +470,6 @@
       if (className) node.className = className;
       return node;
     };
-    const _esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const TRANSLATIONS = {
       'Личный кабинет': 'Dashboard',
       'Поиск и отклик на вакансии': 'Job search and applications',
@@ -767,14 +480,7 @@
       'Резюме': 'Resumes',
       'Сессии сайтов': 'Site sessions',
       'Модель': 'Model',
-      'Очередь матчинга': 'Matching queue',
-      'Очередь задач перерасчёта матчинга, которые обращаются к локальной модели. «Остановить» запрещает воркеру брать новые задачи. «Очистить» останавливает обработку, отменяет все ожидающие задачи и прерывает зависшие. «Продолжить» снова запускает обработку.': 'Queue of matching recalculation tasks that call the local model. "Pause" stops the worker from taking new tasks. "Clear" stops processing, cancels all pending tasks, and interrupts stuck ones. "Resume" starts processing again.',
-      'Остановить обработку': 'Pause processing',
-      'Продолжить обработку': 'Resume processing',
-      'Очистить очередь': 'Clear queue',
-      'Обновить очередь': 'Refresh queue',
       'Профиль и доступ': 'Profile and access',
-      'Отладка': 'Debug',
       'Все сохранённые вакансии': 'All saved vacancies',
       'Синхронизировать отклики': 'Sync applications',
       'Синхронизировать почту': 'Sync email',
@@ -797,20 +503,8 @@
       'Значение': 'Value',
       'Подтверждён': 'Verified',
       'Добавить факт': 'Add fact',
-      'На странице': 'Per page',
-      'Пагинация фактов': 'Facts pagination',
-      'Предыдущая страница': 'Previous page',
-      'Следующая страница': 'Next page',
-      'Сохранить': 'Save',
-      'Редактировать': 'Edit',
-      'Удалить': 'Delete',
-      'Только подтверждённые': 'Verified only',
-      'Все категории': 'All categories',
-      'Поиск по названию': 'Search by name',
-      'Поиск по значению': 'Search by value',
-      'Фильтры фактов': 'Fact filters',
       'Вакансии из поиска и импортированных источников. Фильтры применяются ко всей базе, а не только к текущей странице.': 'Vacancies from search and imported sources. Filters apply to the entire database, not only the current page.',
-      'Поиск': 'Search',
+      'Текст': 'Text',
       'Источник': 'Source',
       'Статус': 'Status',
       'Локация': 'Location',
@@ -819,9 +513,6 @@
       'Опубликована по': 'Published to',
       'Формат работы': 'Work format',
       'Тип занятости': 'Employment type',
-      'Matching v2': 'Matching v2',
-      'Рассчитан': 'Completed',
-      'Не рассчитан': 'Not calculated',
       'Все': 'All',
       'Удалённо': 'Remote',
       'Гибрид': 'Hybrid',
@@ -846,11 +537,7 @@
       'Загрузить профиль': 'Load profile',
       'Создать пользователя': 'Create user',
       'Языковая модель': 'Language model',
-      'Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Для матчинга и генерации материалов настраивается своя модель: получите список доступных моделей, выберите одну и сохраните.': 'The key is encrypted before storage and is never displayed again. Matching and materials generation each get their own model: load available models, select one, and save it.',
-      'Матчинг': 'Matching',
-      'Модель для извлечения требований, декомпозиции навыков и оценки соответствия резюме.': 'Model for requirement extraction, skill decomposition, and resume match evaluation.',
-      'Генерация материалов': 'Materials generation',
-      'Модель для сопроводительных писем, ответов на скрининг и анализа резюме.': 'Model for cover letters, screening answers, and resume analysis.',
+      'Ключ шифруется перед сохранением в базе и никогда не показывается обратно. Получите список доступных моделей, выберите одну и сохраните.': 'The key is encrypted before storage and is never displayed again. Load available models, select one, and save it.',
       'Провайдер': 'Provider',
       'API-ключ провайдера': 'Provider API key',
       'Получить модели': 'Load models',
@@ -881,7 +568,6 @@
       'везде': 'anywhere',
       'По одной ссылке на строку, например https://boards.greenhouse.io/company. Если оставить пустым, используются Greenhouse-доски из уже сохранённых вакансий.': 'One URL per line, for example https://boards.greenhouse.io/company. Leave empty to use Greenhouse boards from saved vacancies.',
       'Найти вакансии': 'Find vacancies',
-      'Переранжировать': 'Re-rank',
       'Сопроводительное письмо (можно отредактировать)': 'Cover letter (editable)',
       'Принять и откликнуться': 'Accept and apply',
       'Открыть для рассмотрения': 'Open for review',
@@ -1050,8 +736,6 @@
       localStorage.setItem('dashboardLanguage', currentLanguage);
       translateTree();
       renderLanguageSelector();
-      populateProfileFactCategoryFilter(profileFactsCache);
-      renderProfileFacts();
       loadSavedVacancies(vacancyPage).catch(showError);
       restoreSearchResults();
     }
@@ -1104,303 +788,59 @@
       return response.json();
     }
 
-    let profileFactsCache = [];
-    let editingProfileFactId = null;
-    let openProfileFactMenuId = null;
-    let profileFactsPage = 1;
-    let profileFactsPageSize = Number.parseInt(localStorage.getItem('dashboardProfileFactsPageSize') || '10', 10);
-    if (![5, 10, 20, 50].includes(profileFactsPageSize)) profileFactsPageSize = 10;
-    document.querySelector('#profile-facts-page-size').value = String(profileFactsPageSize);
-
-    function profileFactKind(fact) {
-      const category = String(fact.category || '').toLowerCase();
-      const name = String(fact.name || '').toLowerCase();
-      if (category.includes('lang') || category.includes('язык')) return 'language';
-      if (category.includes('experience') || category.includes('опыт')) return 'experience';
-      if (name.includes('api') || name.includes('integration') || name.includes('интеграц')) return 'integration';
-      return 'skill';
-    }
-
-    function profileFactIconText(fact) {
-      const kind = profileFactKind(fact);
-      if (kind === 'integration') return '↔';
-      if (kind === 'language') return '文';
-      if (kind === 'experience') return 'EXP';
-      return '</>';
-    }
-
-    function populateProfileFactCategoryFilter(facts) {
-      const select = document.querySelector('#profile-fact-category-filter');
-      const currentValue = select.value;
-      const categories = [...new Set(facts.map(fact => String(fact.category || '').trim()).filter(Boolean))]
-        .sort((a, b) => a.localeCompare(b, currentLanguage === 'en' ? 'en' : 'ru'));
-      select.replaceChildren();
-      const all = document.createElement('option');
-      all.value = '';
-      all.textContent = currentLanguage === 'en' ? 'All categories' : 'Все категории';
-      select.append(all);
-      categories.forEach(category => {
-        const option = document.createElement('option');
-        option.value = category;
-        option.textContent = category;
-        select.append(option);
-      });
-      select.value = categories.includes(currentValue) ? currentValue : '';
-    }
-
-    function filteredProfileFacts() {
-      const category = document.querySelector('#profile-fact-category-filter').value.trim().toLowerCase();
-      const nameQuery = document.querySelector('#profile-fact-name-filter').value.trim().toLowerCase();
-      const valueQuery = document.querySelector('#profile-fact-value-filter').value.trim().toLowerCase();
-      const verifiedOnly = document.querySelector('#profile-fact-verified-filter').checked;
-      const sourceFilter = document.querySelector('#profile-fact-source-filter').value.trim().toLowerCase();
-      return profileFactsCache.filter(fact => {
-        if (category && String(fact.category || '').toLowerCase() !== category) return false;
-        if (nameQuery && !String(fact.name || '').toLowerCase().includes(nameQuery)) return false;
-        if (valueQuery && !String(fact.value || '').toLowerCase().includes(valueQuery)) return false;
-        if (verifiedOnly && !fact.is_verified) return false;
-        if (sourceFilter && String(fact.source_type || 'manual').toLowerCase() !== sourceFilter) return false;
-        return true;
-      });
-    }
-
-    function createProfileFactEditor(fact) {
-      const editor = element('div', undefined, 'fact-editor');
-
-      const categoryWrap = document.createElement('div');
-      const categoryLabel = element('label', currentLanguage === 'en' ? 'Category' : 'Категория');
-      const category = document.createElement('input');
-      category.dataset.field = 'category';
-      category.maxLength = 100;
-      category.required = true;
-      category.value = fact.category || '';
-      categoryWrap.append(categoryLabel, category);
-
-      const nameWrap = document.createElement('div');
-      const nameLabel = element('label', currentLanguage === 'en' ? 'Name' : 'Название');
-      const name = document.createElement('input');
-      name.dataset.field = 'name';
-      name.maxLength = 200;
-      name.required = true;
-      name.value = fact.name || '';
-      nameWrap.append(nameLabel, name);
-
-      const valueWrap = document.createElement('div');
-      const valueLabel = element('label', currentLanguage === 'en' ? 'Value' : 'Значение');
-      const value = document.createElement('input');
-      value.dataset.field = 'value';
-      value.required = true;
-      value.value = fact.value || '';
-      valueWrap.append(valueLabel, value);
-
-      const actions = element('div', undefined, 'fact-editor__actions');
-      const verifiedLabel = element('label', undefined, 'facts-check');
-      const verified = document.createElement('input');
-      verified.type = 'checkbox';
-      verified.dataset.field = 'is_verified';
-      verified.checked = Boolean(fact.is_verified);
-      verifiedLabel.append(verified, document.createTextNode(currentLanguage === 'en' ? ' Verified' : ' Подтверждён'));
-      const save = element('button', currentLanguage === 'en' ? 'Save' : 'Сохранить', 'primary');
-      save.type = 'button';
-      save.dataset.action = 'save';
-      const cancel = element('button', currentLanguage === 'en' ? 'Cancel' : 'Отмена');
-      cancel.type = 'button';
-      cancel.dataset.action = 'cancel-edit';
-      actions.append(verifiedLabel, save, cancel);
-
-      editor.append(categoryWrap, nameWrap, valueWrap, actions);
-      return editor;
-    }
-
-    function renderProfileFacts() {
+    function renderProfileFacts(facts) {
       const container = document.querySelector('#profile-facts-list');
-      const count = document.querySelector('#profile-facts-count');
-      const pageIndicator = document.querySelector('#profile-facts-page');
-      const previousButton = document.querySelector('#profile-facts-previous');
-      const nextButton = document.querySelector('#profile-facts-next');
       container.replaceChildren();
-
-      const filteredFacts = filteredProfileFacts();
-      const totalFiltered = filteredFacts.length;
-      const totalPages = Math.max(1, Math.ceil(totalFiltered / profileFactsPageSize));
-      profileFactsPage = Math.max(1, Math.min(profileFactsPage, totalPages));
-
-      const startIndex = (profileFactsPage - 1) * profileFactsPageSize;
-      const endIndex = Math.min(startIndex + profileFactsPageSize, totalFiltered);
-      const facts = filteredFacts.slice(startIndex, endIndex);
-
-      pageIndicator.textContent = `${profileFactsPage} / ${totalPages}`;
-      previousButton.disabled = profileFactsPage <= 1 || totalFiltered === 0;
-      nextButton.disabled = profileFactsPage >= totalPages || totalFiltered === 0;
-
-      if (!profileFactsCache.length) {
-        container.append(element('div', currentLanguage === 'en' ? 'No facts saved.' : 'Факты пока не сохранены.', 'empty facts-empty'));
-        count.textContent = '';
+      if (!facts.length) {
+        container.append(element('div', currentLanguage === 'en' ? 'No facts saved.' : 'Факты пока не сохранены.', 'empty'));
         return;
       }
-
-      if (!totalFiltered) {
-        container.append(element('div', currentLanguage === 'en' ? 'No facts match the selected filters.' : 'По выбранным фильтрам фактов нет.', 'empty facts-empty'));
-        count.textContent = currentLanguage === 'en'
-          ? `Shown 0 of ${profileFactsCache.length}`
-          : `Показано 0 из ${profileFactsCache.length}`;
-        return;
-      }
-
       facts.forEach(fact => {
-        const card = element('div', undefined, 'fact-card');
-        card.dataset.factId = fact.id;
-
-        if (String(fact.id) === String(editingProfileFactId)) {
-          card.classList.add('is-editing');
-          card.append(createProfileFactEditor(fact));
-          container.append(card);
-          return;
-        }
-
-        const icon = element('div', profileFactIconText(fact), 'fact-icon');
-        icon.dataset.kind = profileFactKind(fact);
-        icon.setAttribute('aria-hidden', 'true');
-
-        const category = element('span', fact.category || '—', 'fact-category-badge');
-        category.title = fact.category || '';
-        const name = element('div', fact.name || '—', 'fact-name');
-        name.title = fact.name || '';
-        const value = element('div', fact.value || '—', 'fact-value');
-        value.title = fact.value || '';
-
-        const status = element('span', undefined, `fact-status${fact.is_verified ? '' : ' unverified'}`);
-        const statusDot = element('span', fact.is_verified ? '✓' : '!', 'fact-status__dot');
-        const statusText = element(
-          'span',
-          fact.is_verified
-            ? (currentLanguage === 'en' ? 'Verified' : 'Подтверждён')
-            : (currentLanguage === 'en' ? 'Unverified' : 'Не подтверждён')
-        );
-        status.append(statusDot, statusText);
-
-        // Source badge
-        const sourceType = fact.source_type || 'manual';
-        const sourceBadge = element('span', sourceType, 'fact-source-badge');
-        sourceBadge.dataset.source = sourceType;
-        if (fact.confidence !== undefined && fact.confidence !== null && fact.confidence < 1) {
-          const conf = element('span', `${Math.round(fact.confidence * 100)}%`, 'fact-confidence');
-          sourceBadge.append(conf);
-        }
-
-        const menuWrap = element('div', undefined, 'fact-menu-wrap');
-        const menuToggle = element('button', '⋮', 'fact-menu-toggle');
-        menuToggle.type = 'button';
-        menuToggle.dataset.action = 'toggle-menu';
-        menuToggle.setAttribute('aria-label', currentLanguage === 'en' ? 'Fact actions' : 'Действия с фактом');
-        const menuIsOpen = String(openProfileFactMenuId) === String(fact.id);
-        menuToggle.setAttribute('aria-expanded', String(menuIsOpen));
-        menuWrap.append(menuToggle);
-
-        if (menuIsOpen) {
-          const menu = element('div', undefined, 'fact-menu');
-          const edit = element('button', currentLanguage === 'en' ? 'Edit' : 'Редактировать');
-          edit.type = 'button';
-          edit.dataset.action = 'edit';
-          const remove = element('button', currentLanguage === 'en' ? 'Delete' : 'Удалить');
-          remove.type = 'button';
-          remove.dataset.action = 'delete';
-          menu.append(edit, remove);
-          menuWrap.append(menu);
-        }
-
-        const meta = element('div', undefined, 'fact-meta');
-        meta.append(sourceBadge, status);
-
-        card.append(icon, category, name, value, meta, menuWrap);
-        container.append(card);
+        const editor = element('article', undefined, 'session-card');
+        editor.dataset.factId = fact.id;
+        const row = element('div', undefined, 'row');
+        const category = document.createElement('input');
+        category.dataset.field = 'category';
+        category.maxLength = 100;
+        category.value = fact.category;
+        const name = document.createElement('input');
+        name.dataset.field = 'name';
+        name.maxLength = 200;
+        name.value = fact.name;
+        const value = document.createElement('input');
+        value.dataset.field = 'value';
+        value.value = fact.value;
+        const verifiedLabel = element('label');
+        const verified = document.createElement('input');
+        verified.type = 'checkbox';
+        verified.dataset.field = 'is_verified';
+        verified.checked = fact.is_verified;
+        verifiedLabel.append(verified, document.createTextNode(currentLanguage === 'en' ? ' Verified' : ' Подтверждён'));
+        const save = element('button', currentLanguage === 'en' ? 'Save' : 'Сохранить', 'primary');
+        save.type = 'button';
+        save.dataset.action = 'save';
+        const remove = element('button', currentLanguage === 'en' ? 'Delete' : 'Удалить', 'danger');
+        remove.type = 'button';
+        remove.dataset.action = 'delete';
+        row.append(category, name, value, verifiedLabel, save, remove);
+        editor.append(row);
+        container.append(editor);
       });
-
-      const shownFrom = startIndex + 1;
-      const shownTo = endIndex;
-      if (totalFiltered === profileFactsCache.length) {
-        count.textContent = currentLanguage === 'en'
-          ? `Shown ${shownFrom}–${shownTo} of ${totalFiltered}`
-          : `Показано ${shownFrom}–${shownTo} из ${totalFiltered}`;
-      } else {
-        count.textContent = currentLanguage === 'en'
-          ? `Shown ${shownFrom}–${shownTo} of ${totalFiltered} filtered (${profileFactsCache.length} total)`
-          : `Показано ${shownFrom}–${shownTo} из ${totalFiltered} по фильтру (всего ${profileFactsCache.length})`;
-      }
     }
 
     async function loadProfileFacts() {
       const userId = userIdInput.value.trim();
       if (!userId) {
-        profileFactsCache = [];
-        populateProfileFactCategoryFilter([]);
-        renderProfileFacts();
+        renderProfileFacts([]);
         return [];
       }
-      // Use detailed endpoint to get source_type, confidence, status
       const facts = await asJson(await fetchWithTimeout(
-        `/v1/users/${userId}/facts-detailed`,
+        `/v1/users/${userId}/facts`,
         {headers: headers(false)}
       ));
-      profileFactsCache = Array.isArray(facts) ? facts : [];
-      populateProfileFactCategoryFilter(profileFactsCache);
-      renderProfileFacts();
-      return profileFactsCache;
+      renderProfileFacts(facts);
+      return facts;
     }
-
-    function setProfileFactAddFormOpen(isOpen) {
-      const form = document.querySelector('#profile-fact-form');
-      const toggle = document.querySelector('#profile-fact-add-toggle');
-      form.hidden = !isOpen;
-      toggle.setAttribute('aria-expanded', String(isOpen));
-      if (isOpen) window.setTimeout(() => document.querySelector('#profile-fact-category').focus(), 0);
-    }
-
-    document.querySelector('#profile-fact-add-toggle').addEventListener('click', () => {
-      setProfileFactAddFormOpen(document.querySelector('#profile-fact-form').hidden);
-    });
-
-    document.querySelector('#profile-fact-add-cancel').addEventListener('click', () => {
-      document.querySelector('#profile-fact-form').reset();
-      document.querySelector('#profile-fact-verified').checked = true;
-      setProfileFactAddFormOpen(false);
-    });
-
-    document.querySelectorAll('#profile-fact-category-filter, #profile-fact-name-filter, #profile-fact-value-filter, #profile-fact-verified-filter, #profile-fact-source-filter')
-      .forEach(control => control.addEventListener('input', () => {
-        editingProfileFactId = null;
-        openProfileFactMenuId = null;
-        profileFactsPage = 1;
-        renderProfileFacts();
-      }));
-
-    document.querySelector('#profile-facts-page-size').addEventListener('change', event => {
-      profileFactsPageSize = Number.parseInt(event.currentTarget.value, 10) || 10;
-      localStorage.setItem('dashboardProfileFactsPageSize', String(profileFactsPageSize));
-      editingProfileFactId = null;
-      openProfileFactMenuId = null;
-      profileFactsPage = 1;
-      renderProfileFacts();
-    });
-
-    document.querySelector('#profile-facts-previous').addEventListener('click', () => {
-      if (profileFactsPage <= 1) return;
-      editingProfileFactId = null;
-      openProfileFactMenuId = null;
-      profileFactsPage -= 1;
-      renderProfileFacts();
-      document.querySelector('#profile-facts-panel').scrollIntoView({behavior: 'smooth', block: 'start'});
-    });
-
-    document.querySelector('#profile-facts-next').addEventListener('click', () => {
-      const totalPages = Math.max(1, Math.ceil(filteredProfileFacts().length / profileFactsPageSize));
-      if (profileFactsPage >= totalPages) return;
-      editingProfileFactId = null;
-      openProfileFactMenuId = null;
-      profileFactsPage += 1;
-      renderProfileFacts();
-      document.querySelector('#profile-facts-panel').scrollIntoView({behavior: 'smooth', block: 'start'});
-    });
 
     document.querySelector('#profile-fact-form').addEventListener('submit', async event => {
       event.preventDefault();
@@ -1409,478 +849,66 @@
         showError(new Error(currentLanguage === 'en' ? 'Set User ID first' : 'Сначала укажите User ID'));
         return;
       }
-      const submitButton = event.currentTarget.querySelector('button[type="submit"]');
-      submitButton.disabled = true;
       try {
         await asJson(await fetchWithTimeout(`/v1/users/${userId}/facts`, {
           method: 'POST',
           headers: headers(true),
           body: JSON.stringify({
-            category: document.querySelector('#profile-fact-category').value.trim(),
-            name: document.querySelector('#profile-fact-name').value.trim(),
-            value: document.querySelector('#profile-fact-value').value.trim(),
+            category: document.querySelector('#profile-fact-category').value,
+            name: document.querySelector('#profile-fact-name').value,
+            value: document.querySelector('#profile-fact-value').value,
             is_verified: document.querySelector('#profile-fact-verified').checked
           })
         }));
         event.currentTarget.reset();
         document.querySelector('#profile-fact-verified').checked = true;
-        setProfileFactAddFormOpen(false);
         await loadProfileFacts();
         showStatus(currentLanguage === 'en' ? 'Fact added.' : 'Факт добавлен.');
       } catch (error) {
         showError(error);
-      } finally {
-        submitButton.disabled = false;
       }
     });
-
-    // ── Fact import from file ──
-    document.querySelector('#fact-import-file-btn').addEventListener('click', () => {
-      document.querySelector('#fact-import-file-input').click();
-    });
-
-    document.querySelector('#fact-import-file-input').addEventListener('change', async event => {
-      const file = event.target.files[0];
-      if (!file) return;
-      const userId = userIdInput.value.trim();
-      if (!userId) { showError(new Error('Set User ID first')); return; }
-      const resultDiv = document.querySelector('#fact-import-result');
-      resultDiv.hidden = false;
-      resultDiv.textContent = `Импорт ${file.name}...`;
-      const formData = new FormData();
-      formData.append('file', file);
-      try {
-        const resp = await fetch(`/v1/users/${userId}/facts/import-file?auto_accept=false`, {
-          method: 'POST', headers: headers(true), body: formData,
-        });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const result = await resp.json();
-        const lang = currentLanguage === 'en';
-        let candidatesHtml = '';
-        if (result.candidates && result.candidates.length) {
-          const rows = result.candidates.map(c => {
-            const status = c.duplicate_status === 'new'
-              ? '<span style="color:#6ee7b7">● новый</span>'
-              : c.duplicate_status === 'merge_candidate'
-                ? '<span style="color:#facc15">⇄ слияние</span>'
-                : '<span style="color:#f87171">= дубль</span>';
-            const conf = c.confidence != null ? `${Math.round(c.confidence * 100)}%` : '—';
-            const srcText = c.source_text ? `<div style="color:#7a8ab5;font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:500px" title="${_esc(c.source_text)}">${_esc(c.source_text)}</div>` : '';
-            return `<tr>
-              <td style="padding:4px 8px;white-space:nowrap">${_esc(c.category)}</td>
-              <td style="padding:4px 8px;white-space:nowrap;font-weight:700">${_esc(c.name)}</td>
-              <td style="padding:4px 8px">${_esc(c.value || '—')}${srcText}</td>
-              <td style="padding:4px 8px;text-align:center">${conf}</td>
-              <td style="padding:4px 8px;text-align:center">${status}</td>
-            </tr>`;
-          }).join('');
-          candidatesHtml = `
-            <details style="margin-top:8px">
-              <summary style="cursor:pointer;color:#8da2fb;font-weight:700;font-size:13px">
-                ${lang ? 'Imported facts' : 'Импортированные факты'} (${result.candidates.length})
-              </summary>
-              <div style="max-height:340px;overflow:auto;margin-top:6px;border:1px solid #30426d;border-radius:8px">
-                <table style="width:100%;border-collapse:collapse;font-size:12px">
-                  <thead><tr style="background:#111a34">
-                    <th style="padding:6px 8px;text-align:left">${lang ? 'Category' : 'Категория'}</th>
-                    <th style="padding:6px 8px;text-align:left">${lang ? 'Name' : 'Название'}</th>
-                    <th style="padding:6px 8px;text-align:left">${lang ? 'Value' : 'Значение'}</th>
-                    <th style="padding:6px 8px">${lang ? 'Conf' : 'Увер.'}</th>
-                    <th style="padding:6px 8px">${lang ? 'Status' : 'Статус'}</th>
-                  </tr></thead>
-                  <tbody>${rows}</tbody>
-                </table>
-              </div>
-            </details>`;
-        }
-        resultDiv.innerHTML = `<strong>Импорт завершён:</strong>
-          <div class="stats">
-            <span class="stat"><span class="num">${result.facts_created}</span> новых</span>
-            <span class="stat"><span class="num">${result.facts_merged}</span> объединено</span>
-            <span class="stat"><span class="num">${result.facts_skipped}</span> пропущено</span>
-            <span class="stat"><span class="num">${result.facts_rejected}</span> отклонено</span>
-          </div>
-          <div style="color:#7a8ab5;font-size:11px">Batch ID: ${result.batch_id}</div>
-          ${candidatesHtml}`;
-        await loadProfileFacts();
-        // Show newly imported facts: turn off verified-only filter, set source to file
-        document.querySelector('#profile-fact-verified-filter').checked = false;
-        document.querySelector('#profile-fact-source-filter').value = 'file';
-        renderProfileFacts();
-        showStatus(`Импортировано из ${file.name}.`);
-      } catch (error) { showError(error); }
-      event.target.value = '';
-    });
-
-    // ── Fact extraction from resume ──
-    document.querySelector('#fact-extract-resume-btn').addEventListener('click', async () => {
-      const userId = userIdInput.value.trim();
-      if (!userId) { showError(new Error('Set User ID first')); return; }
-      // Use the resume explicitly marked active in the resume panel.
-      try {
-        const cvs = await asJson(await fetchWithTimeout(`/v1/users/${userId}/cv-files`, {headers: headers(false)}));
-        if (!Array.isArray(cvs) || cvs.length === 0) {
-          showError(new Error(currentLanguage === 'en' ? 'No resumes found. Upload a resume first.' : 'Резюме не найдены. Сначала загрузите резюме.'));
-          return;
-        }
-        const activeCv = cvs.find(cv => cv.is_active);
-        if (!activeCv) {
-          showError(new Error(currentLanguage === 'en'
-            ? 'No active resume. Select one in the resume panel first.'
-            : 'Нет активного резюме. Сначала выберите его в разделе «Резюме».'));
-          return;
-        }
-        const cvId = activeCv.id;
-        const cvName = activeCv.original_filename;
-        const resultDiv = document.querySelector('#fact-import-result');
-        resultDiv.hidden = false;
-        resultDiv.textContent = currentLanguage === 'en'
-          ? `Extracting facts from “${cvName}”...`
-          : `Извлечение фактов из «${cvName}»...`;
-        const resp = await fetch(`/v1/users/${userId}/facts/extract-from-resume`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json', ...headers(true)},
-          body: JSON.stringify({cv_file_id: cvId, force: false, auto_accept: false}),
-        });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const result = await resp.json();
-        const lang = currentLanguage === 'en';
-        let candidatesHtml = '';
-        if (result.candidates && result.candidates.length) {
-          const rows = result.candidates.map(c => {
-            const status = c.duplicate_status === 'new'
-              ? '<span style="color:#6ee7b7">● новый</span>'
-              : c.duplicate_status === 'merge_candidate'
-                ? '<span style="color:#facc15">⇄ слияние</span>'
-                : '<span style="color:#f87171">= дубль</span>';
-            const conf = c.confidence != null ? `${Math.round(c.confidence * 100)}%` : '—';
-            const srcText = c.source_text ? `<div style="color:#7a8ab5;font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:500px" title="${_esc(c.source_text)}">${_esc(c.source_text)}</div>` : '';
-            return `<tr>
-              <td style="padding:4px 8px;white-space:nowrap">${_esc(c.category)}</td>
-              <td style="padding:4px 8px;white-space:nowrap;font-weight:700">${_esc(c.name)}</td>
-              <td style="padding:4px 8px">${_esc(c.value || '—')}${srcText}</td>
-              <td style="padding:4px 8px;text-align:center">${conf}</td>
-              <td style="padding:4px 8px;text-align:center">${status}</td>
-            </tr>`;
-          }).join('');
-          candidatesHtml = `
-            <details style="margin-top:8px">
-              <summary style="cursor:pointer;color:#8da2fb;font-weight:700;font-size:13px">
-                ${lang ? 'Extracted facts' : 'Извлечённые факты'} (${result.candidates.length})
-              </summary>
-              <div style="max-height:340px;overflow:auto;margin-top:6px;border:1px solid #30426d;border-radius:8px">
-                <table style="width:100%;border-collapse:collapse;font-size:12px">
-                  <thead><tr style="background:#111a34">
-                    <th style="padding:6px 8px;text-align:left">${lang ? 'Category' : 'Категория'}</th>
-                    <th style="padding:6px 8px;text-align:left">${lang ? 'Name' : 'Название'}</th>
-                    <th style="padding:6px 8px;text-align:left">${lang ? 'Value' : 'Значение'}</th>
-                    <th style="padding:6px 8px">${lang ? 'Conf' : 'Увер.'}</th>
-                    <th style="padding:6px 8px">${lang ? 'Status' : 'Статус'}</th>
-                  </tr></thead>
-                  <tbody>${rows}</tbody>
-                </table>
-              </div>
-            </details>`;
-        }
-        resultDiv.innerHTML = `<strong>${lang ? 'Extraction complete:' : 'Извлечение завершено:'}</strong>
-          <div style="color:#aab9e8;font-size:12px;margin-top:4px">${lang ? 'Resume' : 'Резюме'}: ${_esc(cvName)}</div>
-          <div class="stats">
-            <span class="stat"><span class="num">${result.facts_created}</span> ${lang ? 'new' : 'новых'}</span>
-            <span class="stat"><span class="num">${result.facts_merged}</span> ${lang ? 'merged' : 'объединено'}</span>
-            <span class="stat"><span class="num">${result.facts_skipped}</span> ${lang ? 'skipped' : 'пропущено'}</span>
-          </div>
-          <div style="color:#7a8ab5;font-size:11px">Batch ID: ${result.batch_id}</div>
-          ${candidatesHtml}`;
-        await loadProfileFacts();
-        // Show newly extracted facts: turn off verified-only filter, set source to resume
-        document.querySelector('#profile-fact-verified-filter').checked = false;
-        document.querySelector('#profile-fact-source-filter').value = 'resume';
-        renderProfileFacts();
-        showStatus(currentLanguage === 'en'
-          ? `Facts extracted from “${cvName}”.`
-          : `Факты извлечены из «${cvName}».`);
-      } catch (error) { showError(error); }
-    });
-
-    // ── Batch history ──
-    document.querySelector('#fact-batch-history-btn').addEventListener('click', async () => {
-      const userId = userIdInput.value.trim();
-      if (!userId) { showError(new Error('Set User ID first')); return; }
-      const batchDiv = document.querySelector('#fact-batch-history');
-      if (!batchDiv.hidden) { batchDiv.hidden = true; return; }
-      try {
-        const batches = await asJson(await fetchWithTimeout(`/v1/users/${userId}/fact-import-batches`, {headers: headers(false)}));
-        if (!Array.isArray(batches) || batches.length === 0) {
-          batchDiv.innerHTML = '<div style="color:#7a8ab5">История импорта пуста.</div>';
-        } else {
-          batchDiv.innerHTML = batches.map(b => `
-            <div class="batch-card">
-              <div class="batch-info">${b.source_type} — ${b.source_filename || b.source_id || '—'} — ${new Date(b.created_at).toLocaleString()}</div>
-              <div class="batch-stats">
-                <span>+${b.facts_created} ~${b.facts_merged} -${b.facts_skipped}</span>
-                <span>${b.status}</span>
-              </div>
-              ${b.status === 'completed' ? `<button onclick="undoBatch('${b.id}')" style="font-size:12px;padding:4px 8px">Отменить</button>` : ''}
-            </div>
-          `).join('');
-        }
-        batchDiv.hidden = false;
-      } catch (error) { showError(error); }
-    });
-
-    async function undoBatch(batchId) {
-      const userId = userIdInput.value.trim();
-      if (!userId || !confirm('Отменить импорт? Факты, подтверждённые вручную, не будут удалены.')) return;
-      try {
-        await asJson(await fetchWithTimeout(`/v1/users/${userId}/fact-import-batches/${batchId}/undo`, {
-          method: 'POST', headers: headers(true),
-        }));
-        await loadProfileFacts();
-        document.querySelector('#fact-batch-history').hidden = true;
-        showStatus('Импорт отменён.');
-      } catch (error) { showError(error); }
-    }
 
     document.querySelector('#profile-facts-list').addEventListener('click', async event => {
-      const actionButton = event.target.closest('[data-action]');
-      const action = actionButton?.dataset.action;
+      const action = event.target.dataset.action;
       if (!action) return;
-      const editor = actionButton.closest('[data-fact-id]');
-      if (!editor) return;
-      const factId = editor.dataset.factId;
-
-      if (action === 'toggle-menu') {
-        openProfileFactMenuId = String(openProfileFactMenuId) === String(factId) ? null : factId;
-        renderProfileFacts();
-        return;
-      }
-      if (action === 'edit') {
-        editingProfileFactId = factId;
-        openProfileFactMenuId = null;
-        renderProfileFacts();
-        window.setTimeout(() => document.querySelector(`[data-fact-id="${CSS.escape(String(factId))}"] [data-field="name"]`)?.focus(), 0);
-        return;
-      }
-      if (action === 'cancel-edit') {
-        editingProfileFactId = null;
-        renderProfileFacts();
-        return;
-      }
-
+      const editor = event.target.closest('[data-fact-id]');
       const userId = userIdInput.value.trim();
-      if (!userId) return;
-      actionButton.disabled = true;
+      if (!editor || !userId) return;
+      event.target.disabled = true;
       try {
         if (action === 'save') {
-          const category = editor.querySelector('[data-field="category"]')?.value.trim();
-          const name = editor.querySelector('[data-field="name"]')?.value.trim();
-          const value = editor.querySelector('[data-field="value"]')?.value.trim();
-          const isVerified = editor.querySelector('[data-field="is_verified"]').checked;
-
-          if (!category || !name || !value) {
-            throw new Error(currentLanguage === 'en' ? 'Category, name and value are required.' : 'Категория, название и значение обязательны.');
-          }
-
-          const response = await fetchWithTimeout(
-            `/v1/users/${userId}/facts/${factId}`,
+          await asJson(await fetchWithTimeout(
+            `/v1/users/${userId}/facts/${editor.dataset.factId}`,
             {
               method: 'PUT',
               headers: headers(true),
               body: JSON.stringify({
-                category,
-                name,
-                value,
-                is_verified: isVerified
+                category: editor.querySelector('[data-field="category"]').value,
+                name: editor.querySelector('[data-field="name"]').value,
+                value: editor.querySelector('[data-field="value"]').value,
+                is_verified: editor.querySelector('[data-field="is_verified"]').checked
               })
             }
-          );
-
-          if (!response.ok) await asJson(response);
-
-          /*
-           * Update the local list immediately after a successful save.
-           * This makes the edited row collapse back into the normal list
-           * without requiring a manual page refresh.
-           */
-          profileFactsCache = profileFactsCache.map(fact => (
-            String(fact.id) === String(factId)
-              ? {...fact, category, name, value, is_verified: isVerified}
-              : fact
           ));
-
-          editingProfileFactId = null;
-          openProfileFactMenuId = null;
-          populateProfileFactCategoryFilter(profileFactsCache);
-          renderProfileFacts();
           showStatus(currentLanguage === 'en' ? 'Fact saved.' : 'Факт сохранён.');
-
-          /*
-           * Then synchronize with the server once more in the background.
-           * The immediate render above remains responsive even if this GET
-           * takes a little longer.
-           */
-          window.setTimeout(() => {
-            loadProfileFacts().catch(showError);
-          }, 250);
-
-          return;
         } else if (action === 'delete') {
-          const fact = profileFactsCache.find(item => String(item.id) === String(factId));
-          const label = fact?.name || (currentLanguage === 'en' ? 'this fact' : 'этот факт');
-          const confirmed = window.confirm(
-            currentLanguage === 'en'
-              ? `Delete “${label}”? This action cannot be undone.`
-              : `Удалить «${label}»? Это действие нельзя отменить.`
-          );
-          if (!confirmed) return;
           const response = await fetchWithTimeout(
-            `/v1/users/${userId}/facts/${factId}`,
+            `/v1/users/${userId}/facts/${editor.dataset.factId}`,
             {method: 'DELETE', headers: headers(false)}
           );
           if (!response.ok) await asJson(response);
-          openProfileFactMenuId = null;
           showStatus(currentLanguage === 'en' ? 'Fact deleted.' : 'Факт удалён.');
         }
         await loadProfileFacts();
       } catch (error) {
         showError(error);
       } finally {
-        actionButton.disabled = false;
+        event.target.disabled = false;
       }
     });
 
-    document.addEventListener('click', event => {
-      if (!event.target.closest('.fact-menu-wrap') && openProfileFactMenuId !== null) {
-        openProfileFactMenuId = null;
-        renderProfileFacts();
-      }
-    });
-
-    function initializeDashboardSubsections() {
-      const sections = Array.from(document.querySelectorAll('section.step'));
-
-      sections.forEach(section => {
-        /*
-         * Some subsections are already wrapped in their own container
-         * (for example #profile-facts-panel and #email-integration-panel).
-         * Make those self-contained collapsible groups first.
-         */
-        Array.from(section.children).forEach(child => {
-          if (!(child instanceof HTMLElement)) return;
-          if (child.matches('h2, h3')) return;
-
-          const directHeading = Array.from(child.children)
-            .find(node => node.matches?.('h3'));
-
-          if (!directHeading) return;
-
-          child.classList.add('dashboard-nested-subsection');
-          directHeading.classList.add('dashboard-subsection-toggle');
-          directHeading.setAttribute('role', 'button');
-          directHeading.setAttribute('tabindex', '0');
-          directHeading.setAttribute('aria-expanded', 'false');
-
-          const body = document.createElement('div');
-          body.className = 'dashboard-subsection-body';
-          body.hidden = true;
-
-          let sibling = directHeading.nextSibling;
-          while (sibling) {
-            const next = sibling.nextSibling;
-            body.append(sibling);
-            sibling = next;
-          }
-          child.append(body);
-        });
-
-        /*
-         * Top-level H2/H3 blocks. A nested subsection container is treated as
-         * a boundary so, for example, "Личные данные" doesn't swallow
-         * "Факты обо мне".
-         */
-        const isBoundary = node => (
-          node?.nodeType === Node.ELEMENT_NODE
-          && (
-            node.matches('h2, h3')
-            || node.classList?.contains('dashboard-nested-subsection')
-          )
-        );
-
-        Array.from(section.children).forEach(child => {
-          if (!child.matches?.('h2, h3')) return;
-          if (child.classList.contains('dashboard-subsection-toggle')) return;
-
-          child.classList.add('dashboard-subsection-toggle');
-          child.setAttribute('role', 'button');
-          child.setAttribute('tabindex', '0');
-          child.setAttribute('aria-expanded', 'false');
-
-          const body = document.createElement('div');
-          body.className = 'dashboard-subsection-body';
-          body.hidden = true;
-
-          let sibling = child.nextSibling;
-          while (sibling && !isBoundary(sibling)) {
-            const next = sibling.nextSibling;
-            body.append(sibling);
-            sibling = next;
-          }
-          child.after(body);
-        });
-      });
-
-      const toggleSubsection = heading => {
-        const body = heading.nextElementSibling;
-        if (!body?.classList.contains('dashboard-subsection-body')) return;
-
-        const shouldOpen = body.hidden;
-        body.hidden = !shouldOpen;
-        heading.setAttribute('aria-expanded', String(shouldOpen));
-      };
-
-      document.addEventListener('click', event => {
-        const heading = event.target.closest('.dashboard-subsection-toggle');
-        if (!heading) return;
-        toggleSubsection(heading);
-      });
-
-      document.addEventListener('keydown', event => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        const heading = event.target.closest('.dashboard-subsection-toggle');
-        if (!heading) return;
-        event.preventDefault();
-        toggleSubsection(heading);
-      });
-    }
-
-    function collapseAllDashboardSubsections(root = document) {
-      root.querySelectorAll('.dashboard-subsection-toggle').forEach(heading => {
-        heading.setAttribute('aria-expanded', 'false');
-        const body = heading.nextElementSibling;
-        if (body?.classList.contains('dashboard-subsection-body')) body.hidden = true;
-      });
-    }
-
-    function collapseAllPanels() {
-      document.querySelectorAll('[data-panel]').forEach(node => {
-        node.classList.remove('active');
-      });
-      document.querySelectorAll('[data-menu]').forEach(button => {
-        button.classList.remove('active');
-        button.setAttribute('aria-current', 'false');
-        button.setAttribute('aria-expanded', 'false');
-      });
-    }
-
-    function activatePanel(panelName, {toggle = false} = {}) {
-      const menuButton = document.querySelector(`[data-menu="${CSS.escape(String(panelName))}"]`);
-      const isCurrentlyExpanded = Boolean(menuButton?.classList.contains('active'));
-      const shouldExpand = toggle ? !isCurrentlyExpanded : true;
-
-      collapseAllPanels();
-
-      if (!shouldExpand) return false;
-
+    function activatePanel(panelName) {
       document.querySelectorAll('[data-panel]').forEach(node => {
         node.classList.toggle('active', node.dataset.panel === panelName);
       });
@@ -1888,103 +916,248 @@
         const isActive = button.dataset.menu === panelName;
         button.classList.toggle('active', isActive);
         button.setAttribute('aria-current', isActive ? 'page' : 'false');
-        button.setAttribute('aria-expanded', String(isActive));
       });
-      return true;
+      localStorage.setItem('dashboardActivePanel', panelName);
     }
-
-    const MATCHING_STATE_LABELS = {
-      pending: ['ожидает', 'pending'],
-      scheduled: ['запланирована', 'scheduled'],
-      retry_scheduled: ['на повторе', 'retry scheduled'],
-      running: ['выполняется', 'running'],
-      completed: ['завершена', 'completed'],
-      failed: ['с ошибкой', 'failed'],
-      cancelled: ['отменена', 'cancelled'],
-      interrupted: ['прервана', 'interrupted'],
-      waiting_for_user: ['ждёт решения', 'awaiting user'],
-      waiting_for_external_system: ['ждёт систему', 'awaiting system'],
-    };
-    const matchingStateLabel = state => {
-      const pair = MATCHING_STATE_LABELS[state] || [state, state];
-      return currentLanguage === 'en' ? pair[1] : pair[0];
-    };
-
-    async function loadMatchingQueue() {
-      const summary = document.querySelector('#matching-queue-summary');
-      const list = document.querySelector('#matching-queue-list');
-      const stateNode = document.querySelector('#matching-queue-state');
-      const data = await asJson(await fetchWithTimeout('/v1/matching/queue', {headers: headers(false)}));
-      stateNode.textContent = data.paused
-        ? (currentLanguage === 'en'
-          ? 'Queue is paused — the worker is not taking new tasks.'
-          : 'Очередь остановлена — воркер не берёт новые задачи.')
-        : (currentLanguage === 'en'
-          ? 'Queue is running.'
-          : 'Очередь обрабатывается.');
-      summary.replaceChildren();
-      Object.keys(MATCHING_STATE_LABELS).forEach(key => {
-        const count = (data.counts || {})[key];
-        if (count == null) return;
-        summary.append(element('span', `${matchingStateLabel(key)}: ${count}`, 'badge'));
-      });
-      list.replaceChildren();
-      const tasks = data.tasks || [];
-      if (tasks.length === 0) {
-        list.append(element('div', currentLanguage === 'en'
-          ? 'No active matching tasks.'
-          : 'Нет активных задач матчинга.', 'hint'));
-        return;
-      }
-      tasks.forEach(task => {
-        const row = element('div');
-        row.style.cssText = 'display:flex;gap:12px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid #2b3859;font-size:13px;';
-        const position = task.queue_position ? `#${task.queue_position}` : '—';
-        const app = task.application_id ? task.application_id.slice(0, 8) : '—';
-        const when = new Date(task.created_at).toLocaleTimeString();
-        row.append(
-          element('span', position),
-          element('span', app),
-          element('span', matchingStateLabel(task.state)),
-          element('span', `pr ${task.priority} · try ${task.attempt_number}`),
-          element('span', when)
-        );
-        list.append(row);
-      });
-    }
-
-    async function setMatchingQueuePaused(paused) {
-      const endpoint = paused ? '/v1/matching/queue/pause' : '/v1/matching/queue/resume';
-      await asJson(await fetchWithTimeout(endpoint, {method: 'POST', headers: headers(false)}));
-      await loadMatchingQueue();
-    }
-
-    async function clearMatchingQueue() {
-      const confirmed = window.confirm(currentLanguage === 'en'
-        ? 'Stop the matching queue and cancel all pending tasks?'
-        : 'Остановить очередь матчинга и отменить все ожидающие задачи?');
-      if (!confirmed) return;
-      const result = await asJson(await fetchWithTimeout('/v1/matching/queue/clear', {method: 'POST', headers: headers(false)}));
-      showStatus(currentLanguage === 'en'
-        ? `Queue cleared: ${result.cancelled} cancelled, ${result.interrupted} interrupted.`
-        : `Очередь очищена: отменено ${result.cancelled}, прервано ${result.interrupted}.`);
-      await loadMatchingQueue();
-    }
-
-    document.querySelector('#matching-queue-pause').addEventListener('click', () => setMatchingQueuePaused(true).catch(showError));
-    document.querySelector('#matching-queue-resume').addEventListener('click', () => setMatchingQueuePaused(false).catch(showError));
-    document.querySelector('#matching-queue-clear').addEventListener('click', () => clearMatchingQueue().catch(showError));
-    document.querySelector('#matching-queue-refresh').addEventListener('click', () => loadMatchingQueue().catch(showError));
 
     document.querySelectorAll('[data-menu]').forEach(button => {
       button.addEventListener('click', () => {
-        const expanded = activatePanel(button.dataset.menu, {toggle: true});
-        if (!expanded) return;
-
+        activatePanel(button.dataset.menu);
         if (button.dataset.menu === 'vacancies') loadSavedVacancies().catch(showError);
         if (button.dataset.menu === 'blacklist') loadCompanyBlacklist().catch(showError);
-        if (button.dataset.menu === 'queue') loadMatchingQueue().catch(showError);
       });
+    });
+
+    // Annotation panel logic
+        document.querySelector('[data-menu="annotation"]').addEventListener('click', () => {
+          activatePanel('annotation');
+          if (!resumesLoaded) {
+            loadAnnotationResumes().catch(showError);
+          }
+        });
+
+    let annotationState = {
+          userId: '',
+          resumeId: '',
+          sample: [],
+          currentIndex: 0,
+        };
+
+        let resumesLoaded = false;
+
+    async function loadAnnotationResumes() {
+          const stateNode = document.querySelector('#annotation-state');
+          const resumeSelect = document.querySelector('#annotation-resume');
+          stateNode.textContent = 'Загрузка резюме...';
+      
+          try {
+            const response = await fetchWithTimeout('/v1/annotation/discover', {headers: headers()});
+            if (!response.ok) throw new Error('Failed to load resumes');
+            const data = await response.json();
+        
+            // Populate resume dropdown
+            resumeSelect.innerHTML = '<option value="">Выберите резюме</option>';
+            let firstResumeId = '';
+            let firstUserId = '';
+        
+            for (const user of data.users) {
+              const optgroup = document.createElement('optgroup');
+              optgroup.label = user.display_name || user.user_id;
+              for (const resume of user.resumes) {
+                const option = document.createElement('option');
+                option.value = resume.resume_id;
+                option.textContent = resume.filename;
+                option.dataset.userId = resume.user_id;
+                optgroup.appendChild(option);
+                if (!firstResumeId) {
+                  firstResumeId = resume.resume_id;
+                  firstUserId = resume.user_id;
+                }
+              }
+              resumeSelect.appendChild(optgroup);
+            }
+        
+            resumeSelect.disabled = false;
+        
+            // Only auto-select first resume if no resume is currently selected
+            if (firstResumeId && !annotationState.resumeId) {
+              resumeSelect.value = firstResumeId;
+              annotationState.userId = firstUserId;
+              annotationState.resumeId = firstResumeId;
+            }
+        
+            resumesLoaded = true;
+        
+            stateNode.textContent = `Загружено ${data.total_resumes} резюме для ${data.total_users} пользователей`;
+          } catch (error) {
+            stateNode.textContent = 'Ошибка загрузки: ' + error.message;
+          }
+        }
+
+    document.querySelector('#annotation-resume').addEventListener('change', (e) => {
+      const option = e.target.selectedOptions[0];
+      if (option) {
+        annotationState.resumeId = option.value;
+        annotationState.userId = option.dataset.userId || '';
+      }
+    });
+
+    document.querySelector('#load-annotation-resumes').addEventListener('click', () => {
+          // Only load resumes if not already loaded, or force refresh with Shift key
+          const forceRefresh = event.shiftKey;
+          if (!resumesLoaded || forceRefresh) {
+            loadAnnotationResumes().catch(showError);
+          }
+        });
+
+    document.querySelector('#annotation-mode').addEventListener('change', (e) => {
+          const mode = e.target.value;
+          document.querySelector('#pointwise-sample-panel').hidden = mode !== 'pointwise-sample';
+          document.querySelector('#pairwise-panel').hidden = mode !== 'pairwise';
+      
+          // Reset sample state when switching modes to avoid stale data
+          if (mode === 'pointwise-sample') {
+            annotationState.sample = [];
+            annotationState.currentIndex = 0;
+            document.querySelector('#pointwise-load-sample').disabled = false;
+            document.querySelector('#pointwise-load-sample').textContent = 'Загрузить выборку';
+            document.querySelector('#pointwise-relevant').disabled = true;
+            document.querySelector('#pointwise-maybe').disabled = true;
+            document.querySelector('#pointwise-not-relevant').disabled = true;
+            document.querySelector('#pointwise-skip').disabled = true;
+            document.querySelector('#pointwise-current-vacancy').innerHTML = '<div class="hint">Выберите резюме и нажмите «Загрузить выборку» чтобы начать</div>';
+            document.querySelector('#pointwise-progress-text').textContent = '0 / 0';
+            document.querySelector('#pointwise-strata-breakdown').textContent = '';
+            document.querySelector('#pointwise-sample-state').textContent = '';
+          }
+        });
+
+    document.querySelector('#pointwise-load-sample').addEventListener('click', async () => {
+      if (!annotationState.userId || !annotationState.resumeId) {
+        document.querySelector('#pointwise-sample-state').textContent = 'Сначала выберите резюме';
+        return;
+      }
+      
+      const stateNode = document.querySelector('#pointwise-sample-state');
+      const loadBtn = document.querySelector('#pointwise-load-sample');
+      loadBtn.disabled = true;
+      loadBtn.textContent = 'Загрузка...';
+      stateNode.textContent = 'Загрузка выборки...';
+      
+      try {
+        const response = await fetchWithTimeout(
+          `/v1/annotation/pointwise-sample?user_id=${encodeURIComponent(annotationState.userId)}&resume_id=${encodeURIComponent(annotationState.resumeId)}&limit=100`,
+          {headers: headers()}
+        );
+        if (!response.ok) throw new Error('Failed to load sample');
+        const data = await response.json();
+        
+        annotationState.sample = data.items;
+        annotationState.currentIndex = 0;
+        
+        // Update progress
+        document.querySelector('#pointwise-progress-text').textContent = `0 / ${data.items.length}`;
+        document.querySelector('#pointwise-strata-breakdown').textContent = 
+          Object.entries(data.strata_breakdown).map(([k, v]) => `${k}: ${v}`).join(', ');
+        
+        // Enable annotation buttons
+        document.querySelector('#pointwise-relevant').disabled = false;
+        document.querySelector('#pointwise-maybe').disabled = false;
+        document.querySelector('#pointwise-not-relevant').disabled = false;
+        document.querySelector('#pointwise-skip').disabled = false;
+        
+        renderCurrentVacancy();
+        stateNode.textContent = `Загружено ${data.items.length} вакансий (eligible: ${data.total_eligible})`;
+      } catch (error) {
+        stateNode.textContent = 'Ошибка: ' + error.message;
+      } finally {
+        loadBtn.disabled = false;
+        loadBtn.textContent = 'Загрузить выборку';
+      }
+    });
+
+    function renderCurrentVacancy() {
+      const container = document.querySelector('#pointwise-current-vacancy');
+      const progressText = document.querySelector('#pointwise-progress-text');
+      
+      if (annotationState.currentIndex >= annotationState.sample.length) {
+        container.innerHTML = '<div class="hint">Все вакансии размечены!</div>';
+        progressText.textContent = `${annotationState.currentIndex} / ${annotationState.sample.length} (завершено)`;
+        document.querySelector('#pointwise-relevant').disabled = true;
+        document.querySelector('#pointwise-maybe').disabled = true;
+        document.querySelector('#pointwise-not-relevant').disabled = true;
+        document.querySelector('#pointwise-skip').disabled = true;
+        return;
+      }
+      
+      const item = annotationState.sample[annotationState.currentIndex];
+      progressText.textContent = `${annotationState.currentIndex + 1} / ${annotationState.sample.length}`;
+      
+      // IMPORTANT: Do NOT render current_rank, ltr_rank, current_score, ltr_score, sampling_reason
+      // These are backend-only fields that must NOT be shown to annotators
+      container.innerHTML = `
+        <div class="topline">
+          <div>
+            <h3>${item.vacancy_title}</h3>
+            <div class="company">${item.vacancy_company}</div>
+          </div>
+        </div>
+        <div class="meta">${item.vacancy_location || 'Локация не указана'}</div>
+        <div style="margin-top:12px;">${item.vacancy_description || 'Описание недоступно'}</div>
+        <div class="key-skills" style="margin-top:12px;">
+          <div class="key-skills__label">Требуемые навыки: ${item.required_skills.join(', ') || '—'}</div>
+          <div class="key-skills__label">Предпочтительные: ${item.preferred_skills.join(', ') || '—'}</div>
+        </div>
+        ${item.salary_text ? `<div class="badge salary" style="margin-top:8px;">${item.salary_text}</div>` : ''}
+        ${item.work_format && item.work_format !== 'unspecified' ? `<div class="badge" style="margin-top:8px;">${item.work_format}</div>` : ''}
+      `;
+    }
+
+    async function submitPointwiseLabel(label) {
+      if (!annotationState.userId || !annotationState.resumeId || annotationState.currentIndex >= annotationState.sample.length) {
+        return;
+      }
+      
+      const item = annotationState.sample[annotationState.currentIndex];
+      const stateNode = document.querySelector('#pointwise-sample-state');
+      stateNode.textContent = 'Сохранение...';
+      
+      try {
+              const response = await fetchWithTimeout(
+                `/v1/annotation/pointwise?user_id=${encodeURIComponent(annotationState.userId)}`,
+                {
+                  method: 'POST',
+                  headers: headers(true),
+                  body: JSON.stringify({
+                    resume_id: annotationState.resumeId,
+                    vacancy_id: item.vacancy_id,
+                    label: label,
+                    reasons: [],
+                    comment: null,
+                  }),
+                }
+              );
+        
+        const result = await response.json();
+        if (result.status === 'accepted') {
+          stateNode.textContent = `✓ ${label} — ${item.vacancy_title}`;
+          annotationState.currentIndex++;
+          renderCurrentVacancy();
+        } else {
+          stateNode.textContent = 'Ошибка: ' + (result.label || result.status);
+        }
+      } catch (error) {
+        stateNode.textContent = 'Ошибка: ' + error.message;
+      }
+    }
+
+    document.querySelector('#pointwise-relevant').addEventListener('click', () => submitPointwiseLabel('relevant'));
+    document.querySelector('#pointwise-maybe').addEventListener('click', () => submitPointwiseLabel('maybe'));
+    document.querySelector('#pointwise-not-relevant').addEventListener('click', () => submitPointwiseLabel('not_relevant'));
+    
+    document.querySelector('#pointwise-skip').addEventListener('click', () => {
+      annotationState.currentIndex++;
+      renderCurrentVacancy();
     });
 
     function createMatchMeter(matchScore) {
@@ -2505,11 +1678,6 @@
 
     function renderResumeProfile(cvFile) {
       const draftBlock = document.querySelector('#draft-block');
-      const ragButton = document.querySelector('#send-resume-to-rag');
-      ragButton.disabled = !cvFile?.analyzed_at;
-      ragButton.title = cvFile?.analyzed_at
-        ? 'Отправить подтверждённое резюме в коллекцию RAG'
-        : 'Сначала проанализируйте и подтвердите резюме';
       if (!cvFile) {
         draftBlock.style.display = 'none';
         document.querySelector('#resume-state').textContent = 'Загрузите хотя бы одно резюме.';
@@ -2523,22 +1691,6 @@
       document.querySelector('#resume-state').textContent = cvFile.analyzed_at
         ? `Активно: ${cvFile.original_filename}. Анализ сохранён, навыков: ${cvFile.skills.length}.`
         : `${cvFile.original_filename}: анализ ещё не сохранён.`;
-      const ragLabels = currentLanguage === 'en'
-        ? {
-            not_configured: 'not configured', not_scheduled: 'not scheduled',
-            scheduled: 'scheduled', running: 'in progress', retry_scheduled: 'retry scheduled',
-            completed: 'synchronized', failed: 'failed'
-          }
-        : {
-            not_configured: 'не настроен', not_scheduled: 'не запланировано',
-            scheduled: 'запланировано', running: 'выполняется',
-            retry_scheduled: 'назначен повтор', completed: 'синхронизировано', failed: 'ошибка'
-          };
-      const ragState = ragLabels[cvFile.rag_sync_status] || cvFile.rag_sync_status;
-      const ragFailure = cvFile.rag_sync_failure_code
-        ? ` (${currentLanguage === 'en' ? 'code' : 'код'}: ${cvFile.rag_sync_failure_code})`
-        : '';
-      document.querySelector('#resume-state').textContent += ` RAG: ${ragState}${ragFailure}.`;
     }
 
     function renderCvFileSelectors(preferredCvFileId = null) {
@@ -2673,89 +1825,70 @@
       } catch (error) { showError(error); }
     });
 
-    const LLM_PURPOSES = [
-      {purpose: 'matching', prefix: 'llm-matching', label: 'Матчинг'},
-      {purpose: 'materials', prefix: 'llm-materials', label: 'Генерация материалов'},
-    ];
-
-    function llmEl(prefix, name) {
-      return document.querySelector('#' + prefix + '-' + name);
-    }
-
-    async function loadSavedLlmPreference(purpose, prefix) {
+    async function loadSavedLlmPreference() {
       const userId = userIdInput.value.trim();
       if (!userId) return;
-      const response = await fetch(`/v1/users/${userId}/llm-preference?purpose=${encodeURIComponent(purpose)}`, {headers: headers(false)});
+      const response = await fetch(`/v1/users/${userId}/llm-preference`, {headers: headers(false)});
       if (!response.ok) return;
       const preference = await response.json();
       if (!preference) return;
-      llmEl(prefix, 'provider').value = preference.provider;
-      const modelSelect = llmEl(prefix, 'model');
+      document.querySelector('#llm-provider').value = preference.provider;
+      const modelSelect = document.querySelector('#llm-model');
       modelSelect.replaceChildren(new Option(preference.model, preference.model));
       modelSelect.value = preference.model;
-      llmEl(prefix, 'base-url').value = preference.base_url || '';
-      updateLlmProviderFields(prefix);
-      llmEl(prefix, 'state').textContent = `Сохранено: ${preference.provider} / ${preference.model}. Ключ уже настроен.`;
+      document.querySelector('#llm-base-url').value = preference.base_url || '';
+      updateLlmProviderFields();
+      document.querySelector('#llm-state').textContent = `Сохранено: ${preference.provider} / ${preference.model}. Ключ уже настроен.`;
     }
 
-    function updateLlmProviderFields(prefix) {
-      const isCompatible = llmEl(prefix, 'provider').value === 'openai_compatible';
-      llmEl(prefix, 'base-url-field').hidden = !isCompatible;
+    function updateLlmProviderFields() {
+      const isCompatible = document.querySelector('#llm-provider').value === 'openai_compatible';
+      document.querySelector('#llm-base-url-field').hidden = !isCompatible;
     }
 
-    function loadLlmPreferences() {
-      for (const p of LLM_PURPOSES) loadSavedLlmPreference(p.purpose, p.prefix);
-    }
+    document.querySelector('#llm-provider').addEventListener('change', updateLlmProviderFields);
+    updateLlmProviderFields();
 
-    async function loadModels(purpose, prefix) {
-      const provider = llmEl(prefix, 'provider').value;
-      const apiKey = llmEl(prefix, 'api-key').value.trim();
-      const baseUrl = llmEl(prefix, 'base-url').value.trim();
-      if (!apiKey) throw new Error('Введите API-ключ провайдера');
-      if (provider === 'openai_compatible' && !baseUrl) throw new Error('Введите базовый URL API');
-      showStatus('Получаем доступные модели…');
-      const payload = await asJson(await fetch('/v1/llm/models', {
-        method: 'POST', headers: headers(true), body: JSON.stringify({provider, api_key: apiKey, base_url: baseUrl || null})
-      }));
-      if (!payload.models.length) throw new Error('Провайдер не вернул подходящих моделей');
-      const modelSelect = llmEl(prefix, 'model');
-      const previousModel = modelSelect.value;
-      modelSelect.replaceChildren();
-      payload.models.forEach(model => modelSelect.append(new Option(model, model)));
-      modelSelect.value = payload.models.includes(previousModel) ? previousModel : payload.models[0];
-      showStatus(`Доступно моделей: ${payload.models.length}`);
-    }
+    document.querySelector('#load-models').addEventListener('click', async () => {
+      try {
+        const provider = document.querySelector('#llm-provider').value;
+        const apiKey = document.querySelector('#llm-api-key').value.trim();
+        const baseUrl = document.querySelector('#llm-base-url').value.trim();
+        if (!apiKey) throw new Error('Введите API-ключ провайдера');
+        if (provider === 'openai_compatible' && !baseUrl) throw new Error('Введите базовый URL API');
+        showStatus('Получаем доступные модели…');
+        const payload = await asJson(await fetch('/v1/llm/models', {
+          method: 'POST', headers: headers(true), body: JSON.stringify({provider, api_key: apiKey, base_url: baseUrl || null})
+        }));
+        if (!payload.models.length) throw new Error('Провайдер не вернул подходящих моделей');
+        const modelSelect = document.querySelector('#llm-model');
+        const previousModel = modelSelect.value;
+        modelSelect.replaceChildren();
+        payload.models.forEach(model => modelSelect.append(new Option(model, model)));
+        modelSelect.value = payload.models.includes(previousModel) ? previousModel : payload.models[0];
+        showStatus(`Доступно моделей: ${payload.models.length}`);
+      } catch (error) { showError(error); }
+    });
 
-    async function saveLlm(purpose, prefix, label) {
-      const userId = userIdInput.value.trim();
-      if (!userId) throw new Error('Сначала создайте пользователя');
-      const provider = llmEl(prefix, 'provider').value;
-      const model = llmEl(prefix, 'model').value;
-      if (!model) throw new Error('Выберите модель');
-      const apiKey = llmEl(prefix, 'api-key').value.trim();
-      const baseUrl = llmEl(prefix, 'base-url').value.trim();
-      if (provider === 'openai_compatible' && !baseUrl) throw new Error('Введите базовый URL API');
-      const body = {provider, model, base_url: baseUrl || null, purpose}; if (apiKey) body.api_key = apiKey;
-      const preference = await asJson(await fetch(`/v1/users/${userId}/llm-preference`, {
-        method: 'PUT', headers: headers(true), body: JSON.stringify(body)
-      }));
-      llmEl(prefix, 'api-key').value = '';
-      llmEl(prefix, 'state').textContent = `Сохранено: ${preference.provider} / ${preference.model}.`;
-      showStatus(`Настройка LLM (${label}) сохранена в зашифрованном виде.`);
-    }
-
-    for (const p of LLM_PURPOSES) {
-      llmEl(p.prefix, 'provider').addEventListener('change', () => updateLlmProviderFields(p.prefix));
-      updateLlmProviderFields(p.prefix);
-
-      document.querySelector('#load-' + p.purpose + '-models').addEventListener('click', async () => {
-        try { await loadModels(p.purpose, p.prefix); } catch (error) { showError(error); }
-      });
-
-      document.querySelector('#save-' + p.purpose + '-llm').addEventListener('click', async () => {
-        try { await saveLlm(p.purpose, p.prefix, p.label); } catch (error) { showError(error); }
-      });
-    }
+    document.querySelector('#save-llm').addEventListener('click', async () => {
+      try {
+        const userId = userIdInput.value.trim();
+        if (!userId) throw new Error('Сначала создайте пользователя');
+        const provider = document.querySelector('#llm-provider').value;
+        const model = document.querySelector('#llm-model').value;
+        if (!model) throw new Error('Выберите модель');
+        const apiKey = document.querySelector('#llm-api-key').value.trim();
+        const baseUrl = document.querySelector('#llm-base-url').value.trim();
+        if (provider === 'openai_compatible' && !baseUrl) throw new Error('Введите базовый URL API');
+        const body = {provider, model, base_url: baseUrl || null}; if (apiKey) body.api_key = apiKey;
+        const preference = await asJson(await fetch(`/v1/users/${userId}/llm-preference`, {
+          method: 'PUT', headers: headers(true), body: JSON.stringify(body)
+        }));
+        document.querySelector('#llm-api-key').value = '';
+        document.querySelector('#llm-state').textContent = `Сохранено: ${preference.provider} / ${preference.model}.`;
+        showStatus('Настройка LLM сохранена в зашифрованном виде.');
+      } catch (error) { showError(error); }
+    });
 
     document.querySelector('#upload-resume').addEventListener('click', async () => {
       try {
@@ -2815,25 +1948,6 @@
         if (!response.ok) await asJson(response);
         await loadCvFiles();
         showStatus(currentLanguage === 'en' ? 'Resume deleted.' : 'Резюме удалено.');
-      } catch (error) { showError(error); }
-    });
-
-    document.querySelector('#send-resume-to-rag').addEventListener('click', async () => {
-      try {
-        const userId = userIdInput.value.trim();
-        const cvFileId = document.querySelector('#resume-selector').value;
-        const cvFile = cvFiles.find(item => item.id === cvFileId);
-        if (!userId || !cvFile) throw new Error('Выберите загруженное резюме');
-        if (!cvFile.analyzed_at) throw new Error('Сначала проанализируйте и подтвердите резюме');
-        showStatus(`Отправляем «${cvFile.original_filename}» в RAG…`);
-        const result = await asJson(await fetch(
-          `/v1/users/${userId}/cv-files/${cvFileId}/rag-sync`,
-          {method: 'POST', headers: headers(false)}
-        ));
-        showStatus(currentLanguage === 'en'
-          ? `RAG synchronization scheduled. Status: ${result.status}.`
-          : `Синхронизация с RAG запланирована. Статус: ${result.status}.`);
-        await loadCvFiles(cvFileId);
       } catch (error) { showError(error); }
     });
 
@@ -2997,81 +2111,14 @@
         {headers: headers(false)}
       ));
       const labels = currentLanguage === 'en'
-        ? {total: 'Total', approved: 'Accepted', rejected: 'Rejected by me', employer_rejected: 'Employer rejections', submitted: 'Submitted', interview: 'Interviews', needs_review: 'Need review', email_events: 'Emails processed', email_rejections: 'Email rejections', email_next_stages: 'Email next stages'}
-        : {total: 'Всего', approved: 'Принято', rejected: 'Отклонено мной', employer_rejected: 'Отказы работодателей', submitted: 'Отправлено', interview: 'Собеседования', needs_review: 'На проверке', email_events: 'Обработано писем', email_rejections: 'Отказы из почты', email_next_stages: 'Этапы из почты'};
+        ? {total: 'Total', approved: 'Accepted', rejected: 'Rejected by me', employer_rejected: 'Employer rejections', submitted: 'Submitted', interview: 'Interviews', email_events: 'Emails processed', email_rejections: 'Email rejections', email_next_stages: 'Email next stages'}
+        : {total: 'Всего', approved: 'Принято', rejected: 'Отклонено мной', employer_rejected: 'Отказы работодателей', submitted: 'Отправлено', interview: 'Собеседования', email_events: 'Обработано писем', email_rejections: 'Отказы из почты', email_next_stages: 'Этапы из почты'};
       container.replaceChildren();
-      ['total', 'approved', 'rejected', 'employer_rejected', 'submitted', 'interview', 'needs_review', 'email_events', 'email_rejections', 'email_next_stages'].forEach(key => {
+      ['total', 'approved', 'rejected', 'employer_rejected', 'submitted', 'interview', 'email_events', 'email_rejections', 'email_next_stages'].forEach(key => {
         const card = element('div', labels[key], 'statistic-card');
         card.append(element('strong', String(statistics[key] || 0)));
         container.append(card);
       });
-    }
-
-    const emailCategoryLabels = {
-      application_received: 'Получено резюме', rejection: 'Отказ', interview_invitation: 'Приглашение на собеседование',
-      interview_reschedule: 'Перенос собеседования', offer: 'Оффер', test_assignment: 'Тестовое задание',
-      question: 'Вопрос', recruiter_contact: 'Контакт рекрутера', follow_up: 'Follow-up', other: 'Прочее'
-    };
-
-    function renderEmailReviewItem(item) {
-      const wrap = element('div', undefined, 'email-review__item');
-      wrap.append(element('div', item.subject || '—', 'email-review__subject'));
-      const confidence = item.confidence != null ? `${Math.round(item.confidence * 100)}%` : '—';
-      const meta = currentLanguage === 'en'
-        ? `Category: ${item.category || '—'} · Confidence: ${confidence}`
-        : `Категория: ${emailCategoryLabels[item.category] || item.category || '—'} · Уверенность: ${confidence}`;
-      wrap.append(element('div', meta, 'email-review__meta'));
-      if (item.body) wrap.append(element('div', item.body.slice(0, 800), 'email-review__body'));
-      const actions = element('div', undefined, 'email-review__actions');
-      (item.candidates || []).forEach(candidate => {
-        const button = element('button', `${candidate.company} — ${candidate.title}`);
-        button.addEventListener('click', () => resolveEmailReview(item.id, 'link', candidate.application_id));
-        actions.append(button);
-      });
-      const dismiss = element('button', currentLanguage === 'en' ? 'Not related' : 'Не относится');
-      dismiss.addEventListener('click', () => resolveEmailReview(item.id, 'dismiss'));
-      actions.append(dismiss);
-      wrap.append(actions);
-      return wrap;
-    }
-
-    async function loadEmailReview() {
-      const container = document.querySelector('#email-review-list');
-      const panel = document.querySelector('#email-review-panel');
-      const userId = userIdInput.value.trim();
-      if (!userId) { panel.hidden = true; return; }
-      let items;
-      try {
-        items = await asJson(await fetchWithTimeout(
-          `/v1/users/${userId}/email-review`,
-          {headers: headers(false)}
-        ));
-      } catch (error) {
-        panel.hidden = true;
-        return;
-      }
-      if (!items.length) { panel.hidden = true; container.replaceChildren(); return; }
-      panel.hidden = false;
-      container.replaceChildren();
-      items.forEach(item => container.append(renderEmailReviewItem(item)));
-    }
-
-    async function resolveEmailReview(eventId, action, applicationId) {
-      const userId = userIdInput.value.trim();
-      try {
-        await asJson(await fetchWithTimeout(
-          `/v1/users/${userId}/email-review/${eventId}/resolve`,
-          {
-            method: 'POST',
-            headers: headers(true),
-            body: JSON.stringify({action, application_id: applicationId || null})
-          }
-        ));
-        await Promise.all([loadEmailReview(), loadApplicationStatistics(), loadSavedVacancies(1)]);
-        showStatus(currentLanguage === 'en' ? 'Email review resolved.' : 'Письмо обработано.');
-      } catch (error) {
-        showError(error);
-      }
     }
 
     document.querySelector('#sync-application-statuses').addEventListener('click', async event => {
@@ -3089,7 +2136,7 @@
           {method: 'POST', headers: headers(false)},
           120000
         ));
-        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1), loadEmailReview()]);
+        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1)]);
         showStatus(currentLanguage === 'en'
           ? `Synchronization complete: ${summary.updated} updated, ${summary.unchanged} unchanged, ${summary.failed} failed.`
           : `Синхронизация завершена: обновлено ${summary.updated}, без изменений ${summary.unchanged}, ошибок ${summary.failed}.`);
@@ -3115,10 +2162,10 @@
           {method: 'POST', headers: headers(false)},
           120000
         ));
-        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1), loadEmailReview()]);
+        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1)]);
         showStatus(currentLanguage === 'en'
-          ? `Email synchronization complete: ${summary.created} new, ${summary.status_updated} statuses updated, ${summary.needs_review} need review, ${summary.failed} failed.`
-          : `Синхронизация почты завершена: новых событий ${summary.created}, обновлено статусов ${summary.status_updated}, на проверке ${summary.needs_review}, ошибок ${summary.failed}.`);
+          ? `Email synchronization complete: ${summary.created} new, ${summary.status_updated} statuses updated, ${summary.failed} failed.`
+          : `Синхронизация почты завершена: новых событий ${summary.created}, обновлено статусов ${summary.status_updated}, ошибок ${summary.failed}.`);
       } catch (error) {
         showError(error);
       } finally {
@@ -3150,7 +2197,7 @@
           {method: 'POST', headers: headers(false), body: form},
           120000
         ));
-        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1), loadEmailReview()]);
+        await Promise.all([loadApplicationStatistics(), loadSavedVacancies(1)]);
         showStatus(currentLanguage === 'en'
           ? `Email import complete: ${summary.processed} processed, ${summary.created} new, ${summary.status_updated} statuses updated, ${summary.unknown} unknown, ${summary.unmatched} unmatched, ${summary.failed} failed.`
           : `Импорт писем завершён: обработано ${summary.processed}, новых событий ${summary.created}, обновлено статусов ${summary.status_updated}, не распознано ${summary.unknown}, не привязано к вакансиям ${summary.unmatched}, ошибок ${summary.failed}.`);
@@ -3206,27 +2253,13 @@
     }
 
     function renderResult(item) {
-      const card = element('article', undefined, 'vacancy-card');
+      const card = element('article');
       card.dataset.searchResultKey = item.application_id || item.source_url;
-      if (item.application_id) card.dataset.applicationId = item.application_id;
       card.dataset.matchScore = String(Number(item.match_score) || 0);
       const top = element('div', undefined, 'topline');
       const title = element('div');
       title.append(element('div', item.company, 'company'), element('h3', item.title));
-      const cardCorner = element('div', undefined, 'card-corner');
-      const statusKey = item.application_status || 'saved';
-      const statusBadge = element(
-        'button',
-        vacancyStatusLabels[currentLanguage][statusKey] || statusKey,
-        'status-badge'
-      );
-      statusBadge.type = 'button';
-      statusBadge.dataset.status = statusKey;
-      statusBadge.title = currentLanguage === 'en' ? 'Change status' : 'Изменить статус';
-      statusBadge.setAttribute('aria-haspopup', 'menu');
-      statusBadge.setAttribute('aria-expanded', 'false');
-      cardCorner.append(statusBadge, createMatchMeter(item.match_score));
-      top.append(title, cardCorner);
+      top.append(title, createMatchMeter(item.match_score));
       card.append(top);
       if (item.matching_status === 'processing') {
         card.append(element(
@@ -3266,8 +2299,6 @@
       coverBlock.append(coverHeader, coverText);
       card.append(coverBlock);
       const taskState = element('div', '', 'task-state'); taskState.id = `state-${item.application_id}`;
-      const matchDetails = element('div', undefined, 'match-details');
-      matchDetails.hidden = true;
       if (item.materials_status === 'processing') {
         taskState.textContent = currentLanguage === 'en'
           ? 'Cover letter generation is in progress.'
@@ -3398,16 +2429,11 @@
       const moreMenu = element('div', undefined, 'more-actions__menu');
       moreMenu.hidden = true;
       moreMenu.setAttribute('role', 'menu');
-      const matchDetailsButton = element(
+      const changeStatus = element(
         'button',
-        currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит'
+        currentLanguage === 'en' ? 'Change status' : 'Изменить статус'
       );
-      matchDetailsButton.type = 'button';
-      matchDetailsButton.addEventListener('click', () => {
-        moreMenu.hidden = true;
-        moreToggle.setAttribute('aria-expanded', 'false');
-        loadMatchDetails(item.application_id, matchDetails, matchDetailsButton).catch(showError);
-      });
+      changeStatus.type = 'button';
       const statusPopup = element('div', undefined, 'status-popup');
       statusPopup.hidden = true;
       statusPopup.setAttribute('role', 'menu');
@@ -3431,21 +2457,19 @@
         });
         statusPopup.append(statusButton);
       });
-      statusBadge.addEventListener('click', () => {
+      changeStatus.addEventListener('click', () => {
         statusPopup.hidden = !statusPopup.hidden;
-        statusBadge.setAttribute('aria-expanded', String(!statusPopup.hidden));
       });
-      cardCorner.append(statusPopup);
       moreToggle.addEventListener('click', () => {
         moreMenu.hidden = !moreMenu.hidden;
         statusPopup.hidden = true;
         moreToggle.setAttribute('aria-expanded', String(!moreMenu.hidden));
       });
       if (!isSubmitted) moreMenu.append(manualSubmitted);
-      moreMenu.append(matchDetailsButton, blacklist);
-      moreActions.append(moreToggle, moreMenu);
+      moreMenu.append(blacklist, changeStatus);
+      moreActions.append(moreToggle, moreMenu, statusPopup);
       actions.append(accept, reject, link, moreActions);
-      card.append(actions, taskState, matchDetails);
+      card.append(actions, taskState);
       // Load current materials (cover letter) for this application.
       fetch(`/v1/applications/${item.application_id}/materials`, {headers: headers(false)})
         .then(response => response.ok ? response.json() : null)
@@ -3634,12 +2658,12 @@
       ru: {
         saved: 'Сохранена', awaiting_review: 'Ожидает решения', approved: 'Принята',
         rejected: 'Отклонена мной', employer_rejected: 'Отказ работодателя', skipped: 'Пропущена', submitted: 'Отправлена',
-        interview: 'Собеседование', draft: 'Черновик', needs_review: 'На проверке', offer: 'Оффер', withdrawn: 'Отозвана'
+        interview: 'Собеседование', draft: 'Черновик'
       },
       en: {
         saved: 'Saved', awaiting_review: 'Awaiting decision', approved: 'Accepted',
         rejected: 'Rejected by me', employer_rejected: 'Employer rejection', skipped: 'Skipped', submitted: 'Submitted',
-        interview: 'Interview', draft: 'Draft', needs_review: 'Under review', offer: 'Offer', withdrawn: 'Withdrawn'
+        interview: 'Interview', draft: 'Draft'
       }
     };
     let vacancyPage = 1;
@@ -3647,13 +2671,13 @@
 
     function renderSavedVacancy(item) {
       const card = element('article', undefined, 'vacancy-card');
-      if (item.application_id) card.dataset.applicationId = item.application_id;
       const top = element('div', undefined, 'topline');
       const title = element('div');
       title.append(element('div', item.company, 'company'), element('h3', item.title));
       const metadata = [
         vacancySourceLabels[currentLanguage][item.source] || item.source,
         item.location || (currentLanguage === 'en' ? 'Location unspecified' : 'Локация не указана'),
+        vacancyStatusLabels[currentLanguage][item.status] || item.status,
         item.published_at
           ? currentLanguage === 'en'
             ? `Published ${new Date(item.published_at).toLocaleDateString('en-US')}`
@@ -3661,143 +2685,37 @@
           : currentLanguage === 'en' ? 'Publication date unspecified' : 'Дата публикации не указана'
       ];
       title.append(element('div', metadata.join(' · '), 'meta'));
-      const cardCorner = element('div', undefined, 'card-corner');
-      const statusKey = item.status || 'saved';
-      const statusBadge = element(
-        'button',
-        vacancyStatusLabels[currentLanguage][statusKey] || statusKey,
-        'status-badge'
-      );
-      statusBadge.type = 'button';
-      statusBadge.dataset.status = statusKey;
-      statusBadge.title = currentLanguage === 'en' ? 'Change status' : 'Изменить статус';
-      statusBadge.setAttribute('aria-haspopup', 'menu');
-      statusBadge.setAttribute('aria-expanded', 'false');
-      cardCorner.append(statusBadge, createMatchMeter(item.match_score));
-      top.append(title, cardCorner);
+      top.append(title, createMatchMeter(item.match_score));
       card.append(top);
       card.append(createVacancyAttributeTags(item));
       const keySkills = createKeySkillTags(item.key_skills);
       if (keySkills) card.append(keySkills);
       const summaryNode = createSummaryAffordance(item.vacancy_summary);
       if (summaryNode) card.append(summaryNode);
-      const actions = element('div', undefined, 'actions card-actions');
+      const actions = element('div', undefined, 'actions');
+      const link = element('a', 'Открыть вакансию');
+      link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
+      const applicationLink = element('a', 'Материалы и решение');
+      applicationLink.href = `/review?application_id=${encodeURIComponent(item.application_id)}`;
+      applicationLink.className = 'link-btn';
+      const reject = element('button', 'Отклонить', 'danger'); reject.type = 'button';
+      reject.addEventListener('click', () => rejectVacancy(item.application_id, card).catch(showError));
+      const blacklist = element('button', 'Компания в чёрный список'); blacklist.type = 'button';
+      blacklist.addEventListener('click', () => blacklistCompany(item.company, true).catch(showError));
+      const detailsButton = element('button', 'Почему подходит'); detailsButton.type = 'button';
       const details = element('div', undefined, 'match-details'); details.hidden = true;
-      // Main buttons — equal width in 3-column grid
-      const detailsButton = element('button', currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит');
-      detailsButton.type = 'button';
       detailsButton.addEventListener('click', () => {
         loadMatchDetails(item.application_id, details, detailsButton).catch(showError);
       });
-      const applicationLink = element('a', currentLanguage === 'en' ? 'Materials & decision' : 'Материалы и решение');
-      applicationLink.href = `/review?application_id=${encodeURIComponent(item.application_id)}`;
-      applicationLink.className = 'link-btn';
-      const sourceLabel = ({hh:'hh.ru',linkedin:'LinkedIn',greenhouse:'Greenhouse'})[item.source] || item.source || 'site';
-      const link = element('a', currentLanguage === 'en' ? `Open on ${sourceLabel}` : `Открыть на ${sourceLabel}`);
-      link.href = item.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'link-btn';
-      // Overflow menu — same pattern as search cards
-      const moreActions = element('div', undefined, 'more-actions');
-      const moreToggle = element('button', '\u22EF', 'more-actions__toggle');
-      moreToggle.type = 'button';
-      moreToggle.title = currentLanguage === 'en' ? 'More actions' : 'Другие действия';
-      moreToggle.setAttribute('aria-label', moreToggle.title);
-      moreToggle.setAttribute('aria-haspopup', 'menu');
-      moreToggle.setAttribute('aria-expanded', 'false');
-      const moreMenu = element('div', undefined, 'more-actions__menu');
-      moreMenu.hidden = true;
-      moreMenu.setAttribute('role', 'menu');
-      const runRecalculate = async (force, button, label) => {
-        moreMenu.hidden = true;
-        button.disabled = true;
-        button.textContent = currentLanguage === 'en' ? 'Calculating…' : 'Рассчитываем…';
-        try {
-          const task = await asJson(await fetch(`/v1/applications/${item.application_id}/recalculate-match${force ? '?force=true' : ''}`, {
-            method: 'POST', headers: headers(false)
-          }));
-          await waitForMatchingTask(task, current => {
-            button.textContent = matchingTaskStatusText(current);
-          });
-          const data = await asJson(await fetch(`/v1/applications/${item.application_id}/match-details`, {
-            headers: headers(false)
-          }));
-          const newScore = Math.round(data.final_score);
-          const meter = card.querySelector('.match-meter');
-          if (meter) meter.replaceWith(createMatchMeter(newScore));
-          card.dataset.matchScore = String(newScore);
-          if (!details.hidden) {
-            details.hidden = true;
-            detailsButton.textContent = currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит';
-            await loadMatchDetails(item.application_id, details, detailsButton);
-          }
-          button.textContent = '\u2713 ' + (currentLanguage === 'en' ? 'Done' : 'Готово');
-          setTimeout(() => {
-            button.textContent = label;
-            button.disabled = false;
-          }, 2000);
-        } catch (e) {
-          button.textContent = label; button.disabled = false;
-          showError(e);
-        }
-      };
-      const recalcBtn = element('button', currentLanguage === 'en' ? 'Recalculate' : 'Пересчитать');
-      recalcBtn.type = 'button';
-      recalcBtn.title = currentLanguage === 'en'
-        ? 'Reuse cached calculations where possible'
-        : 'Пересчитать с переиспользованием кэша';
-      recalcBtn.addEventListener('click', () => runRecalculate(false, recalcBtn, currentLanguage === 'en' ? 'Recalculate' : 'Пересчитать'));
-      const fullRecalcBtn = element('button', currentLanguage === 'en' ? 'Full recalculate' : 'Полный перерасчёт');
-      fullRecalcBtn.type = 'button';
-      fullRecalcBtn.title = currentLanguage === 'en'
-        ? 'Discard cached results and recompute from scratch (use after changing the model)'
-        : 'Сбросить кэш и пересчитать с нуля (используйте после смены модели)';
-      fullRecalcBtn.addEventListener('click', () => runRecalculate(true, fullRecalcBtn, currentLanguage === 'en' ? 'Full recalculate' : 'Полный перерасчёт'));
-      moreMenu.append(recalcBtn, fullRecalcBtn);
       if (!['submitted', 'interview'].includes(item.status)) {
-        const rejectBtn = element('button', currentLanguage === 'en' ? 'Reject' : 'Отклонить', 'danger');
-        rejectBtn.type = 'button';
-        rejectBtn.addEventListener('click', () => { moreMenu.hidden = true; rejectVacancy(item.application_id, card).catch(showError); });
-        const blacklistBtn = element('button', currentLanguage === 'en' ? 'Blacklist company' : 'Компания в чёрный список');
-        blacklistBtn.type = 'button';
-        blacklistBtn.addEventListener('click', () => { moreMenu.hidden = true; blacklistCompany(item.company, true).catch(showError); });
-        moreMenu.append(rejectBtn, blacklistBtn);
+        actions.append(reject, blacklist);
       }
-      const statusPopup = element('div', undefined, 'status-popup');
-      statusPopup.hidden = true;
-      statusPopup.setAttribute('role', 'menu');
-      editableApplicationStatuses.forEach(status => {
-        const statusButton = element(
-          'button',
-          vacancyStatusLabels[currentLanguage][status] || status
-        );
-        statusButton.type = 'button';
-        statusButton.disabled = item.status === status;
-        statusButton.addEventListener('click', async () => {
-          statusButton.disabled = true;
-          try {
-            item.status = await setApplicationStatus(item.application_id, status);
-            card.replaceWith(renderSavedVacancy(item));
-            await loadSavedVacancies(vacancyPage);
-            restoreSearchResults();
-          } catch (error) {
-            showError(error);
-            statusButton.disabled = false;
-          }
-        });
-        statusPopup.append(statusButton);
+      actions.append(detailsButton, applicationLink, link);
+      const statusEditor = createStatusEditor(item, 'status', async () => {
+        await loadSavedVacancies(vacancyPage);
+        restoreSearchResults();
       });
-      statusBadge.addEventListener('click', () => {
-        statusPopup.hidden = !statusPopup.hidden;
-        statusBadge.setAttribute('aria-expanded', String(!statusPopup.hidden));
-      });
-      cardCorner.append(statusPopup);
-      moreToggle.addEventListener('click', () => {
-        moreMenu.hidden = !moreMenu.hidden;
-        statusPopup.hidden = true;
-        moreToggle.setAttribute('aria-expanded', String(!moreMenu.hidden));
-      });
-      moreActions.append(moreToggle, moreMenu);
-      actions.append(detailsButton, applicationLink, link, moreActions);
-      card.append(actions, details);
+      card.append(top, actions, statusEditor, details);
       return card;
     }
 
@@ -3831,207 +2749,79 @@
         const payload = await asJson(response);
         const heading = element(
           'strong',
-          `Matching v2: ${Math.round(payload.final_score)}% · статус ${payload.status}` +
-          (payload.required_score !== undefined ? `\nОбязательные: ${Math.round(payload.required_score)}% · Желательные: ${Math.round(payload.preferred_score || 0)}% · Плюсы: ${Math.round(payload.bonus_score || 0)}%` : '')
+          `Matching v2: ${Math.round(payload.final_score)}% · статус ${payload.status}`
         );
         const summary = element(
           'div',
-          `Подтверждено: ${payload.matched_required_count} · Не подтверждено: ${payload.missing_required_count} · Hard blockers: ${payload.blocker_count}` +
-          (payload.confidence ? ` · Уверенность: ${Math.round(payload.confidence * 100)}%` : ''),
+          `Обязательных требований найдено: ${payload.matched_required_count}; не найдено: ${payload.missing_required_count}.`,
           'task-state'
         );
         container.replaceChildren(heading, summary);
         if (payload.fallback_reason) {
           container.append(element('div', `Fallback: ${payload.fallback_reason}`, 'task-state'));
         }
-        if (payload.explanation?.matching_source_version !== '2') {
-          const stale = element(
-            'div',
-            currentLanguage === 'en'
-              ? 'This explanation was calculated from an older vacancy source.'
-              : 'Это объяснение рассчитано по старой версии данных вакансии.',
-            'task-state'
-          );
-          const refreshStale = element(
-            'button',
-            currentLanguage === 'en' ? 'Refresh explanation' : 'Обновить объяснение'
-          );
-          refreshStale.type = 'button';
-          refreshStale.addEventListener('click', () => {
-            calculateDetailedMatch(applicationId, container, button, true).catch(error => {
-              container.replaceChildren(element('div', error.message, 'error'));
-            });
-          });
-          container.append(stale, refreshStale);
-        }
-        const keySkillCoverage = Array.isArray(payload.explanation?.key_skill_coverage)
-          ? payload.explanation.key_skill_coverage
-          : [];
-        appendMatchDetailList(
-          container,
-          currentLanguage === 'en' ? 'Key skill coverage' : 'Покрытие ключевых навыков',
-          keySkillCoverage,
-          item => {
-            const labels = currentLanguage === 'en'
-              ? {
-                  entailed: 'confirmed', partial: 'partially confirmed',
-                  related_but_insufficient: 'related evidence is insufficient',
-                  insufficient_evidence: 'insufficient evidence', evaluation_error: 'evaluation error',
-                  missing: 'not confirmed', not_evaluated: 'not evaluated'
-                }
-              : {
-                  entailed: 'подтверждён', partial: 'подтверждён частично',
-                  related_but_insufficient: 'связанных данных недостаточно',
-                  insufficient_evidence: 'недостаточно доказательств', evaluation_error: 'ошибка оценки',
-                  missing: 'не подтверждён', not_evaluated: 'не оценён'
-                };
-            return `${item.skill}: ${labels[item.match_level] || item.match_level}`;
-          }
+        const blockers = payload.requirements.filter(requirement => requirement.match_level === 'blocker');
+        const missing = payload.requirements.filter(
+          requirement => ['missing', 'theoretical_only'].includes(requirement.match_level)
         );
-        // Categorize requirements by entailment relation
-        const entailed = payload.requirements.filter(r => r.entailment_relation === 'entailed');
-        const partial = payload.requirements.filter(r => r.entailment_relation === 'partial');
-        const relatedInsufficient = payload.requirements.filter(r => r.entailment_relation === 'related_but_insufficient');
-        const insufficientEvidence = payload.requirements.filter(r => r.entailment_relation === 'insufficient_evidence');
-        const evaluationErrors = payload.requirements.filter(r => r.entailment_relation === 'evaluation_error' || r.match_level === 'evaluation_error');
-        const blockers = payload.requirements.filter(r => r.match_level === 'blocker' || r.is_hard_blocker);
-        const missing = payload.requirements.filter(r => ['missing', 'theoretical_only'].includes(r.match_level) && !r.is_hard_blocker);
+        const supported = payload.requirements.filter(requirement => requirement.evidence_text);
         appendMatchDetailList(
           container,
-          '🚫 Блокирующие',
+          'Блокирующие требования',
           blockers,
           requirement => requirement.requirement_text
         );
         appendMissingSkillsTags(
           container,
-          '❌ Не подтверждено',
+          'Чего не хватает',
           missing,
           requirement => requirement.requirement_text
         );
         appendMatchDetailList(
           container,
-          '✅ Подтверждено',
-          entailed,
-          requirement => `${requirement.requirement_text}: ${requirement.evidence_source_fragment || requirement.evidence_text || ''}` +
-            (requirement.evidence_strength !== null ? ` (${Math.round(requirement.evidence_strength * 100)}%)` : '')
+          'Подтверждения в резюме',
+          supported,
+          requirement => `${requirement.requirement_text}: ${requirement.evidence_source_fragment || requirement.evidence_text}`
         );
-        appendMatchDetailList(
-          container,
-          '🔶 Частично подтверждено',
-          partial,
-          requirement => `${requirement.requirement_text}: ${requirement.evidence_source_fragment || requirement.evidence_text || ''}` +
-            (requirement.evidence_strength !== null ? ` (${Math.round(requirement.evidence_strength * 100)}%)` : '')
-        );
-        appendMatchDetailList(
-          container,
-          '🔗 Связанные, но недостаточные',
-          relatedInsufficient,
-          requirement => `${requirement.requirement_text}: ${requirement.evidence_text || ''}` +
-            (requirement.explanation ? ` — ${requirement.explanation.split('\n')[0]}` : '')
-        );
-        appendMatchDetailList(
-          container,
-          currentLanguage === 'en' ? 'Insufficient evidence' : 'Недостаточно доказательств',
-          insufficientEvidence,
-          requirement => requirement.requirement_text
-        );
-        appendMatchDetailList(
-          container,
-          currentLanguage === 'en' ? 'Evaluation errors' : 'Ошибки оценки',
-          evaluationErrors,
-          requirement => `${requirement.requirement_text}: ${requirement.explanation?.split('\n')[0] || ''}`
-        );
-        if (evaluationErrors.length) {
-          const retryErrors = element(
-            'button',
-            currentLanguage === 'en' ? 'Retry failed evaluations' : 'Повторить ошибочные оценки'
-          );
-          retryErrors.type = 'button';
-          retryErrors.addEventListener('click', () => {
-            calculateDetailedMatch(applicationId, container, button, true).catch(error => {
-              container.replaceChildren(element('div', error.message, 'error'));
-            });
-          });
-          container.append(retryErrors);
-        }
-        // Decomposition: one claim per line
-        const decompReqs = payload.requirements.filter(
-          r => r.retrieval_model_versions && r.retrieval_model_versions.pipeline === 'claim-based'
-        );
-        if (decompReqs.length) {
-          container.append(element('h4', '📊 Decomposition'));
-          decompReqs.forEach(req => {
-            const lines = (req.explanation || '').split('\n');
-            const list = element('ul');
-            list.style.marginBottom = '8px';
-            lines.slice(0, 12).forEach(line => {
-              if (line.trim()) list.append(element('li', line.trim()));
-            });
-            container.append(element('div', req.requirement_text, 'task-state'));
-            container.append(list);
-          });
-        }
         button.textContent = 'Скрыть объяснение';
       } finally {
         button.disabled = false;
       }
     }
 
-    function matchingTaskStatusText(task) {
-      const runningTransition = task.transitions?.find(item => item.new_state === 'running');
-      const startedAt = runningTransition?.occurred_at || task.created_at;
-      const elapsedSeconds = Math.max(0, Math.round((Date.now() - Date.parse(startedAt)) / 1000));
-      const elapsed = elapsedSeconds >= 60
-        ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`
-        : `${elapsedSeconds}s`;
-      const stage = task.pipeline_status ? ` · stage: ${task.pipeline_status}` : '';
-      const position = task.queue_position ? ` · queue: ${task.queue_position}` : '';
-      return `Matching: ${task.state}${stage}${position} · ${elapsed}`;
-    }
-
-    async function waitForMatchingTask(task, onUpdate, timeoutMs = 900000) {
-      const deadline = Date.now() + timeoutMs;
-      let current = task;
+    async function calculateDetailedMatch(applicationId, container, button) {
+      container.replaceChildren(element('div', 'Запускаем подробный расчёт…', 'task-state'));
+      await asJson(await fetch(`/v1/applications/${applicationId}/recalculate-match`, {
+        method: 'POST', headers: headers(false)
+      }));
+      const deadline = Date.now() + 180000;
       while (Date.now() < deadline) {
-        onUpdate(current);
-        if (current.state === 'completed') return current;
-        if (['failed', 'cancelled', 'interrupted'].includes(current.state)) {
-          const lastTransition = current.transitions?.[current.transitions.length - 1];
-          throw new Error(lastTransition?.reason || `Matching task ${current.state}`);
-        }
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        current = await asJson(await fetch(`/v1/workflow-tasks/${encodeURIComponent(current.id)}`, {
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        const response = await fetch(`/v1/applications/${applicationId}/match-details`, {
           headers: headers(false)
-        }));
-      }
-      throw new Error(currentLanguage === 'en'
-        ? 'Matching is still running after 15 minutes.'
-        : 'Расчёт всё ещё выполняется спустя 15 минут.');
-    }
-
-    async function calculateDetailedMatch(applicationId, container, button, force = false) {
-      const wasHidden = container.hidden;
-      container.hidden = false;
-      container.replaceChildren(element('div', currentLanguage === 'en'
-        ? 'Starting detailed matching…'
-        : 'Запускаем подробный расчёт…', 'task-state'));
-      button.disabled = true;
-      try {
-        const task = await asJson(await fetch(`/v1/applications/${applicationId}/recalculate-match${force ? '?force=true' : ''}`, {
-          method: 'POST', headers: headers(false)
-        }));
-        await waitForMatchingTask(task, current => {
-          container.replaceChildren(element('div', matchingTaskStatusText(current), 'task-state'));
         });
-        container.hidden = true;
-        button.textContent = currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит';
-        await loadMatchDetails(applicationId, container, button);
-      } catch (error) {
-        container.replaceChildren(element('div', error.message, 'error'));
-        button.textContent = currentLanguage === 'en' ? 'Why it matches' : 'Почему подходит';
-      } finally {
-        button.disabled = false;
+        if (!response.ok) {
+          if (response.status === 404) continue;
+          await asJson(response);
+        }
+        const payload = await response.json();
+        if (['scored', 'degraded', 'failed'].includes(payload.status)) {
+          container.hidden = true;
+          button.textContent = 'Почему подходит';
+          await loadMatchDetails(applicationId, container, button);
+          return;
+        }
+        container.replaceChildren(element(
+          'div',
+          `Подробный расчёт выполняется: ${payload.status}.`,
+          'task-state'
+        ));
       }
+      container.replaceChildren(element(
+        'div',
+        'Расчёт продолжается в фоне. Откройте «Почему подходит» немного позже.',
+        'task-state'
+      ));
     }
 
     function appendMatchDetailList(container, title, items, textForItem) {
@@ -4137,7 +2927,6 @@
         min_match_score: document.querySelector('#vacancy-score').value || '0',
         work_format: document.querySelector('#vacancy-work-format').value,
         employment_type: document.querySelector('#vacancy-employment-type').value,
-        matching_v2: document.querySelector('#vacancy-matching-v2').value,
         page: String(requestedPage),
         page_size: '20'
       });
@@ -4182,75 +2971,7 @@
       document.querySelector('#vacancy-published-to').value = '';
       document.querySelector('#vacancy-work-format').value = 'all';
       document.querySelector('#vacancy-employment-type').value = 'all';
-      document.querySelector('#vacancy-matching-v2').value = 'all';
       vacancyPage = 1; loadSavedVacancies().catch(showError);
-    });
-    document.querySelector('#rerank-filtered').addEventListener('click', async () => {
-      const btn = document.querySelector('#rerank-filtered');
-      btn.disabled = true;
-      try {
-        // Load all vacancies matching current filters (paginated, max 100 per page)
-        const baseParams = new URLSearchParams();
-        const q = document.querySelector('#vacancy-query').value.trim();
-        if (q) baseParams.set('query', q);
-        const src = document.querySelector('#vacancy-source').value;
-        if (src && src !== 'all') baseParams.set('source', src);
-        const st = document.querySelector('#vacancy-status').value;
-        if (st && st !== 'all') baseParams.set('status_filter', st);
-        const loc = document.querySelector('#vacancy-location').value.trim();
-        if (loc) baseParams.set('location', loc);
-        const score = document.querySelector('#vacancy-score').value || '0';
-        if (score !== '0') baseParams.set('min_match_score', score);
-        const wf = document.querySelector('#vacancy-work-format').value;
-        if (wf && wf !== 'all') baseParams.set('work_format', wf);
-        const et = document.querySelector('#vacancy-employment-type').value;
-        if (et && et !== 'all') baseParams.set('employment_type', et);
-        const publishedFrom = document.querySelector('#vacancy-published-from').value;
-        const publishedTo = document.querySelector('#vacancy-published-to').value;
-        if (publishedFrom) baseParams.set('published_from', publishedFrom);
-        if (publishedTo) baseParams.set('published_to', publishedTo);
-
-        // Collect all application_ids across pages
-        const allAppIds = [];
-        for (let pg = 1; pg <= 20; pg++) {
-          const params = new URLSearchParams(baseParams);
-          params.set('page', String(pg));
-          params.set('page_size', '100');
-          const resp = await fetch(`/v1/users/${userIdInput.value.trim()}/vacancies?${params}`, { headers: headers(false) });
-          if (!resp.ok) break;
-          const payload = await asJson(resp);
-          const items = payload.items || [];
-          for (const item of items) {
-            if (item.application_id) allAppIds.push(item.application_id);
-          }
-          if (items.length < 100 || pg >= (payload.total_pages || 1)) break;
-        }
-        if (!allAppIds.length) {
-          showStatus(currentLanguage === 'en' ? 'No vacancies to re-rank.' : 'Нет вакансий для переранжирования.');
-          btn.disabled = false;
-          return;
-        }
-        let done = 0, failed = 0;
-        const total = allAppIds.length;
-        const updateProgress = () => {
-          showStatus(`Переранжирование: ${done}/${total}${failed ? `, ошибок: ${failed}` : ''}`);
-        };
-        updateProgress();
-        for (const appId of allAppIds) {
-          try {
-            await fetch(`/v1/applications/${appId}/recalculate-match?force=true`, {
-              method: 'POST', headers: headers(false)
-            });
-          } catch { failed++; }
-          done++;
-          updateProgress();
-        }
-        showStatus('Ожидание завершения…');
-        await new Promise(r => setTimeout(r, 5000));
-        await loadSavedVacancies(vacancyPage);
-        showStatus(`Переранжирование завершено для ${total} вакансий.`);
-      } catch (e) { showError(e); }
-      btn.disabled = false;
     });
     document.querySelector('#vacancy-previous').addEventListener('click', () => loadSavedVacancies(vacancyPage - 1).catch(showError));
     document.querySelector('#vacancy-next').addEventListener('click', () => loadSavedVacancies(vacancyPage + 1).catch(showError));
@@ -4306,8 +3027,7 @@
             locations,
             limit: 15,
             search_text: searchText,
-            cv_file_id: cvFileId,
-            direct_rerank: Boolean(document.querySelector('#direct-rerank')?.checked)
+            cv_file_id: cvFileId
           })
         });
         if (!response.ok) throw new Error(await response.text());
@@ -4320,8 +3040,8 @@
             const item = {
               ...event.item,
               source: event.source,
-              matching_status: event.item.matching_status || 'processing',
-              materials_status: event.item.materials_status || 'processing'
+              matching_status: 'processing',
+              materials_status: 'processing'
             };
             if (['rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'].includes(
               item.application_status
@@ -4391,154 +3111,20 @@
         showStatus(`Найдено: ${outcomes.length}${failures.length ? `. Не удалось проверить: ${failures.join('; ')}` : ''}`);
       } catch (error) { showError(error); }
     });
-    async function loadRerankerModelInfo() {
-      const info = document.querySelector('#reranker-model-info');
-      if (!info) return;
-      try {
-        const response = await fetch('/api/v1/admin/reranker/status', { headers: headers(false) });
-        if (!response.ok) { info.textContent = ''; return; }
-        const data = await response.json();
-        if (data.model) {
-          const label = currentLanguage === 'en'
-            ? `Reranker used by search now: ${data.model}${data.model_revision ? ' @ ' + data.model_revision : ''} — ${data.status}`
-            : `Сейчас в поиске используется реранжировщик: ${data.model}${data.model_revision ? ' @ ' + data.model_revision : ''} — ${data.status}`;
-          info.textContent = label;
-        } else {
-          info.textContent = currentLanguage === 'en'
-            ? `Reranker: ${data.status}`
-            : `Реранжировщик: ${data.status}`;
-        }
-      } catch { info.textContent = ''; }
-    }
-
-    document.querySelector('#rerank-all').addEventListener('click', async () => {
-      try {
-        const cards = document.querySelectorAll('#results .vacancy-card');
-        if (!cards.length) {
-          showStatus(currentLanguage === 'en' ? 'No vacancies to re-rank.' : 'Нет вакансий для переранжирования.');
-          return;
-        }
-        const button = document.querySelector('#rerank-all');
-        button.disabled = true;
-        let done = 0;
-        let failed = 0;
-        const total = cards.length;
-        const updateProgress = () => {
-          showStatus(
-            currentLanguage === 'en'
-              ? `Re-ranking: ${done}/${total}${failed ? `, failed: ${failed}` : ''}`
-              : `Переранжирование: ${done}/${total}${failed ? `, ошибок: ${failed}` : ''}`
-          );
-        };
-        updateProgress();
-        // Dispatch re-ranking for each vacancy
-        const appIds = [];
-        for (const card of cards) {
-          const appId = card.dataset.applicationId;
-          if (!appId) { done++; continue; }
-          appIds.push(appId);
-          try {
-            await fetch(`/v1/applications/${appId}/recalculate-match?force=true`, {
-              method: 'POST', headers: headers(false)
-            });
-          } catch { failed++; }
-          done++;
-          updateProgress();
-        }
-        // Poll for updated scores
-        showStatus(currentLanguage === 'en'
-          ? 'Waiting for scores to update…'
-          : 'Ожидание обновления оценок…');
-        const scoreMap = new Map();
-        for (const appId of appIds) {
-          let scoreFound = false;
-          for (let attempt = 0; attempt < 30; attempt++) {
-            try {
-              const resp = await fetch(`/v1/applications/${appId}/match-details`, { headers: headers(false) });
-              if (resp.ok) {
-                const data = await resp.json();
-                console.log(`[rerank] ${appId} attempt=${attempt} status=${data.status} final_score=${data.final_score}`);
-                if (['scored', 'degraded', 'failed'].includes(data.status)) {
-                  scoreMap.set(appId, Math.round(data.final_score));
-                  scoreFound = true;
-                  break;
-                }
-              } else {
-                console.log(`[rerank] ${appId} attempt=${attempt} HTTP ${resp.status}`);
-              }
-            } catch (e) { console.log(`[rerank] ${appId} attempt=${attempt} error=${e.message}`); }
-            await new Promise(r => setTimeout(r, 1000));
-          }
-          if (!scoreFound) console.warn(`[rerank] ${appId} — no score after 30 attempts`);
-        }
-        console.log(`[rerank] scoreMap:`, Object.fromEntries(scoreMap));
-        // Update cards with new scores
-        const results = document.querySelector('#results');
-        const cardsArray = Array.from(results.querySelectorAll('.vacancy-card'));
-        for (const card of cardsArray) {
-          const appId = card.dataset.applicationId;
-          if (appId && scoreMap.has(appId)) {
-            const newScore = scoreMap.get(appId);
-            card.dataset.matchScore = String(newScore);
-            const meter = card.querySelector('.match-meter');
-            if (meter) {
-              const newMeter = createMatchMeter(newScore);
-              meter.replaceWith(newMeter);
-            }
-          }
-        }
-        // Re-sort cards by score (descending)
-        cardsArray.sort((a, b) => Number(b.dataset.matchScore || 0) - Number(a.dataset.matchScore || 0));
-        for (const card of cardsArray) {
-          results.appendChild(card);
-        }
-        // Update cached scores in localStorage
-        const storageKey = searchResultsStorageKey();
-        if (storageKey) {
-          const raw = localStorage.getItem(storageKey);
-          if (raw) {
-            try {
-              const cached = JSON.parse(raw);
-              if (cached?.version === SEARCH_RESULTS_VERSION && Array.isArray(cached.outcomes)) {
-                cached.outcomes = cached.outcomes.map(item => {
-                  if (item.application_id && scoreMap.has(item.application_id)) {
-                    return { ...item, match_score: scoreMap.get(item.application_id) };
-                  }
-                  return item;
-                });
-                localStorage.setItem(storageKey, JSON.stringify(cached));
-              }
-            } catch { /* ignore */ }
-          }
-        }
-        button.disabled = false;
-        showStatus(
-          currentLanguage === 'en'
-            ? `Re-ranking complete. Updated scores for ${scoreMap.size} vacancies.`
-            : `Переранжирование завершено. Обновлены оценки для ${scoreMap.size} вакансий.`
-        );
-        loadRerankerModelInfo().catch(() => {});
-      } catch (error) { showError(error); document.querySelector('#rerank-all').disabled = false; }
-    });
-
-    loadRerankerModelInfo().catch(() => {});
-
-    // Persist direct-rerank checkbox
-    const directRerankCb = document.querySelector('#direct-rerank');
-    if (directRerankCb) {
-      directRerankCb.checked = localStorage.getItem('directRerank') === 'true';
-      directRerankCb.addEventListener('change', () => {
-        localStorage.setItem('directRerank', String(directRerankCb.checked));
-      });
-    }
-
     async function loadUserWorkspace() {
+      if (keyInput.value) {
+        sessionStorage.setItem("dashboardApiKey", keyInput.value);
+      }
       localStorage.setItem('dashboardUserId', userIdInput.value.trim());
-      loadLlmPreferences();
+      // Save API key to sessionStorage so it's available for all /v1/ requests
+      if (keyInput.value) {
+        sessionStorage.setItem('dashboardApiKey', keyInput.value);
+      }
+      loadSavedLlmPreference();
       await Promise.all([
         loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles(),
         loadAutofillValues(), loadSiteDefinitionsForFields(), loadApplicationStatistics(),
-        loadEmailIntegration(), loadProfileFacts(), loadEmailReview()
+        loadEmailIntegration(), loadProfileFacts()
       ]);
       restoreSearchResults();
     }
@@ -4550,171 +3136,25 @@
     });
     translateTree();
     renderLanguageSelector();
-    initializeDashboardSubsections();
-    collapseAllDashboardSubsections();
-
     const requestedPanel = new URLSearchParams(window.location.search).get('panel');
-    const validPanels = ['vacancies', 'search', 'blacklist', 'resume', 'sessions', 'model', 'access'];
-    localStorage.removeItem('dashboardActivePanel');
-    collapseAllPanels();
-    if (validPanels.includes(requestedPanel)) activatePanel(requestedPanel);
+    const initialPanel = [
+      'vacancies', 'search', 'blacklist', 'resume', 'sessions', 'model', 'access'
+    ].includes(requestedPanel)
+      ? requestedPanel
+      : (localStorage.getItem('dashboardActivePanel') || 'vacancies');
+    activatePanel(initialPanel);
     restoreSearchResults();
-    loadLlmPreferences();
+    loadSavedLlmPreference();
     loadAutofillValues().catch(showError);
     loadSiteDefinitionsForFields().catch(showError);
     loadBrowserSessionStatuses(true).catch(showError);
     loadEmailIntegration().catch(showError);
     loadProfileFacts().catch(showError);
     loadApplicationStatistics().catch(showError);
-    loadEmailReview().catch(showError);
     window.setInterval(() => loadBrowserSessionStatuses(true).catch(() => {}), 300000);
     loadSavedVacancies().catch(showError);
     loadCompanyBlacklist().catch(showError);
     loadCvFiles().catch(showError);
-
-    // --- Debug log tab ---
-    (() => {
-      const LEVEL_COLORS = {
-        verbose: '#555',
-        debug: '#6a9fb5',
-        info: '#b5d36a',
-        warning: '#e5c07b',
-        error: '#e06c75',
-        critical: '#ff5555',
-        major: '#ff0000',
-      };
-      const debugLevel = document.querySelector('#debug-level');
-      const debugInterval = document.querySelector('#debug-interval');
-      const debugLimit = document.querySelector('#debug-limit');
-      const debugSearch = document.querySelector('#debug-search');
-      const debugRefresh = document.querySelector('#debug-refresh');
-      const debugToggle = document.querySelector('#debug-toggle');
-      const debugClear = document.querySelector('#debug-clear');
-      const debugStatus = document.querySelector('#debug-status');
-      const debugEntries = document.querySelector('#debug-log-entries');
-      const debugContainer = document.querySelector('#debug-log-container');
-
-      let autoTimer = null;
-      let lastTimestamp = null;
-
-      function formatTimestamp(iso) {
-        if (!iso) return '';
-        try {
-          const d = new Date(iso);
-          return d.toLocaleString('ru-RU', {hour12: false, fractionalSecondDigits: 0});
-        } catch { return iso; }
-      }
-
-      function renderEntry(e) {
-        const color = LEVEL_COLORS[e.level] || '#888';
-        const ts = formatTimestamp(e.timestamp);
-        const level = e.level.toUpperCase().padEnd(8);
-        const logger = e.logger ? `[${e.logger}]` : '';
-        const proc = e.process ? `{${e.process}}` : '';
-        let detail = '';
-        if (e.fields && Object.keys(e.fields).length > 0) {
-          const skip = new Set(['event', 'level', 'timestamp', 'logger']);
-          const extra = {};
-          for (const [k, v] of Object.entries(e.fields)) {
-            if (!skip.has(k) && v !== null && v !== undefined && v !== '') {
-              extra[k] = v;
-            }
-          }
-          if (Object.keys(extra).length > 0) {
-            detail = `\n  ${JSON.stringify(extra, null, 0)}`;
-          }
-        }
-        return `<div style="margin-bottom:2px;white-space:pre-wrap;word-break:break-all;border-left:3px solid ${color};padding-left:6px;"><span style="color:#555;">${ts}</span> <span style="color:${color};font-weight:bold;">${level}</span> <span style="color:#e5c07b;">${proc}</span> <span style="color:#888;">${logger}</span> ${e.message}${detail ? `<span style="color:#555;">${detail}</span>` : ''}</div>`;
-      }
-
-      async function fetchLogs(append = false) {
-        const params = new URLSearchParams({
-          level: debugLevel.value,
-          limit: debugLimit.value,
-        });
-        if (append && lastTimestamp) params.set('since', lastTimestamp);
-        const searchVal = debugSearch.value.trim();
-        if (searchVal) params.set('search', searchVal);
-
-        try {
-          const resp = await fetch(`/v1/debug/logs?${params}`, {headers: headers(false)});
-          if (!resp.ok) throw new Error(`${resp.status}`);
-          const data = await resp.json();
-
-          if (append && data.entries.length > 0) {
-            // Prepend new entries at top
-            const html = data.entries.reverse().map(renderEntry).join('');
-            debugEntries.insertAdjacentHTML('afterbegin', html);
-            // Cap displayed entries
-            while (debugEntries.children.length > parseInt(debugLimit.value)) {
-              debugEntries.removeChild(debugEntries.lastChild);
-            }
-          } else if (!append) {
-            debugEntries.innerHTML = data.entries.map(renderEntry).join('');
-          }
-
-          if (data.entries.length > 0) {
-            lastTimestamp = data.entries[0].timestamp;
-          }
-          debugStatus.textContent = `${data.count} записей • ${new Date().toLocaleTimeString('ru-RU')}`;
-        } catch (err) {
-          debugStatus.textContent = `Ошибка: ${err.message}`;
-        }
-      }
-
-      debugRefresh.addEventListener('click', () => {
-        lastTimestamp = null;
-        fetchLogs(false);
-      });
-
-      debugToggle.addEventListener('click', () => {
-        if (autoTimer) {
-          clearInterval(autoTimer);
-          autoTimer = null;
-          debugToggle.textContent = '▶ Авто';
-          debugToggle.style.background = '';
-        } else {
-          const sec = Math.max(1, parseInt(debugInterval.value) || 5);
-          autoTimer = setInterval(() => fetchLogs(true), sec * 1000);
-          debugToggle.textContent = '⏸ Стоп';
-          debugToggle.style.background = '#c0392b';
-          fetchLogs(true);
-        }
-      });
-
-      debugClear.addEventListener('click', async () => {
-        try {
-          await fetch('/v1/debug/logs/clear', {method: 'POST', headers: headers(false)});
-          debugEntries.innerHTML = '';
-          lastTimestamp = null;
-          debugStatus.textContent = 'Очищено';
-        } catch (err) {
-          debugStatus.textContent = `Ошибка: ${err.message}`;
-        }
-      });
-
-      // Load initial data when debug tab is activated
-      const origActivate = window.activatePanel;
-      if (typeof origActivate === 'function') {
-        const wrapper = function(name, opts) {
-          const result = origActivate(name, opts);
-          if (name === 'debug' && result) {
-            lastTimestamp = null;
-            fetchLogs(false);
-          }
-          return result;
-        };
-        // Also hook into menu button clicks
-        document.querySelectorAll('[data-menu="debug"]').forEach(btn => {
-          btn.addEventListener('click', () => {
-            setTimeout(() => {
-              lastTimestamp = null;
-              fetchLogs(false);
-            }, 50);
-          });
-        });
-      }
-    })();
   </script>
 </body>
 </html>
