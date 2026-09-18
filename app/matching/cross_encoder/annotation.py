@@ -107,6 +107,20 @@ class AnnotationQueue(BaseModel):
     strata_breakdown: dict[str, int]
 
 
+class PairQueueItem(BaseModel):
+    """Two vacancies a human should compare head to head, and why this pair."""
+
+    vacancy_a: AnnotationQueueItem
+    vacancy_b: AnnotationQueueItem
+    reason: str  # close_scores | rankings_reversed
+
+
+class PairQueue(BaseModel):
+    resume_id: str
+    items: list[PairQueueItem]
+    total_candidates: int
+
+
 class AnnotationStats(BaseModel):
     """Annotation statistics."""
 
@@ -479,6 +493,72 @@ def _stratified_sample(
     )
 
 
+MAX_PAIR_APPEARANCES = 2
+
+
+def get_pair_queue(
+    session: Session,
+    user_id: str,
+    resume_id: str,
+    features_list: list[MatchFeatures],
+    *,
+    limit: int = 20,
+    vacancy_meta: dict[str, dict[str, Any]] | None = None,
+) -> PairQueue:
+    """Hard pairs to compare: neighbours with near-equal scores, then pairs the current and
+    LTR rankings order oppositely. Already-judged pairs (in either order) are skipped and no
+    vacancy is shown more than twice, so one item cannot dominate the session."""
+    cv = session.get(CvFileRow, resume_id)
+    if not cv or cv.user_id != user_id:
+        return PairQueue(resume_id=resume_id, items=[], total_candidates=0)
+
+    pool = _build_candidate_pool(
+        session, resume_id, features_list, vacancy_meta or {}, user_id=user_id
+    )
+    judged = set(
+        session.execute(
+            select(AnnotationFeedbackRow.pair_key).where(
+                AnnotationFeedbackRow.user_id == user_id,
+                AnnotationFeedbackRow.resume_id == resume_id,
+                AnnotationFeedbackRow.feedback_type == "pairwise",
+            )
+        ).scalars()
+    )
+
+    candidates: list[tuple[float, str, SampledCandidate, SampledCandidate]] = []
+    for upper, lower in zip(pool, pool[1:], strict=False):  # pool is sorted by current rank
+        gap = abs((upper.current_score or 0.0) - (lower.current_score or 0.0))
+        candidates.append((gap, "close_scores", upper, lower))
+    with_ltr = [c for c in pool if c.ltr_rank is not None]
+    for i, first in enumerate(with_ltr):
+        for second in with_ltr[i + 1 : i + 1 + 25]:
+            if (first.ltr_rank or 0) > (second.ltr_rank or 0):  # LTR disagrees with current
+                gap = 1.0 / (1 + (first.ltr_rank or 0) - (second.ltr_rank or 0))
+                candidates.append((gap, "rankings_reversed", first, second))
+    candidates.sort(key=lambda c: (c[0], c[1], c[2].vacancy_id, c[3].vacancy_id))
+
+    shown: dict[str, int] = {}
+    items: list[PairQueueItem] = []
+    seen_keys: set[str] = set()
+    for _gap, reason, first, second in candidates:
+        key = ":".join(sorted((first.vacancy_id, second.vacancy_id)))
+        if key in judged or key in seen_keys:
+            continue
+        if any(shown.get(c.vacancy_id, 0) >= MAX_PAIR_APPEARANCES for c in (first, second)):
+            continue
+        seen_keys.add(key)
+        for c in (first, second):
+            shown[c.vacancy_id] = shown.get(c.vacancy_id, 0) + 1
+        items.append(
+            PairQueueItem(
+                vacancy_a=first.to_queue_item(), vacancy_b=second.to_queue_item(), reason=reason
+            )
+        )
+        if len(items) >= limit:
+            break
+    return PairQueue(resume_id=resume_id, items=items, total_candidates=len(candidates))
+
+
 # ── submission ─────────────────────────────────────────────────────────────────
 
 
@@ -820,6 +900,8 @@ def export_dataset(session: Session, user_id: str | None = None) -> DatasetExpor
             "source": row.source,
             "confidence": row.confidence,
             "created_at": created.isoformat() if created else None,
+            "sampling_reason": row.sampling_reason,
+            "current_rank": row.current_rank_at_sampling,
         }
         if row.feedback_type == "pointwise":
             pointwise.append(

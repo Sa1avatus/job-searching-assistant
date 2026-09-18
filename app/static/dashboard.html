@@ -36,6 +36,7 @@
       <button class="menu-button" type="button" data-menu="sessions" aria-expanded="false">Сессии сайтов</button>
       <button class="menu-button" type="button" data-menu="model" aria-expanded="false">Модель</button>
       <button class="menu-button" type="button" data-menu="queue" aria-expanded="false">Очередь матчинга</button>
+      <button class="menu-button" type="button" data-menu="annotation" aria-expanded="false">Разметка</button>
       <button class="menu-button" type="button" data-menu="access" aria-expanded="false">Профиль и доступ</button>
       <button class="menu-button" type="button" data-menu="debug" aria-expanded="false">Отладка</button>
     </nav>
@@ -405,6 +406,26 @@
 
     <section id="results" class="step" data-panel="search"></section>
 
+    <section class="step" data-panel="annotation">
+      <h2>Разметка вакансий</h2>
+      <div class="hint">Ваши оценки — единственная «истина» для обучения ранжирования. Ранги и оценки системы скрыты, чтобы не влиять на решение. Нужно не менее 200 осмысленных оценок, включая пары и трудные случаи.</div>
+      <div id="annotation-report" class="task-state"></div>
+      <div class="row">
+        <div><label for="annotation-split-name">Имя сплита</label><input id="annotation-split-name" value="gold-v1"></div>
+        <div style="flex:0"><button id="annotation-refresh-report" type="button">Обновить отчёт</button></div>
+        <div style="flex:0"><button id="annotation-create-split" type="button">Создать сплит</button></div>
+        <div style="flex:0"><button id="annotation-freeze-split" type="button">Заморозить eval-сплит</button></div>
+      </div>
+      <div class="row">
+        <div><label for="annotation-resume">Резюме</label><select id="annotation-resume"></select></div>
+        <div><label for="annotation-mode">Режим</label>
+          <select id="annotation-mode"><option value="pointwise">Поточечно (по одной)</option><option value="pairwise">Попарно (A или B)</option></select>
+        </div>
+        <div style="flex:0"><button id="annotation-load" type="button" class="primary">Загрузить очередь</button></div>
+      </div>
+      <div id="annotation-progress" class="hint"></div>
+      <div id="annotation-work"></div>
+    </section>
     <section class="step" data-panel="debug">
       <h2>Отладка</h2>
       <div class="debug-controls" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">

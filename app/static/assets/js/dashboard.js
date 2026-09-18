@@ -3910,7 +3910,7 @@ initializeDashboardSubsections();
 collapseAllDashboardSubsections();
 
 const requestedPanel = new URLSearchParams(window.location.search).get('panel');
-const validPanels = ['vacancies', 'search', 'blacklist', 'resume', 'sessions', 'model', 'access'];
+const validPanels = ['vacancies', 'search', 'blacklist', 'resume', 'sessions', 'model', 'access', 'annotation'];
 localStorage.removeItem('dashboardActivePanel');
 collapseAllPanels();
 if (validPanels.includes(requestedPanel)) activatePanel(requestedPanel);
@@ -4074,3 +4074,227 @@ loadCvFiles().catch(showError);
     });
   }
 })();
+
+// ── Annotation (human labelling for ranking) ─────────────────────────────
+const ANNOTATION_REASONS = [
+  ['strong_match', 'Сильное совпадение'],
+  ['skills_mismatch', 'Не те навыки'],
+  ['wrong_seniority', 'Не тот уровень'],
+  ['salary_too_low', 'Низкая зарплата'],
+  ['location', 'Локация'],
+  ['company_unwanted', 'Нежелательная компания'],
+  ['wrong_domain', 'Другая сфера'],
+  ['unclear_description', 'Неясное описание'],
+];
+const annotationState = {items: [], pairs: [], index: 0, mode: 'pointwise', resumeId: '', shownAt: 0};
+
+function annotationUserId() {
+  const userId = userIdInput.value.trim();
+  if (!userId) throw new Error('Сначала создайте или укажите User ID');
+  return userId;
+}
+
+async function loadAnnotationResumes() {
+  const select = document.querySelector('#annotation-resume');
+  const userId = userIdInput.value.trim();
+  select.replaceChildren();
+  if (!userId) return;
+  const data = await asJson(await fetchWithTimeout(
+    `/v1/annotation/discover?user_id=${encodeURIComponent(userId)}`, {headers: headers(false)}
+  ));
+  data.users.flatMap(user => user.resumes).forEach(resume => {
+    const option = document.createElement('option');
+    option.value = resume.resume_id;
+    option.textContent = resume.filename;
+    select.append(option);
+  });
+}
+
+async function refreshAnnotationReport() {
+  const box = document.querySelector('#annotation-report');
+  const userId = userIdInput.value.trim();
+  if (!userId) { box.textContent = ''; return; }
+  const split = document.querySelector('#annotation-split-name').value.trim();
+  let query = `user_id=${encodeURIComponent(userId)}`;
+  const withSplit = await annotationSplitExists(split);
+  if (withSplit) query += `&split=${encodeURIComponent(split)}`;
+  const report = await asJson(await fetchWithTimeout(
+    `/v1/annotation/dataset-report?${query}`, {headers: headers(false)}
+  ));
+  const lines = [
+    `Осмысленных оценок: ${report.meaningful_labels} из 200 (осталось ${report.labels_to_go}); ` +
+      `поточечных ${report.pointwise}, пар ${report.pairs}.`,
+    `Трудные случаи: ${report.hard_negatives} «ложных лидеров», ${report.model_disagreement} спорных для моделей.`,
+  ];
+  if (report.split) {
+    lines.push(`Сплит «${report.split.name}»: ${report.split.frozen ? 'заморожен' : 'не заморожен'}.`);
+  }
+  report.warnings.forEach(warning => lines.push(`⚠ ${warning}`));
+  if (report.ready) lines.push('Датасет готов к первому обучению.');
+  box.replaceChildren(...lines.map(line => element('div', line)));
+}
+
+async function annotationSplitExists(name) {
+  if (!name) return false;
+  const response = await fetch(`/v1/annotation/splits/${encodeURIComponent(name)}`, {headers: headers(false)});
+  if (response.status === 404) return false;
+  await asJson(response);
+  return true;
+}
+
+function annotationCard(item, title) {
+  const card = element('article', undefined, 'annotation-card');
+  card.append(element('h4', `${title ? title + ': ' : ''}${item.vacancy_title}`));
+  const meta = [item.vacancy_company, item.vacancy_location, item.work_format, item.salary_text]
+    .filter(Boolean).join(' · ');
+  card.append(element('div', meta, 'meta'));
+  if (item.required_skills?.length) card.append(element('div', `Навыки: ${item.required_skills.join(', ')}`, 'meta'));
+  if (item.employment_types?.length) card.append(element('div', `Занятость: ${item.employment_types.join(', ')}`, 'meta'));
+  card.append(element('div', item.vacancy_description || 'Описание отсутствует.', 'description'));
+  return card;
+}
+
+function annotationReasonPicker(prefix) {
+  const wrap = element('div', undefined, 'annotation-reasons');
+  ANNOTATION_REASONS.forEach(([value, label]) => {
+    const box = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.name = `annotation-reason-${prefix}`;
+    input.value = value;
+    box.append(input, document.createTextNode(label));
+    wrap.append(box);
+  });
+  return wrap;
+}
+
+function chosenReasons(prefix) {
+  return [...document.querySelectorAll(`input[name="annotation-reason-${prefix}"]:checked`)]
+    .map(input => input.value);
+}
+
+function samplingContext(item) {
+  return {
+    sampling_reason: item.sampling_reason || null,
+    current_rank: item.current_rank ?? null,
+    ltr_rank: item.ltr_rank ?? null,
+    current_score: item.current_score ?? null,
+    ltr_score: item.ltr_score ?? null,
+  };
+}
+
+function renderAnnotationCurrent() {
+  const work = document.querySelector('#annotation-work');
+  const progress = document.querySelector('#annotation-progress');
+  const {mode, index} = annotationState;
+  const list = mode === 'pointwise' ? annotationState.items : annotationState.pairs;
+  progress.textContent = list.length ? `${Math.min(index + 1, list.length)} из ${list.length} в очереди` : '';
+  if (index >= list.length) {
+    work.replaceChildren(element('div', 'Очередь закончилась. Загрузите её снова или обновите отчёт.', 'hint'));
+    refreshAnnotationReport().catch(showError);
+    return;
+  }
+  const confidence = document.createElement('select');
+  confidence.id = 'annotation-confidence';
+  [['', 'Уверенность: не указана'], ['low', 'Низкая'], ['medium', 'Средняя'], ['high', 'Высокая']].forEach(([v, t]) => {
+    const option = document.createElement('option'); option.value = v; option.textContent = t; confidence.append(option);
+  });
+  const actions = element('div', undefined, 'annotation-actions');
+  const submit = (path, body) => submitAnnotation(path, body).catch(showError);
+  annotationState.shownAt = Date.now();
+  if (mode === 'pointwise') {
+    const item = annotationState.items[index];
+    const cards = element('div', undefined, 'annotation-cards');
+    cards.append(annotationCard(item));
+    [['relevant', 'Релевантна', true], ['maybe', 'Возможно'], ['not_relevant', 'Не релевантна']].forEach(([label, text, primary]) => {
+      const button = element('button', text, primary ? 'primary' : undefined);
+      button.type = 'button';
+      button.addEventListener('click', () => submit('pointwise', {
+        resume_id: annotationState.resumeId, vacancy_id: item.vacancy_id, label,
+        reasons: chosenReasons('a'), confidence: confidence.value || null, sampling: samplingContext(item),
+      }));
+      actions.append(button);
+    });
+    const skip = element('button', 'Пропустить'); skip.type = 'button';
+    skip.addEventListener('click', () => { annotationState.index += 1; renderAnnotationCurrent(); });
+    actions.append(skip);
+    work.replaceChildren(cards, annotationReasonPicker('a'), confidence, actions);
+  } else {
+    const pair = annotationState.pairs[index];
+    const cards = element('div', undefined, 'annotation-cards');
+    cards.append(annotationCard(pair.vacancy_a, 'A'), annotationCard(pair.vacancy_b, 'B'));
+    const reasonsWrap = element('div', undefined, 'annotation-cards');
+    const a = element('div'); a.append(element('div', 'Причины для A'), annotationReasonPicker('a'));
+    const b = element('div'); b.append(element('div', 'Причины для B'), annotationReasonPicker('b'));
+    reasonsWrap.append(a, b);
+    [['a_better', 'A лучше', true], ['b_better', 'B лучше', true], ['both_equal', 'Одинаково'], ['neither', 'Обе не подходят']].forEach(([preference, text, primary]) => {
+      const button = element('button', text, primary ? 'primary' : undefined);
+      button.type = 'button';
+      button.addEventListener('click', () => submit('pairwise', {
+        resume_id: annotationState.resumeId,
+        vacancy_a_id: pair.vacancy_a.vacancy_id, vacancy_b_id: pair.vacancy_b.vacancy_id, preference,
+        a_reasons: chosenReasons('a'), b_reasons: chosenReasons('b'),
+        confidence: confidence.value || null, sampling: samplingContext(pair.vacancy_a),
+      }));
+      actions.append(button);
+    });
+    const skip = element('button', 'Пропустить'); skip.type = 'button';
+    skip.addEventListener('click', () => { annotationState.index += 1; renderAnnotationCurrent(); });
+    actions.append(skip);
+    work.replaceChildren(cards, reasonsWrap, confidence, actions);
+  }
+}
+
+async function submitAnnotation(path, body) {
+  const userId = annotationUserId();
+  await asJson(await fetchWithTimeout(`/v1/annotation/${path}?user_id=${encodeURIComponent(userId)}`, {
+    method: 'POST', headers: headers(true), body: JSON.stringify(body)
+  }));
+  annotationState.index += 1;
+  renderAnnotationCurrent();
+}
+
+async function loadAnnotationQueue() {
+  const userId = annotationUserId();
+  const resumeId = document.querySelector('#annotation-resume').value;
+  if (!resumeId) throw new Error('У пользователя нет резюме для разметки');
+  annotationState.resumeId = resumeId;
+  annotationState.mode = document.querySelector('#annotation-mode').value;
+  annotationState.index = 0;
+  const base = `user_id=${encodeURIComponent(userId)}&resume_id=${encodeURIComponent(resumeId)}`;
+  if (annotationState.mode === 'pointwise') {
+    const queue = await asJson(await fetchWithTimeout(`/v1/annotation/queue?${base}&limit=50`, {headers: headers(false)}));
+    annotationState.items = queue.items;
+  } else {
+    const queue = await asJson(await fetchWithTimeout(`/v1/annotation/pair-queue?${base}&limit=25`, {headers: headers(false)}));
+    annotationState.pairs = queue.items;
+  }
+  renderAnnotationCurrent();
+}
+
+document.querySelector('#annotation-load').addEventListener('click', () => loadAnnotationQueue().catch(showError));
+document.querySelector('#annotation-refresh-report').addEventListener('click', () => refreshAnnotationReport().catch(showError));
+document.querySelector('#annotation-create-split').addEventListener('click', async () => {
+  try {
+    const name = document.querySelector('#annotation-split-name').value.trim();
+    await asJson(await fetchWithTimeout('/v1/annotation/splits', {
+      method: 'POST', headers: headers(true), body: JSON.stringify({name})
+    }));
+    showStatus(`Сплит «${name}» создан.`);
+    await refreshAnnotationReport();
+  } catch (error) { showError(error); }
+});
+document.querySelector('#annotation-freeze-split').addEventListener('click', async () => {
+  const name = document.querySelector('#annotation-split-name').value.trim();
+  if (!window.confirm(`Заморозить сплит «${name}»? Проверочные вакансии навсегда исключаются из обучения.`)) return;
+  try {
+    await asJson(await fetchWithTimeout(`/v1/annotation/splits/${encodeURIComponent(name)}/freeze`, {
+      method: 'POST', headers: headers(false)
+    }));
+    showStatus(`Сплит «${name}» заморожен.`);
+    await refreshAnnotationReport();
+  } catch (error) { showError(error); }
+});
+document.querySelector('[data-menu="annotation"]').addEventListener('click', () => {
+  loadAnnotationResumes().then(refreshAnnotationReport).catch(showError);
+});

@@ -22,22 +22,35 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.domain.annotation_dataset import DEFAULT_RATIOS, DEFAULT_SEED, InvalidSplit
 from app.matching.cross_encoder.annotation import (
     AnnotationQueue,
     AnnotationStats,
     DatasetExport,
     DatasetReadiness,
     FeedbackResponse,
+    PairQueue,
     export_dataset,
     get_annotation_queue,
     get_annotation_stats,
     get_dataset_readiness,
+    get_pair_queue,
     resume_match_results_statement,
     submit_pairwise,
     submit_pointwise,
 )
 from app.matching.cross_encoder.features import FeatureExtractor, MatchFeatures
 from app.matching.cross_encoder.normalization import ScoreNormalizer
+from app.services.annotation_dataset import (
+    SplitExists,
+    SplitFrozen,
+    SplitNotFound,
+    create_split,
+    dataset_report,
+    export_fold,
+    freeze_split,
+    get_split,
+)
 from app.storage.database import session_scope
 
 logger = logging.getLogger(__name__)
@@ -358,6 +371,145 @@ def export_labels(
     return export_dataset(session, user_id)
 
 
+# ── Pair queue ─────────────────────────────────────────────────────────
+
+
+@router.get("/pair-queue", response_model=PairQueue)
+def get_pairs(
+    user_id: str = Query(..., min_length=1),
+    resume_id: str = Query(..., min_length=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    session: Session = Depends(session_scope),
+) -> PairQueue:
+    """Hard head-to-head pairs to judge (close scores, or rankings that disagree)."""
+    features_list = _load_features_for_resume(session, user_id, resume_id)
+    return get_pair_queue(
+        session,
+        user_id,
+        resume_id,
+        features_list,
+        limit=limit,
+        vacancy_meta=_load_vacancy_meta(session),
+    )
+
+
+# ── Dataset: coverage report and frozen splits ─────────────────────────
+
+
+class SplitCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    seed: int = DEFAULT_SEED
+    ratios: list[float] = Field(default_factory=lambda: list(DEFAULT_RATIOS))
+
+
+class SplitResponse(BaseModel):
+    name: str
+    seed: int
+    ratios: list[float]
+    frozen: bool
+    frozen_at: str | None
+    dataset_hash: str | None
+    label_counts: dict[str, int]
+    eval_vacancies: int
+
+
+def _split_response(row: object) -> SplitResponse:
+    from app.storage.tables import AnnotationSplitRow
+
+    assert isinstance(row, AnnotationSplitRow)
+    return SplitResponse(
+        name=row.name,
+        seed=row.seed,
+        ratios=list(row.ratios or []),
+        frozen=row.frozen_at is not None,
+        frozen_at=row.frozen_at.isoformat() if row.frozen_at else None,
+        dataset_hash=row.dataset_hash,
+        label_counts=dict(row.label_counts or {}),
+        eval_vacancies=len(row.eval_vacancies or {}),
+    )
+
+
+def _dataset_error(error: Exception) -> HTTPException:
+    if isinstance(error, SplitNotFound):
+        return HTTPException(
+            status_code=404, detail={"code": "split_not_found", "message": str(error)}
+        )
+    if isinstance(error, SplitFrozen):
+        return HTTPException(
+            status_code=409, detail={"code": "split_frozen", "message": str(error)}
+        )
+    if isinstance(error, SplitExists):
+        return HTTPException(
+            status_code=409, detail={"code": "split_exists", "message": str(error)}
+        )
+    return HTTPException(status_code=422, detail={"code": "invalid_split", "message": str(error)})
+
+
+@router.get("/dataset-report")
+def get_dataset_coverage_report(
+    user_id: str | None = Query(default=None),
+    split: str | None = Query(default=None),
+    session: Session = Depends(session_scope),
+) -> dict:
+    """Coverage, class balance, hard cases, diversity and readiness of the label dataset."""
+    try:
+        return dataset_report(session, user_id=user_id, split_name=split)
+    except SplitNotFound as error:
+        raise _dataset_error(error) from error
+
+
+@router.post("/splits", response_model=SplitResponse, status_code=201)
+def create_dataset_split(
+    request: SplitCreateRequest, session: Session = Depends(session_scope)
+) -> SplitResponse:
+    try:
+        row = create_split(
+            session,
+            request.name,
+            seed=request.seed,
+            ratios=tuple(request.ratios),  # type: ignore[arg-type]
+        )
+        session.commit()
+    except (SplitExists, InvalidSplit) as error:
+        session.rollback()
+        raise _dataset_error(error) from error
+    return _split_response(row)
+
+
+@router.get("/splits/{name}", response_model=SplitResponse)
+def read_dataset_split(name: str, session: Session = Depends(session_scope)) -> SplitResponse:
+    try:
+        return _split_response(get_split(session, name))
+    except SplitNotFound as error:
+        raise _dataset_error(error) from error
+
+
+@router.post("/splits/{name}/freeze", response_model=SplitResponse)
+def freeze_dataset_split(name: str, session: Session = Depends(session_scope)) -> SplitResponse:
+    """Freeze the current validation/test vacancies; irreversible by design."""
+    try:
+        row = freeze_split(session, name)
+        session.commit()
+    except (SplitNotFound, SplitFrozen, InvalidSplit) as error:
+        session.rollback()
+        raise _dataset_error(error) from error
+    return _split_response(row)
+
+
+@router.get("/export/{split}")
+def export_split_fold(
+    split: str,
+    fold: str | None = Query(default=None),
+    user_id: str | None = Query(default=None),
+    session: Session = Depends(session_scope),
+) -> dict:
+    """Labels tagged with their leakage-safe fold; ``fold=train|validation|test`` filters."""
+    try:
+        return export_fold(session, split_name=split, fold=fold, user_id=user_id)
+    except (SplitNotFound, InvalidSplit) as error:
+        raise _dataset_error(error) from error
+
+
 # ── Helper functions ───────────────────────────────────────────────────
 
 
@@ -504,7 +656,6 @@ def _load_features_from_db(session: Session, user_id: str, resume_id: str) -> li
     Fallback when pre-computed corpus files are not available.
     """
     from collections import defaultdict
-
 
     # Same pool the queue ranks (scored results of this user's resume)
     results = [

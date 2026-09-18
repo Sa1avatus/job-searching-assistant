@@ -7,6 +7,11 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Human annotation workflow and dataset** (migration 0044): dashboard panel «Разметка»
+  (pointwise queue, head-to-head pair queue, reasons, confidence; system ranks hidden from the
+  reviewer), leakage-safe group folds, freezable evaluation splits, fold-tagged reproducible export
+  and a coverage/readiness report against the 200-label target.
+
 - **Annotation/feedback integrity** (migration 0043, `/v1/annotation/*` now mounted): duplicate-proof
   pointwise and order-independent pairwise labels, validated vocabularies with `{code, message}`
   errors, ownership checks, provenance and confidence, transaction-safe submits, deterministic

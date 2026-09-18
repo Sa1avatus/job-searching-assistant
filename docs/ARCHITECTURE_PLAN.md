@@ -172,7 +172,7 @@ Stage 4 runs alongside it.
 | 0 Stabilisation | replaced: this branch is a rollback to the last stable version, so the stage is the safe extraction of inline CSS/JS from `dashboard.html` and `review.html` into `app/static/assets/{css,js}` served at `/assets` (classic scripts, no modules). Done; the extracted JS is AST-identical to the original. Also fixed: 401 message, `userId` guard in session confirm/cancel, poll errors logged. Verified with the unit/API suite and a browser load; full login/search/apply E2E needs Postgres and is not run |
 | 1A / 1B / 1C | done (commits 0957b0a, e0cfd3c, 5fc1dec): canonical vacancy identity + blacklist on new applications (migration 0040), user preferences (0041), browser session state machine (0042). Applied to the persistent DB, which is at 0042 |
 | 2A | done (migration 0043, `/v1/annotation/*` mounted, 25+ regression tests) |
-| 2B | not started |
+| 2B | tooling done (migration 0044: annotation workflow UI, pair queue, leakage-safe folds, freezable eval split, coverage report). **The 200-300 human labels themselves are not collected: that is human work and gates 3A/3B** |
 | 3A / 3B | not started |
 | 4A / 4B | not started |
 | 5A / 5B | not started |

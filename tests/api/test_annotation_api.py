@@ -128,3 +128,47 @@ def test_discover_can_be_scoped_to_one_owner(client: TestClient) -> None:
 def test_annotation_routes_use_the_review_scopes() -> None:
     assert required_api_scope("GET", "/v1/annotation/queue") == "review:read"
     assert required_api_scope("POST", "/v1/annotation/pointwise") == "review:write"
+
+
+def test_split_lifecycle_report_and_fold_export(client: TestClient) -> None:
+    _point(client, vacancy="v1")
+    _point(client, vacancy="v2", label="not_relevant")
+
+    assert client.post("/v1/annotation/splits", json={"name": "gold"}).status_code == 201
+    duplicate = client.post("/v1/annotation/splits", json={"name": "gold"})
+    assert duplicate.status_code == 409 and duplicate.json()["detail"]["code"] == "split_exists"
+    bad = client.post("/v1/annotation/splits", json={"name": "x", "ratios": [0.9, 0.9, 0.9]})
+    assert bad.status_code == 422 and bad.json()["detail"]["code"] == "invalid_split"
+
+    report = client.get("/v1/annotation/dataset-report?split=gold").json()
+    assert report["meaningful_labels"] == 2 and report["ready"] is False
+    assert report["labels_to_go"] == 198 and report["split"]["frozen"] is False
+
+    frozen = client.post("/v1/annotation/splits/gold/freeze")
+    assert frozen.status_code == 200 and frozen.json()["frozen"] is True
+    assert frozen.json()["dataset_hash"]
+    again = client.post("/v1/annotation/splits/gold/freeze")
+    assert again.status_code == 409 and again.json()["detail"]["code"] == "split_frozen"
+
+    export = client.get("/v1/annotation/export/gold").json()
+    assert export["frozen"] is True and len(export["pointwise"]) == 2
+    assert {row["fold"] for row in export["pointwise"]} <= {"train", "validation", "test"}
+    only = client.get("/v1/annotation/export/gold?fold=train").json()
+    assert all(row["fold"] == "train" for row in only["pointwise"])
+    assert client.get("/v1/annotation/export/gold?fold=all").status_code == 422
+    assert client.get("/v1/annotation/export/missing").status_code == 404
+    assert client.get("/v1/annotation/splits/missing").status_code == 404
+
+
+def test_freezing_needs_labels(client: TestClient) -> None:
+    client.post("/v1/annotation/splits", json={"name": "empty"})
+
+    response = client.post("/v1/annotation/splits/empty/freeze")
+
+    assert response.status_code == 422 and response.json()["detail"]["code"] == "invalid_split"
+
+
+def test_pair_queue_endpoint_rejects_foreign_resume_with_an_empty_queue(client: TestClient) -> None:
+    response = client.get("/v1/annotation/pair-queue?user_id=alice&resume_id=cv-bob")
+
+    assert response.status_code == 200 and response.json()["items"] == []

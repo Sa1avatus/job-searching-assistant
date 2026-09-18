@@ -64,3 +64,31 @@ never labels. Rules enforced by `app/domain/annotation.py`, the service in
 - **Export.** `GET /v1/annotation/export` returns validated pointwise rows (with ranking gain) and
   decisive pairs plus a list of rejected rows (`ownership_mismatch`, `bad_timestamps`,
   `non_canonical_pair`, `duplicate`, ...) and a reproducible `dataset_hash`.
+
+### Building the first human dataset (200-300 labels)
+
+The dashboard panel **Разметка** (`?panel=annotation`) drives the workflow: pointwise labelling
+from the review queue, head-to-head pairs from `GET /v1/annotation/pair-queue` (near-equal scores,
+or pairs the current and LTR rankings order oppositely; already-judged pairs in either order are
+skipped, no vacancy appears more than twice), reason tags and confidence. System ranks and scores are
+deliberately not shown to the reviewer; they are stored with the label as sampling context.
+
+- **Leakage-safe folds** (`app/domain/annotation_dataset.py`): folds are assigned to *groups*, not
+  rows - all vacancies of one company are one group, vacancies compared head to head are merged, and
+  a group's fold is a hash of its id (seeded, order-independent). A group never straddles folds, so
+  reposts and compared vacancies cannot appear in both train and test.
+- **Frozen evaluation split** (`annotation_splits`, migration 0044): `POST /v1/annotation/splits`
+  creates a named split, `POST /v1/annotation/splits/{name}/freeze` records the validation/test
+  vacancies once and is irreversible. Afterwards any group touching a frozen vacancy is pinned to its
+  evaluation fold (test outranks validation) and can never enter train, however many labels are
+  added, so retraining cannot see the frozen data.
+- **Reproducible export**: `GET /v1/annotation/export/{split}?fold=train|validation|test` returns
+  rows tagged with their fold plus the validation issues and a `dataset_hash`.
+- **Coverage report**: `GET /v1/annotation/dataset-report` gives meaningful labels vs the 200-label
+  minimum, pointwise/pair counts, class balance, hard negatives (rated top-20 by the system, rejected
+  by the human), model-disagreement cases, resume/vacancy/company diversity and warnings (single
+  resume, no frozen split, class imbalance, one company dominating). `ready` is true only when no
+  warning remains.
+
+Collecting the labels is human work: nothing here generates labels, and LTR training (stage 3) must
+not start before `ready` is true.

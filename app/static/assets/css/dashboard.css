@@ -304,3 +304,12 @@ a.link-btn:hover { border-color: #8da2fb; }
   .facts-page-size { margin-right: auto; }
 }
 @media (max-width: 520px) { .vacancy-filters { grid-template-columns: 1fr; } }
+
+.annotation-cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-top: 12px; }
+.annotation-card { border: 1px solid var(--line, #2a3350); border-radius: 10px; padding: 12px; background: rgba(255, 255, 255, 0.03); }
+.annotation-card h4 { margin: 0 0 4px; }
+.annotation-card .meta { font-size: 0.85em; opacity: 0.8; margin-bottom: 6px; }
+.annotation-card .description { max-height: 160px; overflow: auto; white-space: pre-wrap; font-size: 0.9em; }
+.annotation-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.annotation-reasons { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; font-size: 0.9em; }
+.annotation-reasons label { display: inline-flex; gap: 4px; align-items: center; }

@@ -848,6 +848,27 @@ class BrowserSessionStateRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class AnnotationSplitRow(Base):
+    """A named train/validation/test split of the human label dataset.
+
+    While unfrozen it is only configuration (seed, ratios). Freezing records the exact
+    validation/test vacancies once (``eval_vacancies``); after that the row is immutable and
+    every later fold assignment pins any group touching them to its evaluation fold.
+    """
+
+    __tablename__ = "annotation_splits"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    seed: Mapped[int] = mapped_column(Integer, default=42)
+    ratios: Mapped[list[float]] = mapped_column(JSON, default=list)
+    eval_vacancies: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    dataset_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    label_counts: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class TaskTransitionRow(Base):
     __tablename__ = "task_transitions"
 
