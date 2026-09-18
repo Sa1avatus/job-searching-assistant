@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.services.vacancy_identity import find_vacancy_by_identity
 from app.storage.database import SessionFactory
 from app.storage.tables import ApplicationRow, UserRow, VacancyRow
 
@@ -160,9 +161,7 @@ def parse_registry_row(
 
 def _find_vacancy(session: Session, record: RegistryVacancy) -> VacancyRow | None:
     if record.source_url:
-        vacancy = session.scalar(
-            select(VacancyRow).where(VacancyRow.source_url == record.source_url)
-        )
+        vacancy = find_vacancy_by_identity(session, record.source_url, "google-registry")
         if vacancy is not None:
             return vacancy
         source_id_match = re.search(r"/(?:vacancy|jobs/view)/(\d+)", record.source_url)

@@ -7,6 +7,11 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Canonical vacancy identity** (migration 0040): `source_key`, `source_id`, `canonical_url` and a
+  `dedup_fingerprint` on vacancies; re-importing the same posting under another URL spelling is now a
+  duplicate, the catalog source filter uses `source_key`, and `prepare_application` refuses
+  blacklisted companies. Adds `scripts/report_vacancy_duplicates.py` (read-only).
+
 - **Matching queue control** in the dashboard: a new "Очередь матчинга" panel shows the durable
   matching backlog (per-state task counts plus the active task list) and exposes three actions —
   **stop** (pause the worker from claiming new tasks), **clear** (pause the queue, cancel the

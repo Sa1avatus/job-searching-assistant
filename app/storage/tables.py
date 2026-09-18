@@ -15,9 +15,11 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.domain.vacancy_identity import canonicalize_vacancy_url, vacancy_fingerprint
 from app.storage.database import Base
 
 
@@ -337,6 +339,23 @@ class VacancyRow(Base):
     work_format: Mapped[str] = mapped_column(String(30), default="unspecified", index=True)
     employment_types: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Canonical identity (filled by the before_insert/before_update listener below)
+    source_key: Mapped[str] = mapped_column(String(30), default="other", index=True)
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    canonical_url: Mapped[str | None] = mapped_column(String(2000), nullable=True, index=True)
+    dedup_fingerprint: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+
+
+@event.listens_for(VacancyRow, "before_insert")
+@event.listens_for(VacancyRow, "before_update")
+def _fill_vacancy_identity(_mapper: object, _connection: object, vacancy: VacancyRow) -> None:
+    identity = canonicalize_vacancy_url(vacancy.source_url, vacancy.adapter_name or "generic")
+    vacancy.source_key = identity.source_key
+    vacancy.source_id = identity.source_id
+    vacancy.canonical_url = identity.canonical_url[:2000]
+    vacancy.dedup_fingerprint = vacancy_fingerprint(
+        vacancy.company or "", vacancy.title or "", vacancy.location or ""
+    )
 
 
 class VacancyRequirementRow(Base):

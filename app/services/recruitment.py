@@ -12,6 +12,7 @@ from app.domain.application_status import APPLICATION_STATUSES, ApplicationStatu
 from app.domain.models import ApplicationQuestion, ProfileFact, TaskState, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy, prepare_answers
 from app.domain.vacancy_attributes import EMPLOYMENT_TYPE_ORDER, EmploymentType
+from app.services.vacancy_identity import find_vacancy_by_identity
 from app.storage.documents import SavedDocument
 from app.storage.tables import (
     ApplicationAnswerRow,
@@ -37,6 +38,10 @@ class EntityNotFoundError(LookupError):
 
 class DuplicateEntityError(ValueError):
     pass
+
+
+class BlacklistedCompanyError(DuplicateEntityError):
+    """The user blacklisted this vacancy's company; no new application may be created."""
 
 
 class RecruitmentService:
@@ -321,6 +326,8 @@ class RecruitmentService:
             work_format=work_format,
             employment_types=canonical_employment_types,
         )
+        if find_vacancy_by_identity(self._session, source_url, adapter_name) is not None:
+            raise DuplicateEntityError("Vacancy source URL already exists")
         self._session.add(vacancy)
         try:
             self._session.commit()
@@ -336,6 +343,10 @@ class RecruitmentService:
         vacancy_row = self._session.get(VacancyRow, vacancy_id)
         if vacancy_row is None:
             raise EntityNotFoundError("Vacancy not found")
+        from app.services.company_blacklist import CompanyBlacklistService
+
+        if CompanyBlacklistService(self._session).contains(user_id, vacancy_row.company):
+            raise BlacklistedCompanyError("Company is blacklisted")
         if cv_file_id is not None:
             cv_file = self._session.get(CvFileRow, cv_file_id)
             if cv_file is None:

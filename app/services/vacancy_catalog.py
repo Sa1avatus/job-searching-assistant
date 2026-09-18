@@ -241,21 +241,8 @@ class VacancyCatalogService:
             statement = statement.where(
                 cast(VacancyRow.employment_types, String).ilike(f'%"{employment_type}"%')
             )
-        if source == "headhunter":
-            statement = statement.where(VacancyRow.source_url.ilike("%hh.ru/%"))
-        elif source == "linkedin":
-            statement = statement.where(VacancyRow.source_url.ilike("%linkedin.com/%"))
-        elif source == "greenhouse":
-            statement = statement.where(VacancyRow.adapter_name == "greenhouse")
-        elif source == "registry":
-            statement = statement.where(VacancyRow.adapter_name == "google-registry")
-        elif source == "other":
-            statement = statement.where(
-                ~VacancyRow.source_url.ilike("%hh.ru/%"),
-                ~VacancyRow.source_url.ilike("%linkedin.com/%"),
-                VacancyRow.adapter_name != "google-registry",
-                VacancyRow.adapter_name != "greenhouse",
-            )
+        if source != "all":
+            statement = statement.where(VacancyRow.source_key == source)
         if matching_v2 == "completed":
             statement = statement.where(
                 select(ApplicationMatchResultRow.application_id)
@@ -278,13 +265,4 @@ class VacancyCatalogService:
 
     @staticmethod
     def _source_name(vacancy: VacancyRow) -> str:
-        source_url = vacancy.source_url.casefold()
-        if "hh.ru/" in source_url:
-            return "headhunter"
-        if "linkedin.com/" in source_url:
-            return "linkedin"
-        if vacancy.adapter_name == "greenhouse":
-            return "greenhouse"
-        if vacancy.adapter_name == "google-registry":
-            return "registry"
-        return "other"
+        return vacancy.source_key or "other"

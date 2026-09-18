@@ -63,3 +63,20 @@ examples mechanically.
   review in the same task.
 
 Matching-specific tables and index ownership are described in `matching-data-model.md`.
+
+## Vacancy identity
+
+`vacancies` carries a canonical identity next to the raw `source_url`: `source_key`
+(`headhunter`, `linkedin`, `greenhouse`, `registry`, `other`), `source_id` (posting id when the
+source exposes one), `canonical_url`, and `dedup_fingerprint` (hash of normalised
+company/title/location). They are computed by `app/domain/vacancy_identity.py` in a SQLAlchemy
+`before_insert`/`before_update` listener, so every write path stays consistent.
+
+- Lookups go through `app.services.vacancy_identity.find_vacancy_by_identity` (source id, then
+  canonical URL, then exact URL; oldest row wins). `create_vacancy` refuses a second row for the
+  same posting.
+- The indexes are deliberately non-unique: databases created before migration 0040 may already
+  contain duplicates that applications reference. `scripts/report_vacancy_duplicates.py` lists them;
+  nothing is merged automatically. The fingerprint only groups *candidates* across sources.
+- `prepare_application` raises `BlacklistedCompanyError` for a blacklisted company, so a blacklist
+  blocks new applications from every ingestion path; removing the entry allows them again.

@@ -37,6 +37,7 @@ from app.domain.vacancy_attributes import detect_employment_types
 from app.matching.jobs import MatchingJobService
 from app.services.company_blacklist import CompanyBlacklistService
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError, RecruitmentService
+from app.services.vacancy_identity import find_vacancy_by_identity
 from app.services.vacancy_metadata import (
     detect_work_format,
     extract_key_skills,
@@ -250,9 +251,7 @@ class JobDiscoveryService:
         source_url: str,
         cv_file_id: str | None,
     ) -> DiscoveryOutcome | None:
-        vacancy: VacancyRow | None = self._session.scalar(
-            select(VacancyRow).where(VacancyRow.source_url == source_url)
-        )
+        vacancy: VacancyRow | None = find_vacancy_by_identity(self._session, source_url)
         if vacancy is not None and (vacancy.work_format == "unspecified" or not vacancy.location):
             try:
                 refreshed = await headhunter_adapter.extract_vacancy(source_url)
@@ -325,9 +324,7 @@ class JobDiscoveryService:
                     ),
                 )
             except DuplicateEntityError:
-                vacancy = self._session.scalar(
-                    select(VacancyRow).where(VacancyRow.source_url == source_url)
-                )
+                vacancy = find_vacancy_by_identity(self._session, source_url)
                 if vacancy is None:
                     return None
         if vacancy is None:
@@ -458,9 +455,7 @@ class JobDiscoveryService:
         cv_file_id: str | None,
     ) -> DiscoveryOutcome | None:
         application_submitted = False
-        vacancy: VacancyRow | None = self._session.scalar(
-            select(VacancyRow).where(VacancyRow.source_url == source_url)
-        )
+        vacancy: VacancyRow | None = find_vacancy_by_identity(self._session, source_url)
         if vacancy is not None:
             try:
                 refreshed = await linkedin_adapter.extract_vacancy(source_url)
@@ -525,9 +520,7 @@ class JobDiscoveryService:
                     ),
                 )
             except DuplicateEntityError:
-                vacancy = self._session.scalar(
-                    select(VacancyRow).where(VacancyRow.source_url == source_url)
-                )
+                vacancy = find_vacancy_by_identity(self._session, source_url)
                 if vacancy is None:
                     return None
         if vacancy is None:
@@ -711,9 +704,7 @@ class JobDiscoveryService:
         source_url: str,
         cv_file_id: str | None,
     ) -> DiscoveryOutcome | None:
-        vacancy = self._session.scalar(
-            select(VacancyRow).where(VacancyRow.source_url == source_url)
-        )
+        vacancy = find_vacancy_by_identity(self._session, source_url)
         if vacancy is None:
             try:
                 extracted = await greenhouse_adapter.extract_job(source_url)
@@ -760,9 +751,7 @@ class JobDiscoveryService:
                     ),
                 )
             except DuplicateEntityError:
-                vacancy = self._session.scalar(
-                    select(VacancyRow).where(VacancyRow.source_url == source_url)
-                )
+                vacancy = find_vacancy_by_identity(self._session, source_url)
         if vacancy is None or CompanyBlacklistService(self._session).contains(
             user_id, vacancy.company
         ):
