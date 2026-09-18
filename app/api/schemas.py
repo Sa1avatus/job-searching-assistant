@@ -806,3 +806,19 @@ class CompanyBlacklistResponse(BaseModel):
     user_id: str
     company: str
     created_at: datetime
+
+
+class UserPreferencesRequest(BaseModel):
+    min_salary: int | None = Field(default=None, ge=0, le=100_000_000)
+    salary_currency: str = Field(default="RUB", min_length=3, max_length=3)
+    preferred_locations: list[str] = Field(default_factory=list, max_length=50)
+    work_formats: list[str] = Field(default_factory=list, max_length=3)
+    employment_types: list[str] = Field(default_factory=list, max_length=6)
+
+
+class UserPreferencesResponse(BaseModel):
+    min_salary: int | None
+    salary_currency: str
+    preferred_locations: list[str]
+    work_formats: list[str]
+    employment_types: list[str]

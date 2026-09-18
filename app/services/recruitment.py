@@ -371,6 +371,14 @@ class RecruitmentService:
             warnings.append("Sensitive application fields require human review")
         if cv_file_id is None:
             warnings.append("No CV selected")
+        from app.services.user_preferences import UserPreferencesService
+
+        warnings.extend(
+            f"Preference mismatch ({violation.code}): {violation.message}"
+            for violation in UserPreferencesService(self._session).violations_for(
+                user_id, vacancy_row
+            )
+        )
         application = ApplicationRow(
             user_id=user_id,
             vacancy_id=vacancy_id,

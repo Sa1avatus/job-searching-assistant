@@ -43,6 +43,25 @@ class UserRow(Base):
     facts: Mapped[list[ProfileFactRow]] = relationship(cascade="all, delete-orphan")
 
 
+class UserPreferenceRow(Base):
+    """Search preferences/constraints a user applies to matching and applications."""
+
+    __tablename__ = "user_preferences"
+    __table_args__ = (CheckConstraint("min_salary >= 0", name="ck_user_preferences_salary_nonneg"),)
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    min_salary: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    salary_currency: Mapped[str] = mapped_column(String(3), default="RUB")
+    preferred_locations: Mapped[list[str]] = mapped_column(JSON, default=list)
+    work_formats: Mapped[list[str]] = mapped_column(JSON, default=list)
+    employment_types: Mapped[list[str]] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
 class LlmPreferenceRow(Base):
     __tablename__ = "llm_preferences"
 
@@ -847,6 +866,7 @@ class FactImportBatchRow(Base):
     status: Mapped[str] = mapped_column(String(30), default="completed")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+
 class AnnotationFeedbackRow(Base):
     __tablename__ = "annotation_feedback"
     __table_args__ = (
@@ -857,14 +877,22 @@ class AnnotationFeedbackRow(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    resume_id: Mapped[str] = mapped_column(ForeignKey("cv_files.id", ondelete="CASCADE"), index=True)
-    vacancy_id: Mapped[str] = mapped_column(ForeignKey("vacancies.id", ondelete="CASCADE"), index=True)
+    resume_id: Mapped[str] = mapped_column(
+        ForeignKey("cv_files.id", ondelete="CASCADE"), index=True
+    )
+    vacancy_id: Mapped[str] = mapped_column(
+        ForeignKey("vacancies.id", ondelete="CASCADE"), index=True
+    )
     feedback_type: Mapped[str] = mapped_column(String(20), index=True)
     label: Mapped[str] = mapped_column(String(50))
     reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
-    vacancy_a_id: Mapped[str | None] = mapped_column(ForeignKey("vacancies.id", ondelete="CASCADE"), nullable=True, index=True)
-    vacancy_b_id: Mapped[str | None] = mapped_column(ForeignKey("vacancies.id", ondelete="CASCADE"), nullable=True, index=True)
+    vacancy_a_id: Mapped[str | None] = mapped_column(
+        ForeignKey("vacancies.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    vacancy_b_id: Mapped[str | None] = mapped_column(
+        ForeignKey("vacancies.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     a_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
     b_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
     sampling_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -873,4 +901,6 @@ class AnnotationFeedbackRow(Base):
     current_score_at_sampling: Mapped[float | None] = mapped_column(Float, nullable=True)
     ltr_score_at_sampling: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )

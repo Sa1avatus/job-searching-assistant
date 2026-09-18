@@ -80,3 +80,13 @@ company/title/location). They are computed by `app/domain/vacancy_identity.py` i
   nothing is merged automatically. The fingerprint only groups *candidates* across sources.
 - `prepare_application` raises `BlacklistedCompanyError` for a blacklisted company, so a blacklist
   blocks new applications from every ingestion path; removing the entry allows them again.
+
+## User preferences
+
+`user_preferences` (migration 0041) holds one row per user: minimum salary and currency, preferred
+locations, work formats, and employment types. `app/domain/preferences.py` evaluates them against a
+vacancy; `prepare_application` turns each demonstrated mismatch into an application warning
+(`Preference mismatch (<code>): ...`). Constraints are soft by design - they never hide a vacancy
+or change a score, and missing or non-comparable data (unspecified format, other currency) is never
+a violation. Exposed as `GET|PUT /v1/users/{id}/preferences`.
+

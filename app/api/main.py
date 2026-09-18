@@ -117,6 +117,8 @@ from app.api.schemas import (
     SiteValueOverrideRequest,
     SiteValueOverrideResponse,
     TaskTransitionResponse,
+    UserPreferencesRequest,
+    UserPreferencesResponse,
     UserRequest,
     UserResponse,
     VacancyRequest,
@@ -144,6 +146,7 @@ from app.domain.effective_values import (
 from app.domain.forms import FormField, FormFieldType
 from app.domain.models import ProfileFact, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy
+from app.domain.preferences import InvalidPreferences, UserPreferences
 from app.domain.resume_text import UnreadableResumeError, extract_resume_text
 from app.domain.vacancy_attributes import EMPLOYMENT_TYPE_ORDER
 from app.llm.preferences import (
@@ -245,6 +248,7 @@ from app.services.site_fields import (
     upsert_site_field_mapping,
     upsert_site_value_override,
 )
+from app.services.user_preferences import UserPreferencesService
 from app.services.vacancy_catalog import VacancyCatalogService
 from app.services.vacancy_metadata import (
     detect_work_format,
@@ -1031,6 +1035,43 @@ def remove_company_blacklist(
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/v1/users/{user_id}/preferences", response_model=UserPreferencesResponse)
+def get_user_preferences(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> UserPreferencesResponse:
+    try:
+        preferences = UserPreferencesService(session).get(user_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return _preferences_response(preferences)
+
+
+@app.put("/v1/users/{user_id}/preferences", response_model=UserPreferencesResponse)
+def save_user_preferences(
+    user_id: str,
+    request: UserPreferencesRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> UserPreferencesResponse:
+    try:
+        preferences = UserPreferencesService(session).save(user_id, **request.model_dump())
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InvalidPreferences as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _preferences_response(preferences)
+
+
+def _preferences_response(preferences: UserPreferences) -> UserPreferencesResponse:
+    return UserPreferencesResponse(
+        min_salary=preferences.min_salary,
+        salary_currency=preferences.salary_currency,
+        preferred_locations=list(preferences.preferred_locations),
+        work_formats=list(preferences.work_formats),
+        employment_types=list(preferences.employment_types),
+    )
 
 
 @app.get("/v1/evidence/{artifact_id}", response_class=FileResponse)

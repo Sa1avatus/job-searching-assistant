@@ -7,6 +7,10 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **User search preferences** (migration 0041, `GET|PUT /v1/users/{id}/preferences`, dashboard panel):
+  minimum salary, preferred locations, work formats and employment types. Mismatches are shown as
+  application warnings; they never hide vacancies or change scores.
+
 - **Canonical vacancy identity** (migration 0040): `source_key`, `source_id`, `canonical_url` and a
   `dedup_fingerprint` on vacancies; re-importing the same posting under another URL spelling is now a
   duplicate, the catalog source filter uses `source_key`, and `prepare_application` refuses

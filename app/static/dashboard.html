@@ -120,6 +120,34 @@
       </div>
       <label class="consent-label"><input id="store-sensitive-personal-data" type="checkbox"> Я явно разрешаю хранить email и телефон в зашифрованном виде; перед их использованием требуется проверка.</label>
       <div id="personal-data-state" class="task-state"></div>
+      <div id="search-preferences-panel">
+        <h3>Предпочтения поиска</h3>
+        <div class="hint">Несоответствия показываются предупреждением в отклике; вакансии они не скрывают и оценку не меняют.</div>
+        <div class="row">
+          <div><label for="pref-min-salary">Минимальная зарплата</label><input id="pref-min-salary" type="number" min="0" step="1000"></div>
+          <div><label for="pref-currency">Валюта</label>
+            <select id="pref-currency"><option>RUB</option><option>USD</option><option>EUR</option><option>KZT</option><option>BYN</option><option>GBP</option></select>
+          </div>
+          <div><label for="pref-locations">Города (через запятую)</label><input id="pref-locations" placeholder="Москва, Berlin"></div>
+        </div>
+        <div class="row">
+          <div><label>Формат работы</label>
+            <label class="consent-label"><input type="checkbox" name="pref-work-format" value="remote"> Удалённо</label>
+            <label class="consent-label"><input type="checkbox" name="pref-work-format" value="hybrid"> Гибрид</label>
+            <label class="consent-label"><input type="checkbox" name="pref-work-format" value="office"> Офис</label>
+          </div>
+          <div><label>Тип занятости</label>
+            <label class="consent-label"><input type="checkbox" name="pref-employment" value="full_time"> Полная</label>
+            <label class="consent-label"><input type="checkbox" name="pref-employment" value="part_time"> Частичная</label>
+            <label class="consent-label"><input type="checkbox" name="pref-employment" value="contract"> Контракт</label>
+            <label class="consent-label"><input type="checkbox" name="pref-employment" value="project"> Проект</label>
+            <label class="consent-label"><input type="checkbox" name="pref-employment" value="temporary"> Временная</label>
+            <label class="consent-label"><input type="checkbox" name="pref-employment" value="internship"> Стажировка</label>
+          </div>
+          <div style="flex:0"><button id="save-search-preferences" type="button" class="primary">Сохранить предпочтения</button></div>
+        </div>
+        <div id="search-preferences-state" class="task-state"></div>
+      </div>
       <div id="profile-facts-panel">
         <div class="facts-header">
           <div class="facts-header__copy">

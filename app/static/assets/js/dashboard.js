@@ -610,6 +610,56 @@ function renderProfileFacts() {
   }
 }
 
+async function loadSearchPreferences() {
+  const userId = userIdInput.value.trim();
+  const state = document.querySelector('#search-preferences-state');
+  const checked = (name, values) => document.querySelectorAll(`input[name="${name}"]`)
+    .forEach(box => { box.checked = values.includes(box.value); });
+  if (!userId) {
+    state.textContent = '';
+    document.querySelector('#pref-min-salary').value = '';
+    document.querySelector('#pref-locations').value = '';
+    checked('pref-work-format', []);
+    checked('pref-employment', []);
+    return null;
+  }
+  const preferences = await asJson(await fetchWithTimeout(
+    `/v1/users/${userId}/preferences`,
+    {headers: headers(false)}
+  ));
+  document.querySelector('#pref-min-salary').value = preferences.min_salary ?? '';
+  document.querySelector('#pref-currency').value = preferences.salary_currency;
+  document.querySelector('#pref-locations').value = preferences.preferred_locations.join(', ');
+  checked('pref-work-format', preferences.work_formats);
+  checked('pref-employment', preferences.employment_types);
+  return preferences;
+}
+
+async function saveSearchPreferences() {
+  const userId = userIdInput.value.trim();
+  if (!userId) throw new Error('Сначала создайте или укажите User ID');
+  const selected = name => [...document.querySelectorAll(`input[name="${name}"]:checked`)]
+    .map(box => box.value);
+  const salary = document.querySelector('#pref-min-salary').value.trim();
+  const body = {
+    min_salary: salary === '' ? null : Number.parseInt(salary, 10),
+    salary_currency: document.querySelector('#pref-currency').value,
+    preferred_locations: document.querySelector('#pref-locations').value
+      .split(',').map(value => value.trim()).filter(Boolean),
+    work_formats: selected('pref-work-format'),
+    employment_types: selected('pref-employment'),
+  };
+  await asJson(await fetchWithTimeout(`/v1/users/${userId}/preferences`, {
+    method: 'PUT', headers: headers(true), body: JSON.stringify(body)
+  }));
+  await loadSearchPreferences();
+  document.querySelector('#search-preferences-state').textContent = 'Предпочтения сохранены.';
+}
+
+document.querySelector('#save-search-preferences').addEventListener('click', () => {
+  saveSearchPreferences().catch(showError);
+});
+
 async function loadProfileFacts() {
   const userId = userIdInput.value.trim();
   if (!userId) {
@@ -3821,7 +3871,7 @@ async function loadUserWorkspace() {
   await Promise.all([
     loadBrowserSessionStatuses(), loadSavedVacancies(1), loadCompanyBlacklist(), loadCvFiles(),
     loadAutofillValues(), loadSiteDefinitionsForFields(), loadApplicationStatistics(),
-    loadEmailIntegration(), loadProfileFacts(), loadEmailReview()
+    loadEmailIntegration(), loadProfileFacts(), loadEmailReview(), loadSearchPreferences()
   ]);
   restoreSearchResults();
 }
@@ -3848,6 +3898,7 @@ loadSiteDefinitionsForFields().catch(showError);
 loadBrowserSessionStatuses(true).catch(showError);
 loadEmailIntegration().catch(showError);
 loadProfileFacts().catch(showError);
+loadSearchPreferences().catch(showError);
 loadApplicationStatistics().catch(showError);
 loadEmailReview().catch(showError);
 window.setInterval(() => loadBrowserSessionStatuses(true).catch(
