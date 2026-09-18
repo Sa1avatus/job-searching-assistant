@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ui_source import read_ui_source
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_dashboard_renames_profile_access_without_changing_panel_routing() -> None:
-    dashboard = (PROJECT_ROOT / "app" / "static" / "dashboard.html").read_text(encoding="utf-8")
+    dashboard = read_ui_source("dashboard")
 
     assert 'data-menu="access"' in dashboard
     assert "Профиль и доступ</button>" in dashboard
@@ -20,7 +22,7 @@ def test_dashboard_renames_profile_access_without_changing_panel_routing() -> No
 
 
 def test_review_renames_profile_access_without_changing_link() -> None:
-    review = (PROJECT_ROOT / "app" / "static" / "review.html").read_text(encoding="utf-8")
+    review = read_ui_source("review")
 
     assert '<a id="nav-access" href="/dashboard?panel=access">Профиль и доступ</a>' in review
     assert "tr('Профиль и доступ', 'Profile and access')" in review
@@ -31,7 +33,7 @@ def test_review_renames_profile_access_without_changing_link() -> None:
 
 
 def test_dashboard_offers_custom_openai_compatible_provider() -> None:
-    dashboard = (PROJECT_ROOT / "app" / "static" / "dashboard.html").read_text(encoding="utf-8")
+    dashboard = read_ui_source("dashboard")
 
     assert '<option value="openai_compatible">OpenAI-compatible</option>' in dashboard
     assert 'id="llm-matching-base-url"' in dashboard
@@ -41,7 +43,7 @@ def test_dashboard_offers_custom_openai_compatible_provider() -> None:
 
 
 def test_dashboard_personal_data_uses_canonical_autofill_api() -> None:
-    dashboard = (PROJECT_ROOT / "app" / "static" / "dashboard.html").read_text(encoding="utf-8")
+    dashboard = read_ui_source("dashboard")
 
     for field_id in (
         "profile-full-name",
@@ -76,7 +78,7 @@ def test_dashboard_personal_data_uses_canonical_autofill_api() -> None:
 
 
 def test_dashboard_application_defaults_use_canonical_keys() -> None:
-    dashboard = (PROJECT_ROOT / "app" / "static" / "dashboard.html").read_text(encoding="utf-8")
+    dashboard = read_ui_source("dashboard")
 
     for field_id in (
         "application-salary",

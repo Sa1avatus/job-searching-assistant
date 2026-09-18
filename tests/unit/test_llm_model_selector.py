@@ -1,10 +1,12 @@
 from pathlib import Path
 
+from ui_source import read_ui_source
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_dashboard_uses_native_model_select() -> None:
-    dashboard = (PROJECT_ROOT / "app" / "static" / "dashboard.html").read_text(encoding="utf-8")
+    dashboard = read_ui_source("dashboard")
 
     assert '<select id="llm-matching-model">' in dashboard
     assert '<select id="llm-materials-model">' in dashboard

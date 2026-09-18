@@ -1,10 +1,8 @@
-from pathlib import Path
+from ui_source import read_ui_source
 
 
 def test_dashboard_loads_and_refreshes_application_statistics() -> None:
-    dashboard = (Path(__file__).parents[2] / "app" / "static" / "dashboard.html").read_text(
-        encoding="utf-8"
-    )
+    dashboard = read_ui_source("dashboard")
 
     assert 'id="application-statistics"' in dashboard
     assert "async function loadApplicationStatistics()" in dashboard
@@ -35,9 +33,7 @@ def test_dashboard_loads_and_refreshes_application_statistics() -> None:
 
 
 def test_search_result_overflow_menu_expands_matching_explanation() -> None:
-    dashboard = (Path(__file__).parents[2] / "app" / "static" / "dashboard.html").read_text(
-        encoding="utf-8"
-    )
+    dashboard = read_ui_source("dashboard")
     search_renderer = dashboard.split("function renderResult(item)", 1)[1].split(
         "const vacancyStatusLabels", 1
     )[0]
@@ -54,9 +50,7 @@ def test_search_result_overflow_menu_expands_matching_explanation() -> None:
 
 
 def test_saved_vacancy_card_keeps_topline_first() -> None:
-    dashboard = (Path(__file__).parents[2] / "app" / "static" / "dashboard.html").read_text(
-        encoding="utf-8"
-    )
+    dashboard = read_ui_source("dashboard")
     saved_renderer = dashboard.split("function renderSavedVacancy(item)", 1)[1].split(
         "async function loadMatchDetails", 1
     )[0]
@@ -71,9 +65,7 @@ def test_saved_vacancy_card_keeps_topline_first() -> None:
 
 
 def test_resume_keywords_editor_matches_summary_size_and_limit() -> None:
-    dashboard = (Path(__file__).parents[2] / "app" / "static" / "dashboard.html").read_text(
-        encoding="utf-8"
-    )
+    dashboard = read_ui_source("dashboard")
 
     assert '<textarea id="summary-text" maxlength="2000"></textarea>' in dashboard
     assert '<textarea id="keywords-text" maxlength="2000"></textarea>' in dashboard

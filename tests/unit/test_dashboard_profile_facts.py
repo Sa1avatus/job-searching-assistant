@@ -1,10 +1,8 @@
-from pathlib import Path
+from ui_source import read_ui_source
 
 
 def test_dashboard_exposes_editable_profile_facts_block() -> None:
-    dashboard = (Path(__file__).parents[2] / "app" / "static" / "dashboard.html").read_text(
-        encoding="utf-8"
-    )
+    dashboard = read_ui_source("dashboard")
 
     assert 'id="profile-facts-panel"' in dashboard
     assert 'id="profile-fact-form"' in dashboard

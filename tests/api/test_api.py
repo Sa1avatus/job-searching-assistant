@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+from ui_http import get_ui_page
 
 from app.api.main import (
     app,
@@ -31,7 +32,7 @@ def test_health_reports_review_mode() -> None:
 
 
 def test_review_interface_has_security_boundary_and_no_embedded_remote_assets() -> None:
-    response = client.get("/review")
+    response = get_ui_page(client, "/review")
 
     assert response.status_code == 200
     assert "Review queue" in response.text
@@ -41,7 +42,7 @@ def test_review_interface_has_security_boundary_and_no_embedded_remote_assets() 
 
 
 def test_dashboard_wires_both_browser_search_sources_and_apply_routes() -> None:
-    response = client.get("/dashboard")
+    response = get_ui_page(client, "/dashboard")
 
     assert response.status_code == 200
     assert "discover-headhunter-vacancies" in response.text
@@ -491,7 +492,7 @@ def test_browser_handoff_requires_manual_platform_actions() -> None:
 
 
 def test_dashboard_exposes_stateful_metadata_and_non_disruptive_rejection() -> None:
-    response = client.get("/dashboard")
+    response = get_ui_page(client, "/dashboard")
     html = response.text
 
     assert response.status_code == 200
@@ -549,7 +550,7 @@ def test_dashboard_exposes_stateful_metadata_and_non_disruptive_rejection() -> N
 
 
 def test_review_page_exposes_selected_application_navigation_and_status_editor() -> None:
-    response = client.get("/review?application_id=application-123")
+    response = get_ui_page(client, "/review?application_id=application-123")
     html = response.text
 
     assert response.status_code == 200
@@ -562,7 +563,7 @@ def test_review_page_exposes_selected_application_navigation_and_status_editor()
 
 
 def test_review_has_metadata_tags_source_button_and_in_place_rejection() -> None:
-    response = client.get("/review")
+    response = get_ui_page(client, "/review")
     html = response.text
 
     assert response.status_code == 200

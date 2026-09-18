@@ -29,6 +29,7 @@ import redis.asyncio as redis
 import structlog
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import SecretStr
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -282,6 +283,20 @@ logger = structlog.get_logger(__name__)
 app = FastAPI(title="Job Searching Assistant", version="1.4.1")
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
+UI_ASSETS_PATH = Path(__file__).parents[1] / "static" / "assets"
+
+
+class _RevalidatedStaticFiles(StaticFiles):
+    """Serve UI assets with ``no-cache`` so a rebuilt image never runs stale JS/CSS."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
+
+app.mount("/assets", _RevalidatedStaticFiles(directory=UI_ASSETS_PATH), name="ui-assets")
 
 
 def get_application_email_provider(

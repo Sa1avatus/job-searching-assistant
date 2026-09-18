@@ -1,10 +1,8 @@
-from pathlib import Path
+from ui_source import read_ui_source
 
 
 def test_dashboard_exposes_private_email_integration_form() -> None:
-    dashboard = (Path(__file__).parents[2] / "app" / "static" / "dashboard.html").read_text(
-        encoding="utf-8"
-    )
+    dashboard = read_ui_source("dashboard")
 
     assert 'id="email-integration-form"' in dashboard
     assert 'id="email-password" type="password"' in dashboard
