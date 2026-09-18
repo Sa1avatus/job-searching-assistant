@@ -23,7 +23,7 @@ from typing import Any
 
 import structlog
 from pydantic import BaseModel, Field
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -47,6 +47,7 @@ from app.storage.tables import (
     ApplicationMatchResultRow,
     ApplicationRow,
     CvFileRow,
+    UserRow,
     VacancyRow,
 )
 
@@ -250,6 +251,36 @@ def get_annotation_queue(
     )
 
 
+# Only these match statuses carry a real score; pending/failed rows hold placeholders.
+RANKABLE_STATUSES = ("scored", "degraded")
+
+
+def resume_match_results_statement(
+    session: Session, user_id: str, resume_id: str
+) -> Select[tuple[ApplicationMatchResultRow, VacancyRow, ApplicationRow]]:
+    """Scored match results that belong to (user, resume) - the annotation candidate pool.
+
+    An application counts for a resume when it selected that resume, or when it selected none
+    and the resume is the user's active one: matching does not require an explicit selection,
+    so feedback must not depend on it either.
+    """
+    user = session.get(UserRow, user_id)
+    belongs = ApplicationRow.selected_cv_file_id == resume_id
+    if user is not None and user.active_cv_file_id == resume_id:
+        belongs = or_(belongs, ApplicationRow.selected_cv_file_id.is_(None))
+    return (
+        select(ApplicationMatchResultRow, VacancyRow, ApplicationRow)
+        .join(ApplicationRow, ApplicationMatchResultRow.application_id == ApplicationRow.id)
+        .join(VacancyRow, ApplicationRow.vacancy_id == VacancyRow.id)
+        .where(
+            ApplicationRow.user_id == user_id,
+            ApplicationMatchResultRow.status.in_(RANKABLE_STATUSES),
+            belongs,
+        )
+        .order_by(VacancyRow.id, ApplicationMatchResultRow.application_id)
+    )
+
+
 def _build_candidate_pool(
     session: Session,
     resume_id: str,
@@ -260,15 +291,10 @@ def _build_candidate_pool(
 ) -> list[SampledCandidate]:
     """All rankable vacancies for the resume, with deterministic current/LTR ranks."""
     features_by_vacancy = {f.vacancy_id: f for f in features_list}
-    statement = (
-        select(ApplicationMatchResultRow, VacancyRow, ApplicationRow)
-        .join(ApplicationRow, ApplicationMatchResultRow.application_id == ApplicationRow.id)
-        .join(VacancyRow, ApplicationRow.vacancy_id == VacancyRow.id)
-        .where(ApplicationRow.selected_cv_file_id == resume_id)
-        .order_by(VacancyRow.id, ApplicationMatchResultRow.application_id)
-    )
-    if user_id is not None:
-        statement = statement.where(ApplicationRow.user_id == user_id)
+    if user_id is None:
+        owner = session.get(CvFileRow, resume_id)
+        user_id = owner.user_id if owner is not None else ""
+    statement = resume_match_results_statement(session, user_id, resume_id)
 
     by_vacancy: dict[str, SampledCandidate] = {}
     for match_result, vacancy, _application in session.execute(statement).all():

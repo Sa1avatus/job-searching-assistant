@@ -32,6 +32,7 @@ from app.matching.cross_encoder.annotation import (
     get_annotation_queue,
     get_annotation_stats,
     get_dataset_readiness,
+    resume_match_results_statement,
     submit_pairwise,
     submit_pointwise,
 )
@@ -504,22 +505,14 @@ def _load_features_from_db(session: Session, user_id: str, resume_id: str) -> li
     """
     from collections import defaultdict
 
-    from sqlalchemy import select
 
-    from app.storage.tables import (
-        ApplicationMatchResultRow,
-        ApplicationRow,
-        VacancyRow,
-    )
-
-    # Get match results for this resume
-    stmt = (
-        select(ApplicationMatchResultRow, ApplicationRow, VacancyRow)
-        .join(ApplicationRow, ApplicationMatchResultRow.application_id == ApplicationRow.id)
-        .join(VacancyRow, ApplicationRow.vacancy_id == VacancyRow.id)
-        .where(ApplicationRow.selected_cv_file_id == resume_id)
-    )
-    results = session.execute(stmt).all()
+    # Same pool the queue ranks (scored results of this user's resume)
+    results = [
+        (match_result, application, vacancy)
+        for match_result, vacancy, application in session.execute(
+            resume_match_results_statement(session, user_id, resume_id)
+        ).all()
+    ]
     if not results:
         return []
 

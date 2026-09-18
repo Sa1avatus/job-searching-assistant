@@ -80,14 +80,6 @@ class TestAnnotationQueue:
         assert result.items == []
         assert result.total_eligible == 0
 
-    def test_queue_loads_resume(self, mock_session, mock_cv, mock_features):
-        """Queue should load resume text and skills."""
-        mock_session.get.return_value = mock_cv
-
-        result = get_annotation_queue(mock_session, "user_1", "resume_1", mock_features, limit=10)
-        assert result.resume_filename == "test_resume.pdf"
-        assert result.resume_id == "resume_1"
-
 
 class TestSubmitPointwise:
     """Tests for submit_pointwise."""

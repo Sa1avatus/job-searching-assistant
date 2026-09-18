@@ -21,12 +21,21 @@ from app.matching.cross_encoder.annotation import (
     _persist,
     _stratified_sample,
     export_dataset,
+    get_annotation_queue,
     get_annotation_stats,
     submit_pairwise,
     submit_pointwise,
 )
+from app.matching.cross_encoder.features import MatchFeatures
 from app.storage.database import Base
-from app.storage.tables import AnnotationFeedbackRow, CvFileRow, UserRow, VacancyRow
+from app.storage.tables import (
+    AnnotationFeedbackRow,
+    ApplicationMatchResultRow,
+    ApplicationRow,
+    CvFileRow,
+    UserRow,
+    VacancyRow,
+)
 
 
 @pytest.fixture
@@ -385,3 +394,76 @@ def test_provenance_is_recorded(db) -> None:
     row = db.scalar(select(AnnotationFeedbackRow))
     assert (row.annotator_id, row.source, row.confidence) == ("alice", "dashboard", "high")
     assert (row.sampling_reason, row.current_rank_at_sampling) == ("ltr_top", 3)
+
+
+# -- candidate pool ----------------------------------------------------------
+
+
+def _application(db, user, vacancy, *, cv=None, status="scored", score=50.0):
+    application = ApplicationRow(
+        user_id=user, vacancy_id=vacancy, selected_cv_file_id=cv, match_score=int(score)
+    )
+    db.add(application)
+    db.flush()
+    db.add(
+        ApplicationMatchResultRow(application_id=application.id, status=status, final_score=score)
+    )
+    db.commit()
+
+
+def _features(*vacancy_ids):
+    return [MatchFeatures(resume_id="cv-alice", vacancy_id=v) for v in vacancy_ids]
+
+
+def test_queue_pool_covers_scored_results_including_implicit_resume(db) -> None:
+    db.get(UserRow, "alice").active_cv_file_id = "cv-alice"
+    _application(db, "alice", "v1", cv=None, status="scored", score=80)  # implicit: active resume
+    _application(db, "alice", "v2", cv="cv-alice", status="degraded", score=60)
+    _application(db, "alice", "v3", cv=None, status="failed", score=50)  # placeholder score
+    _application(db, "bob", "v1", cv=None, status="scored", score=99)  # another user's
+    db.commit()
+
+    queue = get_annotation_queue(db, "alice", "cv-alice", _features("v1", "v2", "v3"), limit=10)
+
+    assert {i.vacancy_id for i in queue.items} == {"v1", "v2"}
+    assert queue.total_eligible == 2
+
+
+def test_implicit_resume_only_applies_to_the_active_resume(db) -> None:
+    db.add(
+        CvFileRow(
+            id="cv-alice-2",
+            user_id="alice",
+            original_filename="second.pdf",
+            storage_path="/x",
+            content_type="application/pdf",
+            sha256="second",
+            size_bytes=1,
+        )
+    )
+    db.get(UserRow, "alice").active_cv_file_id = "cv-alice"
+    _application(db, "alice", "v1", cv=None, score=70)
+    db.commit()
+
+    queue = get_annotation_queue(db, "alice", "cv-alice-2", _features("v1"), limit=10)
+
+    assert queue.items == []
+
+
+def test_already_labelled_vacancies_leave_the_queue(db) -> None:
+    db.get(UserRow, "alice").active_cv_file_id = "cv-alice"
+    _application(db, "alice", "v1", score=80)
+    _application(db, "alice", "v2", score=60)
+    _pointwise(db, vacancy="v1")
+
+    queue = get_annotation_queue(db, "alice", "cv-alice", _features("v1", "v2"), limit=10)
+
+    assert [i.vacancy_id for i in queue.items] == ["v2"]
+
+
+def test_queue_for_a_foreign_resume_is_empty(db) -> None:
+    _application(db, "bob", "v1", cv="cv-bob", score=80)
+
+    queue = get_annotation_queue(db, "alice", "cv-bob", _features("v1"), limit=10)
+
+    assert queue.items == [] and queue.resume_filename == ""
