@@ -19,8 +19,8 @@ import numpy as np
 from sklearn.metrics import ndcg_score
 
 from app.matching.cross_encoder.ltr_feature_contract import (
-    LTR_FEATURE_NAMES,
     LTR_FEATURE_COUNT,
+    LTR_FEATURE_NAMES,
     LTR_LABEL_GAIN,
 )
 

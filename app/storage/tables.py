@@ -16,6 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     event,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -894,6 +895,26 @@ class AnnotationFeedbackRow(Base):
         Index("ix_annotation_feedback_user_resume", "user_id", "resume_id"),
         Index("ix_annotation_feedback_vacancy", "vacancy_id"),
         Index("ix_annotation_feedback_type", "feedback_type"),
+        # A logical judgement exists once: pointwise by (user, resume, vacancy), pairwise by
+        # (user, resume, canonical pair). Enforced by the database, not just the service.
+        Index(
+            "uq_annotation_pointwise",
+            "user_id",
+            "resume_id",
+            "vacancy_id",
+            unique=True,
+            postgresql_where=text("feedback_type = 'pointwise'"),
+            sqlite_where=text("feedback_type = 'pointwise'"),
+        ),
+        Index(
+            "uq_annotation_pairwise",
+            "user_id",
+            "resume_id",
+            "pair_key",
+            unique=True,
+            postgresql_where=text("feedback_type = 'pairwise'"),
+            sqlite_where=text("feedback_type = 'pairwise'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
@@ -916,6 +937,10 @@ class AnnotationFeedbackRow(Base):
     )
     a_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
     b_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    pair_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    confidence: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    annotator_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source: Mapped[str] = mapped_column(String(30), default="dashboard")
     sampling_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
     current_rank_at_sampling: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ltr_rank_at_sampling: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -3,14 +3,13 @@
 Tests the three modes: disabled, shadow, active.
 """
 
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.matching.cross_encoder.features import MatchFeatures
-from app.matching.cross_encoder.ltr_feature_contract import LTR_FEATURE_NAMES, LTR_FEATURE_COUNT
+from app.matching.cross_encoder.ltr_feature_contract import LTR_FEATURE_COUNT, LTR_FEATURE_NAMES
 from app.matching.cross_encoder.ltr_scorer import LTRScorer, create_ltr_scorer
 from app.matching.pipeline import MatchingPipeline
-from app.matching.cross_encoder.ltr_feature_contract import LTR_FEATURE_NAMES
 
 
 class TestLTRDisabledMode:

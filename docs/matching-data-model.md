@@ -35,3 +35,32 @@ do not mutate an active vector mapping in place.
 Source fragments may contain resume or vacancy text. Do not log them, place them in metrics, expose
 them across users, or copy them into Worker task context unless the task explicitly needs that exact
 fixture and it contains no private data.
+
+## Human annotation dataset (`annotation_feedback`)
+
+Human labels are the only ground truth for learning-to-rank. LLM output and application status are
+never labels. Rules enforced by `app/domain/annotation.py`, the service in
+`app/matching/cross_encoder/annotation.py`, and the database (migration 0043):
+
+- **One judgement, once.** Pointwise is unique per (user, resume, vacancy); pairwise per (user,
+  resume, canonical pair) - partial unique indexes `uq_annotation_pointwise` /
+  `uq_annotation_pairwise`. Resubmitting updates; a concurrent double submit loses the INSERT race
+  inside a SAVEPOINT and updates the winner's row.
+- **Pairs are order-independent.** A pair is stored smaller vacancy id first (`pair_key =
+  "<first>:<second>"`); a reversed submission flips `a_better`/`b_better` and swaps the reasons, so
+  every reason stays attached to the vacancy it was written about.
+- **Undecided answers are not pairs.** `both_equal` and `neither` are counted but never exported as
+  (winner, loser) training pairs.
+- **Ownership.** The resume must belong to the labelling user, otherwise 403 and nothing is written.
+- **Validation.** Labels come from fixed vocabularies; reasons are short snake_case tags (max 10);
+  `confidence` is `low|medium|high`; errors are `{code, message}`.
+- **Provenance.** `annotator_id`, `source`, `confidence`, `created_at/updated_at`, and the queue
+  context at labelling time (`sampling_reason`, ranks, scores).
+- **Review queue.** Union of strata (top by current ranking, top by LTR, largest rank
+  disagreement, mid-ranking, random) with deterministic ordering (ties broken by vacancy id). Each
+  item has `review_priority` in [0, 1] and `priority_reasons`; it is a **heuristic** ordering signal,
+  not a probability. Current and LTR scores are converted to percentiles on the same pool before
+  disagreement is measured, and no company may take more than 30 % of the queue.
+- **Export.** `GET /v1/annotation/export` returns validated pointwise rows (with ranking gain) and
+  decisive pairs plus a list of rejected rows (`ownership_mismatch`, `bad_timestamps`,
+  `non_canonical_pair`, `duplicate`, ...) and a reproducible `dataset_hash`.

@@ -9,7 +9,7 @@ from app.services.application_email_events import ApplicationEmailEventService
 from app.services.email_classification import EmailClassification
 from app.services.email_vacancy_matcher import EmailVacancyCandidate
 from app.storage.database import Base
-from app.storage.tables import ApplicationEmailEventRow, ApplicationRow, UserRow, VacancyRow
+from app.storage.tables import ApplicationRow, UserRow, VacancyRow
 
 
 class _FakeClassifier:

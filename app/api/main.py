@@ -38,6 +38,7 @@ from adapters.job_boards.browser_apply_common import ApplyBlocked, CaptchaChalle
 from adapters.job_boards.contracts import ADAPTER_CAPABILITIES
 from adapters.job_boards.greenhouse_api import GreenhouseJobBoardApi
 from adapters.job_boards.linkedin_reference import LinkedInJobReference
+from app.api.annotation import router as annotation_router
 from app.api.schemas import (
     ActiveCvFileRequest,
     ApplicationMatchDetailsResponse,
@@ -287,6 +288,7 @@ from app.workers.browser_worker import create_session_store
 configure_logging()
 logger = structlog.get_logger(__name__)
 app = FastAPI(title="Job Searching Assistant", version="1.4.1")
+app.include_router(annotation_router)
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
 UI_ASSETS_PATH = Path(__file__).parents[1] / "static" / "assets"
@@ -415,6 +417,8 @@ def required_api_scope(method: str, path: str) -> str:
         return "profiles:write"
     if path.startswith("/v1/users/"):
         return "profiles:delete" if method == "DELETE" else "profiles:write"
+    if path.startswith("/v1/annotation"):
+        return "review:read" if method == "GET" else "review:write"
     if path.startswith("/v1/connectors"):
         return "connectors:read"
     if path.startswith("/v1/vacancies"):

@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from scripts.generate_ltr_dataset import (
-    build_dataset_from_db,
     main,
 )
 

@@ -7,6 +7,13 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Annotation/feedback integrity** (migration 0043, `/v1/annotation/*` now mounted): duplicate-proof
+  pointwise and order-independent pairwise labels, validated vocabularies with `{code, message}`
+  errors, ownership checks, provenance and confidence, transaction-safe submits, deterministic
+  review queue with explainable `review_priority` and per-company diversity, and a validated,
+  reproducible `GET /v1/annotation/export`. Fixes the stratified sampler (quotas counted only new
+  members, so strata starved each other) and a submit path that could not commit.
+
 - **Browser session state machine** (migration 0042): DISCONNECTED, LOGIN_REQUIRED, AUTHENTICATING,
   AUTHENTICATED, READY, EXPIRED, REAUTH_REQUIRED with `last_verified_at`. Status responses gain
   `state`, `last_verified_at`, `last_error`, `recovery_hint`; confirm outside a login answers a

@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.matching.cross_encoder.features import FeatureExtractor, MatchFeatures
+from app.matching.cross_encoder.features import FeatureExtractor
 from app.matching.cross_encoder.ltr_feature_contract import LTR_FEATURE_NAMES
 from app.matching.cross_encoder.normalization import ScoreNormalizer
 from app.storage.database import session_scope
@@ -24,7 +24,6 @@ from app.storage.tables import (
     ApplicationMatchResultRow,
     ApplicationRow,
     CvFileRow,
-    UserRow,
     VacancyRow,
 )
 
@@ -33,7 +32,6 @@ def load_vacancy_meta() -> dict[str, dict]:
     """Load vacancy metadata from pre-computed file."""
     import json as _json
     from pathlib import Path
-    from collections import defaultdict
 
     vacancies_path = Path("data/matching/vacancies.json")
     if not vacancies_path.exists():
@@ -114,8 +112,8 @@ def build_dataset_from_db(session: Session) -> list[dict[str, Any]]:
 
     # Load cross-encoder scores from pre-computed data
     import json as _json
-    from pathlib import Path
     from collections import defaultdict
+    from pathlib import Path
 
     corpus_path = Path("data/matching/full_corpus_scores.jsonl")
     req_path = Path("data/matching/req_matches.json")

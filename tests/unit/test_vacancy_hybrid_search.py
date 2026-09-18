@@ -2,9 +2,9 @@
 
 import asyncio
 
+from app.matching.semantic import FakeEmbeddingClient
 from app.matching.vacancy_index import VacancySearchHit
 from app.matching.vacancy_retriever import VacancyHybridRetriever, _rrf_fuse
-from app.matching.semantic import EmbeddingBatch, FakeEmbeddingClient
 
 
 class _FakeVacancyIndex:

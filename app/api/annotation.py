@@ -12,21 +12,23 @@ Endpoints:
 All endpoints require x-api-key header (existing auth pattern).
 Ownership verified via CvFileRow.user_id.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.matching.cross_encoder.annotation import (
     AnnotationQueue,
-    AnnotationQueueItem,
     AnnotationStats,
+    DatasetExport,
     DatasetReadiness,
     FeedbackResponse,
+    export_dataset,
     get_annotation_queue,
     get_annotation_stats,
     get_dataset_readiness,
@@ -43,6 +45,7 @@ router = APIRouter(prefix="/v1/annotation", tags=["annotation"])
 
 
 # ── Discovery models ───────────────────────────────────────────────────
+
 
 class ResumeInfo(BaseModel):
     resume_id: str
@@ -64,8 +67,10 @@ class DiscoveryResponse(BaseModel):
 
 # ── Discovery endpoint ─────────────────────────────────────────────────
 
+
 @router.get("/discover", response_model=DiscoveryResponse)
 def discover_users_and_resumes(
+    user_id: str | None = Query(default=None),
     session: Session = Depends(session_scope),
 ) -> DiscoveryResponse:
     """List all users and their resumes for UI dropdown population.
@@ -73,16 +78,17 @@ def discover_users_and_resumes(
     Returns users with CV files so the annotation UI can present
     a selection dropdown instead of requiring manual UUID entry.
     """
-    from app.storage.tables import UserRow, CvFileRow
+    from app.storage.tables import CvFileRow, UserRow
 
-    users = session.query(UserRow).all()
+    user_query = session.query(UserRow)
+    if user_id:
+        user_query = user_query.filter(UserRow.id == user_id)
+    users = user_query.all()
     result_users = []
     total_resumes = 0
 
     for user in users:
-        cv_files = session.query(CvFileRow).filter(
-            CvFileRow.user_id == user.id
-        ).all()
+        cv_files = session.query(CvFileRow).filter(CvFileRow.user_id == user.id).all()
         resumes = [
             ResumeInfo(
                 resume_id=cv.id,
@@ -92,11 +98,13 @@ def discover_users_and_resumes(
             for cv in cv_files
         ]
         if resumes:  # Only include users with CV files
-            result_users.append(UserInfo(
-                user_id=user.id,
-                display_name=user.display_name or user.id[:12],
-                resumes=resumes,
-            ))
+            result_users.append(
+                UserInfo(
+                    user_id=user.id,
+                    display_name=user.display_name or user.id[:12],
+                    resumes=resumes,
+                )
+            )
             total_resumes += len(resumes)
 
     return DiscoveryResponse(
@@ -108,12 +116,25 @@ def discover_users_and_resumes(
 
 # ── Request models ─────────────────────────────────────────────────────
 
+
+class SamplingContext(BaseModel):
+    """What the queue showed when the label was given (kept for later analysis)."""
+
+    sampling_reason: str | None = Field(default=None, max_length=50)
+    current_rank: int | None = None
+    ltr_rank: int | None = None
+    current_score: float | None = None
+    ltr_score: float | None = None
+
+
 class PointwiseSubmitRequest(BaseModel):
     resume_id: str = Field(..., min_length=1)
     vacancy_id: str = Field(..., min_length=1)
     label: str = Field(..., pattern="^(relevant|maybe|not_relevant)$")
     reasons: list[str] = Field(default_factory=list)
     comment: str | None = Field(default=None, max_length=2000)
+    confidence: str | None = Field(default=None, pattern="^(low|medium|high)$")
+    sampling: SamplingContext | None = None
 
 
 class PairwiseSubmitRequest(BaseModel):
@@ -124,9 +145,12 @@ class PairwiseSubmitRequest(BaseModel):
     a_reasons: list[str] = Field(default_factory=list)
     b_reasons: list[str] = Field(default_factory=list)
     comment: str | None = Field(default=None, max_length=2000)
+    confidence: str | None = Field(default=None, pattern="^(low|medium|high)$")
+    sampling: SamplingContext | None = None
 
 
 # ── Pointwise Sample endpoint ──────────────────────────────────────────
+
 
 @router.get("/pointwise-sample", response_model=AnnotationQueue)
 def get_pointwise_sample(
@@ -148,8 +172,9 @@ def get_pointwise_sample(
     Pairwise-only annotated vacancies remain eligible.
     Sampling is deterministic (seed=42).
     """
-    from app.storage.tables import CvFileRow
     import json as _json
+
+    from app.storage.tables import CvFileRow
 
     # Load features from DB (reuse existing data)
     features_list = _load_features_for_resume(session, user_id, resume_id)
@@ -161,19 +186,26 @@ def get_pointwise_sample(
     resume_skills = []
     if cv and cv.skills:
         try:
-            resume_skills = _json.loads(cv.skills) if isinstance(cv.skills, str) else list(cv.skills)
+            resume_skills = (
+                _json.loads(cv.skills) if isinstance(cv.skills, str) else list(cv.skills)
+            )
         except (TypeError, _json.JSONDecodeError):
             resume_skills = []
 
     return get_annotation_queue(
-        session, user_id, resume_id, features_list,
-        limit=limit, vacancy_meta=vacancy_meta,
+        session,
+        user_id,
+        resume_id,
+        features_list,
+        limit=limit,
+        vacancy_meta=vacancy_meta,
         resume_text=resume_text or "",
         resume_skills=resume_skills,
     )
 
 
 # ── Queue endpoint ─────────────────────────────────────────────────────
+
 
 @router.get("/queue", response_model=AnnotationQueue)
 def get_queue(
@@ -187,8 +219,9 @@ def get_queue(
     Returns candidates ranked by review_priority (information gain),
     excluding already-labelled pairs.
     """
-    from app.storage.tables import CvFileRow
     import json as _json
+
+    from app.storage.tables import CvFileRow
 
     # Load features from DB (reuse existing data)
     features_list = _load_features_for_resume(session, user_id, resume_id)
@@ -200,19 +233,47 @@ def get_queue(
     resume_skills = []
     if cv and cv.skills:
         try:
-            resume_skills = _json.loads(cv.skills) if isinstance(cv.skills, str) else list(cv.skills)
+            resume_skills = (
+                _json.loads(cv.skills) if isinstance(cv.skills, str) else list(cv.skills)
+            )
         except (TypeError, _json.JSONDecodeError):
             resume_skills = []
 
     return get_annotation_queue(
-        session, user_id, resume_id, features_list,
-        limit=limit, vacancy_meta=vacancy_meta,
+        session,
+        user_id,
+        resume_id,
+        features_list,
+        limit=limit,
+        vacancy_meta=vacancy_meta,
         resume_text=resume_text or "",
         resume_skills=resume_skills,
     )
 
 
 # ── Pointwise submit ───────────────────────────────────────────────────
+
+
+def _finish_submission(session: Session, result: FeedbackResponse) -> FeedbackResponse:
+    """Map a service result to HTTP and commit atomically (nothing half written on failure)."""
+    if result.status == "forbidden":
+        raise HTTPException(status_code=403, detail="You do not own this resume")
+    if result.status == "invalid":
+        raise HTTPException(
+            status_code=422,
+            detail={"code": result.code, "message": result.detail},
+        )
+    try:
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        logger.exception("annotation_commit_failed")
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "annotation_commit_failed", "message": "Could not save the label"},
+        ) from error
+    return result
+
 
 @router.post("/pointwise", response_model=FeedbackResponse)
 def submit_pointwise_endpoint(
@@ -222,21 +283,21 @@ def submit_pointwise_endpoint(
 ) -> FeedbackResponse:
     """Submit pointwise human feedback for a resume-vacancy pair."""
     result = submit_pointwise(
-        session, user_id,
-        request.resume_id, request.vacancy_id,
-        request.label, request.reasons, request.comment,
+        session,
+        user_id,
+        request.resume_id,
+        request.vacancy_id,
+        request.label,
+        request.reasons,
+        request.comment,
+        confidence=request.confidence,
+        sampling=request.sampling.model_dump() if request.sampling else None,
     )
-    if result.status == "forbidden":
-        raise HTTPException(status_code=403, detail="You do not own this resume")
-    if result.status == "invalid":
-        detail = f"Invalid input: {result.feedback_id}" if result.feedback_id.startswith("invalid_reason:") else f"Invalid input: {result.label}"
-        raise HTTPException(status_code=422, detail=detail)
-    if result.status == "accepted":
-        session.commit()
-    return result
+    return _finish_submission(session, result)
 
 
 # ── Pairwise submit ────────────────────────────────────────────────────
+
 
 @router.post("/pairwise", response_model=FeedbackResponse)
 def submit_pairwise_endpoint(
@@ -244,25 +305,25 @@ def submit_pairwise_endpoint(
     user_id: str = Query(..., min_length=1),
     session: Session = Depends(session_scope),
 ) -> FeedbackResponse:
-    """Submit pairwise human preference feedback."""
+    """Submit pairwise human preference feedback (order-independent: A/B and B/A are one)."""
     result = submit_pairwise(
-        session, user_id,
+        session,
+        user_id,
         request.resume_id,
-        request.vacancy_a_id, request.vacancy_b_id,
+        request.vacancy_a_id,
+        request.vacancy_b_id,
         request.preference,
-        request.a_reasons, request.b_reasons,
+        request.a_reasons,
+        request.b_reasons,
         request.comment,
+        confidence=request.confidence,
+        sampling=request.sampling.model_dump() if request.sampling else None,
     )
-    if result.status == "forbidden":
-        raise HTTPException(status_code=403, detail="You do not own this resume")
-    if result.status == "invalid":
-        raise HTTPException(status_code=422, detail=f"Invalid input: {result.label}")
-    if result.status == "accepted":
-        session.commit()
-    return result
+    return _finish_submission(session, result)
 
 
 # ── Statistics ─────────────────────────────────────────────────────────
+
 
 @router.get("/stats", response_model=AnnotationStats)
 def get_stats(
@@ -275,6 +336,7 @@ def get_stats(
 
 # ── Readiness ──────────────────────────────────────────────────────────
 
+
 @router.get("/readiness", response_model=DatasetReadiness)
 def get_readiness(
     session: Session = Depends(session_scope),
@@ -283,10 +345,25 @@ def get_readiness(
     return get_dataset_readiness(session)
 
 
+# ── Export ─────────────────────────────────────────────────────────────
+
+
+@router.get("/export", response_model=DatasetExport)
+def export_labels(
+    user_id: str | None = Query(default=None),
+    session: Session = Depends(session_scope),
+) -> DatasetExport:
+    """Validated, reproducible export of human labels (issues are reported, not exported)."""
+    return export_dataset(session, user_id)
+
+
 # ── Helper functions ───────────────────────────────────────────────────
 
+
 def _load_features_for_resume(
-    session: Session, user_id: str, resume_id: str,
+    session: Session,
+    user_id: str,
+    resume_id: str,
 ) -> list[MatchFeatures]:
     """Load features for all vacancies for a given resume.
 
@@ -294,8 +371,8 @@ def _load_features_for_resume(
     otherwise builds from DB.
     """
     import json
-    from pathlib import Path
     from collections import defaultdict
+    from pathlib import Path
 
     # Try to load from pre-computed data
     corpus_path = Path("data/matching/full_corpus_scores.jsonl")
@@ -390,7 +467,9 @@ def _load_features_for_resume(
         feat = extractor.extract(resume_id, vid)
         feat.ce_ettin_norm = normalizer.normalize("ettin-reranker-68m-v1", feat.ce_ettin_raw)
         feat.ce_mmbert_norm = normalizer.normalize("mmBERT-small", feat.ce_mmbert_raw)
-        feat.ce_modernbert_norm = normalizer.normalize("multilingual-modernbert-small", feat.ce_modernbert_raw)
+        feat.ce_modernbert_norm = normalizer.normalize(
+            "multilingual-modernbert-small", feat.ce_modernbert_raw
+        )
         features_list.append(feat)
 
     return features_list
@@ -417,20 +496,20 @@ def _load_vacancy_meta(session: Session) -> dict[str, dict]:
                     pass
     return meta
 
-def _load_features_from_db(
-    session: Session, user_id: str, resume_id: str
-) -> list[MatchFeatures]:
+
+def _load_features_from_db(session: Session, user_id: str, resume_id: str) -> list[MatchFeatures]:
     """Load features for a resume by building from database.
 
     Fallback when pre-computed corpus files are not available.
     """
     from collections import defaultdict
+
     from sqlalchemy import select
+
     from app.storage.tables import (
         ApplicationMatchResultRow,
         ApplicationRow,
         VacancyRow,
-        RequirementMatchRow,
     )
 
     # Get match results for this resume
@@ -468,7 +547,6 @@ def _load_features_from_db(
             "employment_types": vacancy.employment_types or [],
         }
         vacancy_ids.append(vacancy.id)
-
 
     # No requirement matches available from DB without complex joins
     req_by_vacancy: dict[str, list[dict]] = defaultdict(list)

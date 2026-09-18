@@ -9,7 +9,7 @@ Each feature set is for a single (resume_id, vacancy_id) pair.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)

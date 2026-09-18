@@ -1,31 +1,52 @@
-"""Stratified Pointwise Sampling for LTR Human Annotation.
+"""Human annotation for LTR: review queue, feedback submission, statistics, dataset export.
 
-Provides:
-- Annotation queue with stratified sampling (current_top, ltr_top, rank_disagreement, middle_rank, random)
-- Pointwise and pairwise feedback submission
-- Statistics and dataset readiness
-- Deterministic sampling with seed=42
+* The review queue is a *union of strata* (top by the current ranking, top by the LTR
+  ranking, largest rank disagreement, mid-ranking, random) so the human sees the cases that
+  teach the model the most. Each item carries an explainable ``review_priority`` (a
+  heuristic, not a probability) and no single company may dominate the queue.
+* Feedback is validated by ``app.domain.annotation``. A judgement exists once: pointwise by
+  (user, resume, vacancy), pairwise by (user, resume, canonical pair); the database enforces
+  it with partial unique indexes and a concurrent double submit falls back to an update.
+* Only decisive pairwise answers become training pairs; ``both_equal`` / ``neither`` never do.
+* Sampling is deterministic (seed 42, stable tie-breaks by vacancy id).
 """
+
 from __future__ import annotations
 
+import hashlib
+import json
 import random
-import structlog
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
+import structlog
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import Select, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.matching.cross_encoder.features import FeatureExtractor, MatchFeatures
-from app.matching.cross_encoder.ltr_feature_contract import LTR_FEATURE_NAMES
-from app.matching.cross_encoder.ltr_scorer import LTRScorer
-from app.storage.database import session_scope
+from app.domain.annotation import (
+    POINTWISE_GAIN,
+    InvalidAnnotation,
+    canonicalize_pair,
+    limit_bucket_dominance,
+    normalize_comment,
+    normalize_reasons,
+    review_priority,
+    training_pair,
+    validate_confidence,
+    validate_pairwise_label,
+    validate_pointwise_label,
+)
+from app.matching.cross_encoder.features import MatchFeatures
+from app.matching.cross_encoder.normalization import ScoreNormalizer
 from app.storage.tables import (
+    AnnotationFeedbackRow,
     ApplicationMatchResultRow,
     ApplicationRow,
     CvFileRow,
-    UserRow,
     VacancyRow,
 )
 
@@ -34,6 +55,7 @@ logger = structlog.get_logger(__name__)
 # Sampling configuration
 SEED = 42
 DEFAULT_LIMIT = 100
+MAX_COMPANY_SHARE = 0.3
 STRATA_QUOTAS = {
     "current_top": 20,
     "ltr_top": 20,
@@ -52,6 +74,7 @@ STRATA_PRIORITY = [
 
 class AnnotationQueueItem(BaseModel):
     """Single item in the annotation queue."""
+
     vacancy_id: str
     vacancy_title: str
     vacancy_company: str
@@ -62,6 +85,9 @@ class AnnotationQueueItem(BaseModel):
     current_score: float | None = None
     ltr_score: float | None = None
     sampling_reason: str
+    # Heuristic queue-ordering signal in [0, 1]; NOT a probability or a calibrated confidence.
+    review_priority: float = 0.0
+    priority_reasons: list[str] = Field(default_factory=list)
     required_skills: list[str] = Field(default_factory=list)
     preferred_skills: list[str] = Field(default_factory=list)
     salary_text: str = ""
@@ -71,6 +97,7 @@ class AnnotationQueueItem(BaseModel):
 
 class AnnotationQueue(BaseModel):
     """Annotation queue response."""
+
     resume_id: str
     resume_filename: str
     items: list[AnnotationQueueItem]
@@ -81,6 +108,7 @@ class AnnotationQueue(BaseModel):
 
 class AnnotationStats(BaseModel):
     """Annotation statistics."""
+
     total_pointwise: int
     total_pairwise: int
     pointwise_by_label: dict[str, int]
@@ -91,6 +119,7 @@ class AnnotationStats(BaseModel):
 
 class DatasetReadiness(BaseModel):
     """Dataset readiness for training."""
+
     pointwise_observations: int
     pairwise_observations: int
     total_observations: int
@@ -101,14 +130,38 @@ class DatasetReadiness(BaseModel):
 
 class FeedbackResponse(BaseModel):
     """Feedback submission response."""
+
     status: str  # accepted, forbidden, invalid
     feedback_id: str | None = None
     label: str | None = None
+    code: str | None = None
+    detail: str | None = None
+
+
+class ExportIssue(BaseModel):
+    feedback_id: str
+    code: str
+    message: str
+
+
+class DatasetExport(BaseModel):
+    """Validated, reproducible snapshot of the human labels.
+
+    ``dataset_hash`` covers only the exported rows, in a canonical order, so the same labels
+    always give the same hash.
+    """
+
+    dataset_hash: str
+    pointwise: list[dict[str, Any]]
+    pairs: list[dict[str, Any]]
+    undecided_pairs: int
+    issues: list[ExportIssue]
 
 
 @dataclass
 class SampledCandidate:
     """A candidate vacancy selected for annotation."""
+
     vacancy_id: str
     vacancy_title: str
     vacancy_company: str
@@ -125,6 +178,8 @@ class SampledCandidate:
     ltr_score: float | None
     sampling_reason: str
     strata: list[str] = field(default_factory=list)
+    review_priority: float = 0.0
+    priority_reasons: list[str] = field(default_factory=list)
 
     def to_queue_item(self) -> AnnotationQueueItem:
         return AnnotationQueueItem(
@@ -138,12 +193,17 @@ class SampledCandidate:
             current_score=self.current_score,
             ltr_score=self.ltr_score,
             sampling_reason=self.sampling_reason,
+            review_priority=self.review_priority,
+            priority_reasons=list(self.priority_reasons),
             required_skills=self.required_skills,
             preferred_skills=self.preferred_skills,
             salary_text=self.salary_text,
             work_format=self.work_format,
             employment_types=self.employment_types,
         )
+
+
+# ── queue ──────────────────────────────────────────────────────────────────────
 
 
 def get_annotation_queue(
@@ -153,16 +213,11 @@ def get_annotation_queue(
     features_list: list[MatchFeatures],
     *,
     limit: int = DEFAULT_LIMIT,
-    vacancy_meta: dict[str, dict] | None = None,
+    vacancy_meta: dict[str, dict[str, Any]] | None = None,
     resume_text: str = "",
     resume_skills: list[str] | None = None,
 ) -> AnnotationQueue:
-    """Get stratified pointwise annotation queue for a resume.
-
-    Builds eligible pool from all vacancies, excludes already pointwise-labelled,
-    applies stratified sampling, and returns up to `limit` items.
-    """
-    # Verify ownership
+    """Stratified, prioritised, diversity-limited queue for one resume the user owns."""
     cv = session.get(CvFileRow, resume_id)
     if not cv or cv.user_id != user_id:
         return AnnotationQueue(
@@ -174,29 +229,23 @@ def get_annotation_queue(
             strata_breakdown={},
         )
 
-    # Get all vacancies with match results for this resume
-    all_candidates = _build_candidate_pool(session, resume_id, features_list, vacancy_meta or {})
-
-    # Exclude already pointwise-annotated vacancies for this resume
+    all_candidates = _build_candidate_pool(
+        session, resume_id, features_list, vacancy_meta or {}, user_id=user_id
+    )
     eligible = _exclude_pointwise_annotated(session, user_id, resume_id, all_candidates)
-
-    # Apply stratified sampling
     sampled = _stratified_sample(eligible, limit=limit)
 
-    # Convert to queue items
-    items = [c.to_queue_item() for c in sampled]
-
-    # Calculate strata breakdown
-    strata_breakdown = {}
-    for c in sampled:
-        strata_breakdown[c.sampling_reason] = strata_breakdown.get(c.sampling_reason, 0) + 1
-
+    strata_breakdown: dict[str, int] = {}
+    for candidate in sampled:
+        strata_breakdown[candidate.sampling_reason] = (
+            strata_breakdown.get(candidate.sampling_reason, 0) + 1
+        )
     return AnnotationQueue(
         resume_id=resume_id,
         resume_filename=cv.original_filename,
-        items=items,
+        items=[candidate.to_queue_item() for candidate in sampled],
         total_eligible=len(eligible),
-        sampled_count=len(items),
+        sampled_count=len(sampled),
         strata_breakdown=strata_breakdown,
     )
 
@@ -205,39 +254,31 @@ def _build_candidate_pool(
     session: Session,
     resume_id: str,
     features_list: list[MatchFeatures],
-    vacancy_meta: dict[str, dict],
+    vacancy_meta: dict[str, dict[str, Any]],
+    *,
+    user_id: str | None = None,
 ) -> list[SampledCandidate]:
-    """Build the full candidate pool with rankings."""
-    # Build lookup for features
+    """All rankable vacancies for the resume, with deterministic current/LTR ranks."""
     features_by_vacancy = {f.vacancy_id: f for f in features_list}
-
-    # Get all match results for this resume
-    # Join Application -> ApplicationMatchResultRow -> Vacancy
-    stmt = (
+    statement = (
         select(ApplicationMatchResultRow, VacancyRow, ApplicationRow)
         .join(ApplicationRow, ApplicationMatchResultRow.application_id == ApplicationRow.id)
         .join(VacancyRow, ApplicationRow.vacancy_id == VacancyRow.id)
         .where(ApplicationRow.selected_cv_file_id == resume_id)
+        .order_by(VacancyRow.id, ApplicationMatchResultRow.application_id)
     )
-    results = session.execute(stmt).all()
+    if user_id is not None:
+        statement = statement.where(ApplicationRow.user_id == user_id)
 
-    candidates = []
-    for match_result, vacancy, application in results:
-        features = features_by_vacancy.get(vacancy.id)
-        if not features:
+    by_vacancy: dict[str, SampledCandidate] = {}
+    for match_result, vacancy, _application in session.execute(statement).all():
+        if vacancy.id not in features_by_vacancy:
             continue
-
-        meta = vacancy_meta.get(vacancy.id, {})
-
-        # Current rank from existing pipeline
         current_score = match_result.final_score
-        current_rank = None  # Will be computed after sorting
-
-        # LTR score
-        ltr_score = getattr(match_result, "ltr_score", None)
-        ltr_rank = None  # Will be computed after sorting
-
-        candidates.append(SampledCandidate(
+        candidate = by_vacancy.get(vacancy.id)
+        if candidate is not None and (candidate.current_score or 0) >= (current_score or 0):
+            continue  # several applications for one vacancy: keep the best-scored one
+        by_vacancy[vacancy.id] = SampledCandidate(
             vacancy_id=vacancy.id,
             vacancy_title=vacancy.title,
             vacancy_company=vacancy.company,
@@ -248,25 +289,25 @@ def _build_candidate_pool(
             salary_text=vacancy.salary_text or "",
             work_format=vacancy.work_format or "unspecified",
             employment_types=vacancy.employment_types or [],
-            current_rank=current_rank,
-            ltr_rank=ltr_rank,
+            current_rank=None,
+            ltr_rank=None,
             current_score=current_score,
-            ltr_score=ltr_score,
+            ltr_score=getattr(match_result, "ltr_score", None),
             sampling_reason="",
             strata=[],
-        ))
+        )
 
-    # Sort by current score to assign current_rank
-    candidates.sort(key=lambda c: c.current_score or 0, reverse=True)
-    for i, c in enumerate(candidates):
-        c.current_rank = i + 1
-
-    # Sort by LTR score to assign ltr_rank (if available)
-    ltr_candidates = [c for c in candidates if c.ltr_score is not None]
-    ltr_candidates.sort(key=lambda c: c.ltr_score or 0, reverse=True)
-    for i, c in enumerate(ltr_candidates):
-        c.ltr_rank = i + 1
-
+    candidates = list(by_vacancy.values())
+    # equal scores must not depend on database row order: break ties by vacancy id
+    candidates.sort(key=lambda c: (-(c.current_score or 0.0), c.vacancy_id))
+    for rank, candidate in enumerate(candidates, start=1):
+        candidate.current_rank = rank
+    ltr_ranked = sorted(
+        (c for c in candidates if c.ltr_score is not None),
+        key=lambda c: (-(c.ltr_score or 0.0), c.vacancy_id),
+    )
+    for rank, candidate in enumerate(ltr_ranked, start=1):
+        candidate.ltr_rank = rank
     return candidates
 
 
@@ -276,12 +317,9 @@ def _exclude_pointwise_annotated(
     resume_id: str,
     candidates: list[SampledCandidate],
 ) -> list[SampledCandidate]:
-    """Exclude vacancies that already have pointwise annotation for this resume."""
-    # Get all pointwise-annotated vacancy_ids for this resume/user
-    # We'll check the annotation storage (could be DB or file-based)
-    annotated_vacancy_ids = _get_pointwise_annotated_vacancies(session, user_id, resume_id)
-
-    eligible = [c for c in candidates if c.vacancy_id not in annotated_vacancy_ids]
+    """Drop vacancies this user already labelled pointwise for this resume."""
+    annotated = _get_pointwise_annotated_vacancies(session, user_id, resume_id)
+    eligible = [c for c in candidates if c.vacancy_id not in annotated]
     logger.info(
         "annotation_excluded_pointwise",
         resume_id=resume_id,
@@ -292,151 +330,175 @@ def _exclude_pointwise_annotated(
     return eligible
 
 
-def _get_pointwise_annotated_vacancies(
-    session: Session,
-    user_id: str,
-    resume_id: str,
-) -> set[str]:
-    """Get set of vacancy_ids that have pointwise annotations for this resume/user.
-
-    Checks the annotation_feedback table.
-    """
-    from app.storage.tables import AnnotationFeedbackRow
-    from sqlalchemy import select
-
-    stmt = select(AnnotationFeedbackRow.vacancy_id).where(
+def _get_pointwise_annotated_vacancies(session: Session, user_id: str, resume_id: str) -> set[str]:
+    statement = select(AnnotationFeedbackRow.vacancy_id).where(
         AnnotationFeedbackRow.user_id == user_id,
         AnnotationFeedbackRow.resume_id == resume_id,
         AnnotationFeedbackRow.feedback_type == "pointwise",
     )
-    result = session.execute(stmt).scalars().all()
-    return set(result)
+    return set(session.execute(statement).scalars().all())
+
+
+def _percentiles(
+    candidates: list[SampledCandidate],
+) -> dict[str, tuple[float | None, float | None]]:
+    """Percentile of each candidate's current/LTR score within the SAME pool (1 = best).
+
+    Both rankings go through one normaliser, so a 0-100 production score and an unbounded
+    LTR score become comparable before they are used to measure disagreement.
+    """
+    normalizer = ScoreNormalizer()
+    normalizer.fit("current", [c.current_score for c in candidates if c.current_score is not None])
+    normalizer.fit("ltr", [c.ltr_score for c in candidates if c.ltr_score is not None])
+    return {
+        c.vacancy_id: (
+            normalizer.transform("current", c.current_score),
+            normalizer.transform("ltr", c.ltr_score),
+        )
+        for c in candidates
+    }
 
 
 def _stratified_sample(
     candidates: list[SampledCandidate],
     limit: int = DEFAULT_LIMIT,
 ) -> list[SampledCandidate]:
-    """Apply stratified sampling to select candidates for annotation.
+    """Union of strata, ordered by explainable priority, with company diversity.
 
-    Strata (in priority order for tiebreaking):
-    1. rank_disagreement (30) - largest |current_rank - ltr_rank|
-    2. ltr_top (20) - top by LTR score
-    3. current_top (20) - top by current score
-    4. middle_rank (20) - middle of ranking (rank 50-300 or adapted)
-    5. random (10) - random from remaining
-
-    Returns UNION of selected candidates, deduplicated, up to limit.
+    Strata (each contributes at most its quota of *members*, overlaps included):
+      rank_disagreement (30) largest |current_rank - ltr_rank|; ltr_top (20); current_top (20);
+      middle_rank (20) mid-ranking (ranks ~n/4 .. 3n/4, capped at 50..300); random (10).
+    Result order: review_priority desc, then stratum priority, current rank, vacancy id.
     """
     if not candidates:
         return []
 
-    rng = random.Random(SEED)
-    selected = {}  # vacancy_id -> SampledCandidate (with merged strata)
-    strata_counts = {k: 0 for k in STRATA_QUOTAS}
+    pool = sorted(candidates, key=lambda c: (c.current_rank or float("inf"), c.vacancy_id))
+    for candidate in pool:
+        candidate.strata = []
+        candidate.sampling_reason = ""
+    selected: dict[str, SampledCandidate] = {}
 
-    # 1. rank_disagreement: largest absolute rank difference
-    disagreement_candidates = [c for c in candidates if c.current_rank and c.ltr_rank]
-    disagreement_candidates.sort(
-        key=lambda c: abs(c.current_rank - c.ltr_rank),
-        reverse=True,
+    def take(stratum: str, ordered: list[SampledCandidate]) -> None:
+        for candidate in ordered[: STRATA_QUOTAS[stratum]]:
+            candidate.strata.append(stratum)
+            selected.setdefault(candidate.vacancy_id, candidate)
+
+    disagreement = sorted(
+        (c for c in pool if c.current_rank and c.ltr_rank),
+        key=lambda c: (
+            -abs((c.current_rank or 0) - (c.ltr_rank or 0)),
+            c.current_rank or float("inf"),
+            c.vacancy_id,
+        ),
     )
-    for c in disagreement_candidates:
-        if strata_counts["rank_disagreement"] >= STRATA_QUOTAS["rank_disagreement"]:
-            break
-        if c.vacancy_id not in selected:
-            c.strata.append("rank_disagreement")
-            c.sampling_reason = "rank_disagreement"
-            selected[c.vacancy_id] = c
-            strata_counts["rank_disagreement"] += 1
+    take("rank_disagreement", disagreement)
+    take(
+        "ltr_top",
+        sorted((c for c in pool if c.ltr_rank), key=lambda c: (c.ltr_rank or 0, c.vacancy_id)),
+    )
+    take("current_top", pool)
 
-    # 2. ltr_top: top by LTR score
-    ltr_sorted = [c for c in candidates if c.ltr_rank is not None]
-    ltr_sorted.sort(key=lambda c: c.ltr_rank)
-    for c in ltr_sorted:
-        if strata_counts["ltr_top"] >= STRATA_QUOTAS["ltr_top"]:
-            break
-        if c.vacancy_id not in selected:
-            c.strata.append("ltr_top")
-            c.sampling_reason = "ltr_top"
-            selected[c.vacancy_id] = c
-            strata_counts["ltr_top"] += 1
-        else:
-            # Already selected, upgrade sampling_reason if higher priority
-            existing = selected[c.vacancy_id]
-            existing.strata.append("ltr_top")
-            if STRATA_PRIORITY.index("ltr_top") < STRATA_PRIORITY.index(existing.sampling_reason):
-                existing.sampling_reason = "ltr_top"
+    n = len(pool)
+    middle_start, middle_end = min(50, n // 4), min(300, 3 * n // 4)
+    take("middle_rank", [c for c in pool if middle_start < (c.current_rank or n + 1) <= middle_end])
 
-    # 3. current_top: top by current score
-    current_sorted = sorted(candidates, key=lambda c: c.current_rank or float('inf'))
-    for c in current_sorted:
-        if strata_counts["current_top"] >= STRATA_QUOTAS["current_top"]:
-            break
-        if c.vacancy_id not in selected:
-            c.strata.append("current_top")
-            c.sampling_reason = "current_top"
-            selected[c.vacancy_id] = c
-            strata_counts["current_top"] += 1
-        else:
-            existing = selected[c.vacancy_id]
-            existing.strata.append("current_top")
-            if STRATA_PRIORITY.index("current_top") < STRATA_PRIORITY.index(existing.sampling_reason):
-                existing.sampling_reason = "current_top"
+    remaining = [c for c in pool if c.vacancy_id not in selected]
+    random.Random(SEED).shuffle(remaining)
+    take("random", remaining)
 
-    # 4. middle_rank: middle of ranking
-    # Adapt range based on candidate count
-    n = len(candidates)
-    middle_start = min(50, n // 4)
-    middle_end = min(300, 3 * n // 4)
-    middle_candidates = [c for c in candidates if middle_start < (c.current_rank or n + 1) <= middle_end]
-    # Sort by current_rank for deterministic selection
-    middle_candidates.sort(key=lambda c: c.current_rank or float('inf'))
-    for c in middle_candidates:
-        if strata_counts["middle_rank"] >= STRATA_QUOTAS["middle_rank"]:
-            break
-        if c.vacancy_id not in selected:
-            c.strata.append("middle_rank")
-            c.sampling_reason = "middle_rank"
-            selected[c.vacancy_id] = c
-            strata_counts["middle_rank"] += 1
-        else:
-            existing = selected[c.vacancy_id]
-            existing.strata.append("middle_rank")
-            if STRATA_PRIORITY.index("middle_rank") < STRATA_PRIORITY.index(existing.sampling_reason):
-                existing.sampling_reason = "middle_rank"
+    for candidate in selected.values():
+        candidate.sampling_reason = next(s for s in STRATA_PRIORITY if s in candidate.strata)
 
-    # 5. random: random from remaining
-    remaining = [c for c in candidates if c.vacancy_id not in selected]
-    rng.shuffle(remaining)
-    for c in remaining:
-        if strata_counts["random"] >= STRATA_QUOTAS["random"]:
-            break
-        c.strata.append("random")
-        c.sampling_reason = "random"
-        selected[c.vacancy_id] = c
-        strata_counts["random"] += 1
-
-    # If still under limit, fill from remaining eligible
     result = list(selected.values())
-    if len(result) < limit:
-        remaining = [c for c in candidates if c.vacancy_id not in selected]
-        # Sort by current_rank for deterministic fill
-        remaining.sort(key=lambda c: c.current_rank or float('inf'))
-        for c in remaining:
+    if len(result) < limit:  # top up from the best-ranked leftovers
+        for candidate in pool:
             if len(result) >= limit:
                 break
-            c.strata.append("fill")
-            c.sampling_reason = "fill"
-            result.append(c)
+            if candidate.vacancy_id not in selected:
+                candidate.strata.append("fill")
+                candidate.sampling_reason = "fill"
+                result.append(candidate)
 
-    # Sort final result by priority of sampling_reason, then by rank
-    def sort_key(c: SampledCandidate):
-        priority = STRATA_PRIORITY.index(c.sampling_reason) if c.sampling_reason in STRATA_PRIORITY else 99
-        return (priority, c.current_rank or float('inf'))
+    percentiles = _percentiles(pool)
+    for candidate in result:
+        current_pct, ltr_pct = percentiles[candidate.vacancy_id]
+        priority = review_priority(
+            current_pct=current_pct,
+            ltr_pct=ltr_pct,
+            strata=[s for s in candidate.strata if s != "fill"],
+        )
+        candidate.review_priority = priority.score
+        candidate.priority_reasons = list(priority.reasons)
 
-    result.sort(key=sort_key)
-    return result[:limit]
+    def order(candidate: SampledCandidate) -> tuple[float, int, float, str]:
+        stratum = (
+            STRATA_PRIORITY.index(candidate.sampling_reason)
+            if candidate.sampling_reason in STRATA_PRIORITY
+            else len(STRATA_PRIORITY)
+        )
+        return (
+            -candidate.review_priority,
+            stratum,
+            candidate.current_rank or float("inf"),
+            candidate.vacancy_id,
+        )
+
+    result.sort(key=order)
+    return limit_bucket_dominance(
+        result,
+        bucket=lambda c: c.vacancy_company.casefold().strip(),
+        limit=limit,
+        max_share=MAX_COMPANY_SHARE,
+    )
+
+
+# ── submission ─────────────────────────────────────────────────────────────────
+
+
+def _invalid(error: InvalidAnnotation) -> FeedbackResponse:
+    return FeedbackResponse(status="invalid", code=error.code, detail=error.message)
+
+
+def _owns(session: Session, user_id: str, resume_id: str) -> CvFileRow | None:
+    cv = session.get(CvFileRow, resume_id)
+    return cv if cv is not None and cv.user_id == user_id else None
+
+
+def _apply_sampling_context(row: AnnotationFeedbackRow, sampling: dict[str, Any] | None) -> None:
+    if not sampling:
+        return
+    row.sampling_reason = sampling.get("sampling_reason")
+    row.current_rank_at_sampling = sampling.get("current_rank")
+    row.ltr_rank_at_sampling = sampling.get("ltr_rank")
+    row.current_score_at_sampling = sampling.get("current_score")
+    row.ltr_score_at_sampling = sampling.get("ltr_score")
+
+
+def _persist(
+    session: Session,
+    lookup: Select[tuple[AnnotationFeedbackRow]],
+    build: Callable[[], AnnotationFeedbackRow],
+    update: Callable[[AnnotationFeedbackRow], None],
+) -> AnnotationFeedbackRow:
+    """Insert-or-update that survives a concurrent double submit.
+
+    The unique index decides the race: the loser's INSERT fails inside a SAVEPOINT, and it
+    then updates the winner's row instead of erroring or creating a duplicate.
+    """
+    existing = session.execute(lookup).scalar_one_or_none()
+    if existing is not None:
+        update(existing)
+        return existing
+    row = build()
+    try:
+        with session.begin_nested():
+            session.add(row)
+    except IntegrityError:
+        winner = session.execute(lookup).scalar_one()
+        update(winner)
+        return winner
+    return row
 
 
 def submit_pointwise(
@@ -447,54 +509,55 @@ def submit_pointwise(
     label: str,
     reasons: list[str],
     comment: str | None,
+    *,
+    confidence: str | None = None,
+    sampling: dict[str, Any] | None = None,
 ) -> FeedbackResponse:
-    """Submit pointwise human feedback for a resume-vacancy pair."""
-    # Verify ownership
-    cv = session.get(CvFileRow, resume_id)
-    if not cv or cv.user_id != user_id:
+    """Record (or update) the human pointwise judgement of one resume-vacancy pair.
+
+    Flushes only; the caller commits, so a failure leaves nothing half written.
+    """
+    if _owns(session, user_id, resume_id) is None:
         return FeedbackResponse(status="forbidden")
+    try:
+        validate_pointwise_label(label)
+        clean_reasons = normalize_reasons(reasons)
+        clean_comment = normalize_comment(comment)
+        validate_confidence(confidence)
+    except InvalidAnnotation as error:
+        return _invalid(error)
+    if session.get(VacancyRow, vacancy_id) is None:
+        return FeedbackResponse(
+            status="invalid", code="vacancy_not_found", detail="Vacancy not found"
+        )
 
-    # Verify vacancy exists
-    vacancy = session.get(VacancyRow, vacancy_id)
-    if not vacancy:
-        return FeedbackResponse(status="invalid", label="Vacancy not found")
-
-    # Check for existing pointwise annotation (upsert behavior)
-    from app.storage.tables import AnnotationFeedbackRow
-    from sqlalchemy import select
-    from datetime import datetime, UTC
-    import uuid
-
-    existing_stmt = select(AnnotationFeedbackRow).where(
+    lookup = select(AnnotationFeedbackRow).where(
         AnnotationFeedbackRow.user_id == user_id,
         AnnotationFeedbackRow.resume_id == resume_id,
         AnnotationFeedbackRow.vacancy_id == vacancy_id,
         AnnotationFeedbackRow.feedback_type == "pointwise",
     )
-    existing = session.execute(existing_stmt).scalar_one_or_none()
 
-    if existing:
-        # Update existing
-        existing.label = label
-        existing.reasons = reasons
-        existing.comment = comment
-        existing.updated_at = datetime.now(UTC)
-        feedback_id = existing.id
-    else:
-        # Create new
-        feedback_id = str(uuid.uuid4())
-        feedback = AnnotationFeedbackRow(
-            id=feedback_id,
+    def build() -> AnnotationFeedbackRow:
+        row = AnnotationFeedbackRow(
             user_id=user_id,
             resume_id=resume_id,
             vacancy_id=vacancy_id,
             feedback_type="pointwise",
-            label=label,
-            reasons=reasons,
-            comment=comment,
+            annotator_id=user_id,
+            source="dashboard",
         )
-        session.add(feedback)
+        update(row)
+        return row
 
+    def update(row: AnnotationFeedbackRow) -> None:
+        row.label = label
+        row.reasons = clean_reasons
+        row.comment = clean_comment
+        row.confidence = confidence
+        _apply_sampling_context(row, sampling)
+
+    row = _persist(session, lookup, build, update)
     logger.info(
         "pointwise_annotation_submitted",
         user_id=user_id,
@@ -502,12 +565,7 @@ def submit_pointwise(
         vacancy_id=vacancy_id,
         label=label,
     )
-
-    return FeedbackResponse(
-        status="accepted",
-        feedback_id=feedback_id,
-        label=label,
-    )
+    return FeedbackResponse(status="accepted", feedback_id=row.id, label=label)
 
 
 def submit_pairwise(
@@ -520,154 +578,256 @@ def submit_pairwise(
     a_reasons: list[str],
     b_reasons: list[str],
     comment: str | None,
+    *,
+    confidence: str | None = None,
+    sampling: dict[str, Any] | None = None,
 ) -> FeedbackResponse:
-    """Submit pairwise human preference feedback."""
-    # Verify ownership
-    cv = session.get(CvFileRow, resume_id)
-    if not cv or cv.user_id != user_id:
+    """Record (or update) a pairwise preference under its canonical identity.
+
+    The same two vacancies shown in the opposite order are the same judgement: the pair is
+    stored smaller-id-first and the label/reasons are flipped with it, so a reason always
+    stays attached to the vacancy it was written about.
+    """
+    if _owns(session, user_id, resume_id) is None:
         return FeedbackResponse(status="forbidden")
+    try:
+        clean_a = normalize_reasons(a_reasons)
+        clean_b = normalize_reasons(b_reasons)
+        clean_comment = normalize_comment(comment)
+        validate_confidence(confidence)
+        pair = canonicalize_pair(vacancy_a_id, vacancy_b_id, preference, clean_a, clean_b)
+    except InvalidAnnotation as error:
+        return _invalid(error)
+    if (
+        session.get(VacancyRow, vacancy_a_id) is None
+        or session.get(VacancyRow, vacancy_b_id) is None
+    ):
+        return FeedbackResponse(
+            status="invalid", code="vacancy_not_found", detail="Vacancy not found"
+        )
 
-    # Verify vacancies exist
-    vacancy_a = session.get(VacancyRow, vacancy_a_id)
-    vacancy_b = session.get(VacancyRow, vacancy_b_id)
-    if not vacancy_a or not vacancy_b:
-        return FeedbackResponse(status="invalid", label="Vacancy not found")
-
-    # Check for existing pairwise annotation (upsert behavior)
-    from app.storage.tables import AnnotationFeedbackRow
-    from sqlalchemy import select
-    from datetime import datetime, UTC
-    import uuid
-
-    existing_stmt = select(AnnotationFeedbackRow).where(
+    lookup = select(AnnotationFeedbackRow).where(
         AnnotationFeedbackRow.user_id == user_id,
         AnnotationFeedbackRow.resume_id == resume_id,
-        AnnotationFeedbackRow.vacancy_a_id == vacancy_a_id,
-        AnnotationFeedbackRow.vacancy_b_id == vacancy_b_id,
+        AnnotationFeedbackRow.pair_key == pair.pair_key,
         AnnotationFeedbackRow.feedback_type == "pairwise",
     )
-    existing = session.execute(existing_stmt).scalar_one_or_none()
 
-    if existing:
-        # Update existing
-        existing.label = preference
-        existing.a_reasons = a_reasons
-        existing.b_reasons = b_reasons
-        existing.comment = comment
-        existing.updated_at = datetime.now(UTC)
-        feedback_id = existing.id
-    else:
-        # Create new
-        feedback_id = str(uuid.uuid4())
-        feedback = AnnotationFeedbackRow(
-            id=feedback_id,
+    def build() -> AnnotationFeedbackRow:
+        row = AnnotationFeedbackRow(
             user_id=user_id,
             resume_id=resume_id,
-            vacancy_id=vacancy_a_id,  # Primary vacancy for pointwise compatibility
-            vacancy_a_id=vacancy_a_id,
-            vacancy_b_id=vacancy_b_id,
+            vacancy_id=pair.first_id,
+            vacancy_a_id=pair.first_id,
+            vacancy_b_id=pair.second_id,
+            pair_key=pair.pair_key,
             feedback_type="pairwise",
-            label=preference,
-            reasons=[],  # Not used for pairwise
-            a_reasons=a_reasons,
-            b_reasons=b_reasons,
-            comment=comment,
+            reasons=[],
+            annotator_id=user_id,
+            source="dashboard",
         )
-        session.add(feedback)
+        update(row)
+        return row
 
+    def update(row: AnnotationFeedbackRow) -> None:
+        row.label = pair.label
+        row.a_reasons = pair.first_reasons
+        row.b_reasons = pair.second_reasons
+        row.comment = clean_comment
+        row.confidence = confidence
+        _apply_sampling_context(row, sampling)
+
+    row = _persist(session, lookup, build, update)
     logger.info(
         "pairwise_annotation_submitted",
         user_id=user_id,
         resume_id=resume_id,
-        vacancy_a_id=vacancy_a_id,
-        vacancy_b_id=vacancy_b_id,
-        preference=preference,
+        pair_key=pair.pair_key,
+        preference=pair.label,
     )
+    return FeedbackResponse(status="accepted", feedback_id=row.id, label=pair.label)
 
-    return FeedbackResponse(
-        status="accepted",
-        feedback_id=feedback_id,
-        label=preference,
+
+# ── statistics, readiness, export ──────────────────────────────────────────────
+
+
+def get_annotation_stats(session: Session, user_id: str | None = None) -> AnnotationStats:
+    """Label counts (aggregated in SQL) and coverage."""
+    scope = [AnnotationFeedbackRow.user_id == user_id] if user_id else []
+    by_label = session.execute(
+        select(
+            AnnotationFeedbackRow.feedback_type,
+            AnnotationFeedbackRow.label,
+            func.count(),
+        )
+        .where(*scope)
+        .group_by(AnnotationFeedbackRow.feedback_type, AnnotationFeedbackRow.label)
+    ).all()
+    pointwise = {label: count for kind, label, count in by_label if kind == "pointwise"}
+    pairwise = {label: count for kind, label, count in by_label if kind == "pairwise"}
+
+    resumes = set(
+        session.execute(select(AnnotationFeedbackRow.resume_id).where(*scope).distinct()).scalars()
     )
-
-
-def get_annotation_stats(
-    session: Session,
-    user_id: str | None = None,
-) -> AnnotationStats:
-    """Get annotation statistics."""
-    from app.storage.tables import AnnotationFeedbackRow
-    from sqlalchemy import select, func
-
-    base_stmt = select(AnnotationFeedbackRow)
-    if user_id:
-        base_stmt = base_stmt.where(AnnotationFeedbackRow.user_id == user_id)
-
-    # Pointwise stats
-    pw_stmt = base_stmt.where(AnnotationFeedbackRow.feedback_type == "pointwise")
-    pw_results = session.execute(pw_stmt).scalars().all()
-    pointwise_by_label: dict[str, int] = {}
-    for r in pw_results:
-        pointwise_by_label[r.label] = pointwise_by_label.get(r.label, 0) + 1
-
-    # Pairwise stats
-    pws_stmt = base_stmt.where(AnnotationFeedbackRow.feedback_type == "pairwise")
-    pws_results = session.execute(pws_stmt).scalars().all()
-    pairwise_by_label: dict[str, int] = {}
-    for r in pws_results:
-        pairwise_by_label[r.label] = pairwise_by_label.get(r.label, 0) + 1
-
-    unique_resumes = len(set(r.resume_id for r in pw_results + pws_results))
-    unique_vacancies = len(set(r.vacancy_id for r in pw_results + pws_results))
-
+    vacancies: set[str] = set()
+    for column in (
+        AnnotationFeedbackRow.vacancy_id,
+        AnnotationFeedbackRow.vacancy_a_id,
+        AnnotationFeedbackRow.vacancy_b_id,
+    ):
+        vacancies |= {
+            v for v in session.execute(select(column).where(*scope).distinct()).scalars() if v
+        }
     return AnnotationStats(
-        total_pointwise=len(pw_results),
-        total_pairwise=len(pws_results),
-        pointwise_by_label=pointwise_by_label,
-        pairwise_by_label=pairwise_by_label,
-        unique_resumes=unique_resumes,
-        unique_vacancies=unique_vacancies,
+        total_pointwise=sum(pointwise.values()),
+        total_pairwise=sum(pairwise.values()),
+        pointwise_by_label=pointwise,
+        pairwise_by_label=pairwise,
+        unique_resumes=len(resumes),
+        unique_vacancies=len(vacancies),
     )
 
 
-def get_dataset_readiness(
-    session: Session,
-) -> DatasetReadiness:
-    """Get dataset readiness for training."""
-    from app.storage.tables import AnnotationFeedbackRow
-    from sqlalchemy import select, func
-
-    # Count pointwise observations per resume group
-    pw_stmt = select(
-        AnnotationFeedbackRow.resume_id,
-        func.count(AnnotationFeedbackRow.id)
-    ).where(AnnotationFeedbackRow.feedback_type == "pointwise").group_by(AnnotationFeedbackRow.resume_id)
-    pw_counts = dict(session.execute(pw_stmt).all())
-
-    # Count pairwise observations per resume group
-    pws_stmt = select(
-        AnnotationFeedbackRow.resume_id,
-        func.count(AnnotationFeedbackRow.id)
-    ).where(AnnotationFeedbackRow.feedback_type == "pairwise").group_by(AnnotationFeedbackRow.resume_id)
-    pws_counts = dict(session.execute(pws_stmt).all())
-
-    all_resume_ids = set(pw_counts.keys()) | set(pws_counts.keys())
-    total_pointwise = sum(pw_counts.values())
-    total_pairwise = sum(pws_counts.values())
-
+def get_dataset_readiness(session: Session) -> DatasetReadiness:
+    """Readiness for training: at least 2 resume groups with >= 50 observations each."""
+    counts: dict[tuple[str, str], int] = {
+        (resume_id, kind): count
+        for resume_id, kind, count in session.execute(
+            select(
+                AnnotationFeedbackRow.resume_id,
+                AnnotationFeedbackRow.feedback_type,
+                func.count(AnnotationFeedbackRow.id),
+            ).group_by(AnnotationFeedbackRow.resume_id, AnnotationFeedbackRow.feedback_type)
+        ).all()
+    }
+    resume_ids = {resume_id for resume_id, _ in counts}
+    total_pointwise = sum(c for (_, kind), c in counts.items() if kind == "pointwise")
+    total_pairwise = sum(c for (_, kind), c in counts.items() if kind == "pairwise")
     min_obs = min(
-        [pw_counts.get(rid, 0) + pws_counts.get(rid, 0) for rid in all_resume_ids],
-        default=0
+        (counts.get((r, "pointwise"), 0) + counts.get((r, "pairwise"), 0) for r in resume_ids),
+        default=0,
     )
-
-    # Ready if at least 2 resume groups with >= 50 observations each
-    ready = len(all_resume_ids) >= 2 and min_obs >= 50
-
     return DatasetReadiness(
         pointwise_observations=total_pointwise,
         pairwise_observations=total_pairwise,
         total_observations=total_pointwise + total_pairwise,
-        unique_resume_groups=len(all_resume_ids),
+        unique_resume_groups=len(resume_ids),
         min_observations_per_group=min_obs,
-        ready_for_training=ready,
+        ready_for_training=len(resume_ids) >= 2 and min_obs >= 50,
+    )
+
+
+def _aware(value: datetime | None) -> datetime | None:
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
+def export_dataset(session: Session, user_id: str | None = None) -> DatasetExport:
+    """Validated export of human labels; anything doubtful is reported, never exported.
+
+    Checks: label vocabulary, reason tags, owner (resume must belong to the labelling user),
+    canonical pair consistency, timestamps, duplicates. Undecided pairwise answers are counted
+    but never turned into training pairs.
+    """
+    statement = select(AnnotationFeedbackRow).order_by(
+        AnnotationFeedbackRow.user_id,
+        AnnotationFeedbackRow.resume_id,
+        AnnotationFeedbackRow.feedback_type,
+        AnnotationFeedbackRow.vacancy_id,
+        AnnotationFeedbackRow.pair_key,
+        AnnotationFeedbackRow.id,
+    )
+    if user_id:
+        statement = statement.where(AnnotationFeedbackRow.user_id == user_id)
+    rows = session.execute(statement).scalars().all()
+    resume_owner = {
+        cv_id: owner
+        for cv_id, owner in session.execute(select(CvFileRow.id, CvFileRow.user_id)).all()
+    }
+
+    issues: list[ExportIssue] = []
+    pointwise: list[dict[str, Any]] = []
+    pairs: list[dict[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    undecided = 0
+
+    for row in rows:
+        problem: tuple[str, str] | None = None
+        try:
+            if row.feedback_type == "pointwise":
+                validate_pointwise_label(row.label)
+            elif row.feedback_type == "pairwise":
+                validate_pairwise_label(row.label)
+            else:
+                problem = ("unknown_type", f"Unknown feedback type {row.feedback_type!r}")
+            normalize_reasons(
+                [*(row.reasons or []), *(row.a_reasons or []), *(row.b_reasons or [])]
+            )
+        except InvalidAnnotation as error:
+            problem = (error.code, error.message)
+        if problem is None and resume_owner.get(row.resume_id) != row.user_id:
+            problem = ("ownership_mismatch", "The resume does not belong to the labelling user")
+        created, updated = _aware(row.created_at), _aware(row.updated_at)
+        if problem is None and (created is None or updated is None or updated < created):
+            problem = ("bad_timestamps", "created_at/updated_at are missing or out of order")
+        if problem is None and row.feedback_type == "pairwise":
+            first, second = row.vacancy_a_id, row.vacancy_b_id
+            if not first or not second or first >= second or row.pair_key != f"{first}:{second}":
+                problem = ("non_canonical_pair", "Pair is not stored in canonical order")
+        identity = (
+            (row.user_id, row.resume_id, "pointwise", row.vacancy_id)
+            if row.feedback_type == "pointwise"
+            else (row.user_id, row.resume_id, "pairwise", row.pair_key or "")
+        )
+        if problem is None and identity in seen:
+            problem = ("duplicate", "A second label exists for the same logical judgement")
+        if problem is not None:
+            issues.append(ExportIssue(feedback_id=row.id, code=problem[0], message=problem[1]))
+            continue
+        seen.add(identity)
+
+        common = {
+            "user_id": row.user_id,
+            "resume_id": row.resume_id,
+            "annotator_id": row.annotator_id or row.user_id,
+            "source": row.source,
+            "confidence": row.confidence,
+            "created_at": created.isoformat() if created else None,
+        }
+        if row.feedback_type == "pointwise":
+            pointwise.append(
+                {
+                    **common,
+                    "vacancy_id": row.vacancy_id,
+                    "label": row.label,
+                    "gain": POINTWISE_GAIN[row.label],
+                    "reasons": list(row.reasons or []),
+                }
+            )
+            continue
+        decided = training_pair(row.vacancy_a_id, row.vacancy_b_id, row.label)
+        if decided is None:
+            undecided += 1
+            continue
+        winner, loser = decided
+        winner_reasons = row.a_reasons if winner == row.vacancy_a_id else row.b_reasons
+        loser_reasons = row.b_reasons if winner == row.vacancy_a_id else row.a_reasons
+        pairs.append(
+            {
+                **common,
+                "winner_id": winner,
+                "loser_id": loser,
+                "winner_reasons": list(winner_reasons or []),
+                "loser_reasons": list(loser_reasons or []),
+            }
+        )
+
+    canonical = json.dumps({"pointwise": pointwise, "pairs": pairs}, sort_keys=True)
+    return DatasetExport(
+        dataset_hash=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        pointwise=pointwise,
+        pairs=pairs,
+        undecided_pairs=undecided,
+        issues=issues,
     )
