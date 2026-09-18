@@ -36,6 +36,12 @@ dev = [
   "ruff>=0.9,<1",
 ]
 
+ltr = [
+  "lightgbm>=4.5,<5",
+  "numpy>=1.26,<3",
+  "scikit-learn>=1.5,<2",
+]
+
 [project.scripts]
 recruitment-assistant = "app.cli:main"
 

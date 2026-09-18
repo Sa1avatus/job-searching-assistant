@@ -680,6 +680,12 @@ class ApplicationMatchResultRow(Base):
     requirements_total: Mapped[int] = mapped_column(Integer, default=0)
     requirements_processed: Mapped[int] = mapped_column(Integer, default=0)
     llm_calls_made: Mapped[int] = mapped_column(Integer, default=0)
+    # Learning-to-rank shadow columns (migration 0039); never used for the production score
+    ltr_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ltr_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    ltr_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rank_delta: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ltr_topk_overlap: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
 
 
 class ApplicationAnswerRow(Base):
@@ -821,3 +827,31 @@ class FactImportBatchRow(Base):
     facts_rejected: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(30), default="completed")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+class AnnotationFeedbackRow(Base):
+    __tablename__ = "annotation_feedback"
+    __table_args__ = (
+        Index("ix_annotation_feedback_user_resume", "user_id", "resume_id"),
+        Index("ix_annotation_feedback_vacancy", "vacancy_id"),
+        Index("ix_annotation_feedback_type", "feedback_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    resume_id: Mapped[str] = mapped_column(ForeignKey("cv_files.id", ondelete="CASCADE"), index=True)
+    vacancy_id: Mapped[str] = mapped_column(ForeignKey("vacancies.id", ondelete="CASCADE"), index=True)
+    feedback_type: Mapped[str] = mapped_column(String(20), index=True)
+    label: Mapped[str] = mapped_column(String(50))
+    reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vacancy_a_id: Mapped[str | None] = mapped_column(ForeignKey("vacancies.id", ondelete="CASCADE"), nullable=True, index=True)
+    vacancy_b_id: Mapped[str | None] = mapped_column(ForeignKey("vacancies.id", ondelete="CASCADE"), nullable=True, index=True)
+    a_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    b_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    sampling_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    current_rank_at_sampling: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ltr_rank_at_sampling: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    current_score_at_sampling: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ltr_score_at_sampling: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

@@ -1,12 +1,13 @@
 """Annotation API endpoints for human feedback collection.
 
 Endpoints:
-    GET  /v1/annotation/discover       - List users + resumes for UI dropdowns
-    GET  /v1/annotation/queue          - Active learning review queue
-    POST /v1/annotation/pointwise      - Submit pointwise feedback
-    POST /v1/annotation/pairwise       - Submit pairwise feedback
-    GET  /v1/annotation/stats          - Annotation statistics
-    GET  /v1/annotation/readiness      - Dataset readiness
+    GET  /v1/annotation/discover            - List users + resumes for UI dropdowns
+    GET  /v1/annotation/queue               - Active learning review queue (pairwise)
+    GET  /v1/annotation/pointwise-sample    - Stratified pointwise sampling queue
+    POST /v1/annotation/pointwise           - Submit pointwise feedback
+    POST /v1/annotation/pairwise            - Submit pairwise feedback
+    GET  /v1/annotation/stats               - Annotation statistics
+    GET  /v1/annotation/readiness           - Dataset readiness
 
 All endpoints require x-api-key header (existing auth pattern).
 Ownership verified via CvFileRow.user_id.
@@ -22,8 +23,10 @@ from sqlalchemy.orm import Session
 
 from app.matching.cross_encoder.annotation import (
     AnnotationQueue,
+    AnnotationQueueItem,
     AnnotationStats,
     DatasetReadiness,
+    FeedbackResponse,
     get_annotation_queue,
     get_annotation_stats,
     get_dataset_readiness,
@@ -31,7 +34,6 @@ from app.matching.cross_encoder.annotation import (
     submit_pointwise,
 )
 from app.matching.cross_encoder.features import FeatureExtractor, MatchFeatures
-from app.matching.cross_encoder.feedback import FeedbackResponse
 from app.matching.cross_encoder.normalization import ScoreNormalizer
 from app.storage.database import session_scope
 
@@ -122,6 +124,53 @@ class PairwiseSubmitRequest(BaseModel):
     a_reasons: list[str] = Field(default_factory=list)
     b_reasons: list[str] = Field(default_factory=list)
     comment: str | None = Field(default=None, max_length=2000)
+
+
+# ── Pointwise Sample endpoint ──────────────────────────────────────────
+
+@router.get("/pointwise-sample", response_model=AnnotationQueue)
+def get_pointwise_sample(
+    user_id: str = Query(..., min_length=1),
+    resume_id: str = Query(..., min_length=1),
+    limit: int = Query(default=100, ge=1, le=200),
+    session: Session = Depends(session_scope),
+) -> AnnotationQueue:
+    """Get stratified pointwise annotation sample for a resume.
+
+    Returns up to 100 vacancies sampled from five strata:
+    - current_top (20): top by existing ranking
+    - ltr_top (20): top by LTR ranking
+    - rank_disagreement (30): largest rank disagreement
+    - middle_rank (20): middle of ranking
+    - random (10): random from remaining
+
+    Excludes already pointwise-annotated vacancies.
+    Pairwise-only annotated vacancies remain eligible.
+    Sampling is deterministic (seed=42).
+    """
+    from app.storage.tables import CvFileRow
+    import json as _json
+
+    # Load features from DB (reuse existing data)
+    features_list = _load_features_for_resume(session, user_id, resume_id)
+    vacancy_meta = _load_vacancy_meta(session)
+
+    # Load resume text and skills from DB
+    cv = session.query(CvFileRow).filter(CvFileRow.id == resume_id).first()
+    resume_text = cv.experience_summary if cv else ""
+    resume_skills = []
+    if cv and cv.skills:
+        try:
+            resume_skills = _json.loads(cv.skills) if isinstance(cv.skills, str) else list(cv.skills)
+        except (TypeError, _json.JSONDecodeError):
+            resume_skills = []
+
+    return get_annotation_queue(
+        session, user_id, resume_id, features_list,
+        limit=limit, vacancy_meta=vacancy_meta,
+        resume_text=resume_text or "",
+        resume_skills=resume_skills,
+    )
 
 
 # ── Queue endpoint ─────────────────────────────────────────────────────
@@ -254,7 +303,7 @@ def _load_features_for_resume(
     vacancies_path = Path("data/matching/vacancies.json")
 
     if not corpus_path.exists():
-        return []
+        return _load_features_from_db(session, user_id, resume_id)
 
     # Load corpus
     corpus = []
@@ -367,3 +416,78 @@ def _load_vacancy_meta(session: Session) -> dict[str, dict]:
                 except json.JSONDecodeError:
                     pass
     return meta
+
+def _load_features_from_db(
+    session: Session, user_id: str, resume_id: str
+) -> list[MatchFeatures]:
+    """Load features for a resume by building from database.
+
+    Fallback when pre-computed corpus files are not available.
+    """
+    from collections import defaultdict
+    from sqlalchemy import select
+    from app.storage.tables import (
+        ApplicationMatchResultRow,
+        ApplicationRow,
+        VacancyRow,
+        RequirementMatchRow,
+    )
+
+    # Get match results for this resume
+    stmt = (
+        select(ApplicationMatchResultRow, ApplicationRow, VacancyRow)
+        .join(ApplicationRow, ApplicationMatchResultRow.application_id == ApplicationRow.id)
+        .join(VacancyRow, ApplicationRow.vacancy_id == VacancyRow.id)
+        .where(ApplicationRow.selected_cv_file_id == resume_id)
+    )
+    results = session.execute(stmt).all()
+    if not results:
+        return []
+
+    # Build existing scores from DB
+    existing_scores: dict[str, dict] = {}
+    vacancy_meta: dict[str, dict] = {}
+    vacancy_ids = []
+    for match_result, application, vacancy in results:
+        key = f"{resume_id}|{vacancy.id}"
+        existing_scores[key] = {
+            "match_score": match_result.final_score,
+            "reranker_score": getattr(match_result, "reranker_score", None),
+            "semantic_similarity": getattr(match_result, "semantic_similarity", None),
+        }
+        vacancy_meta[vacancy.id] = {
+            "id": vacancy.id,
+            "title": vacancy.title,
+            "company": vacancy.company,
+            "location": vacancy.location,
+            "description_text": vacancy.description_text,
+            "required_skills": vacancy.required_skills or [],
+            "preferred_skills": vacancy.preferred_skills or [],
+            "salary_text": vacancy.salary_text,
+            "work_format": vacancy.work_format,
+            "employment_types": vacancy.employment_types or [],
+        }
+        vacancy_ids.append(vacancy.id)
+
+
+    # No requirement matches available from DB without complex joins
+    req_by_vacancy: dict[str, list[dict]] = defaultdict(list)
+
+    # No CE scores available from DB
+    ce_scores: dict[str, dict[str, float]] = {}
+
+    # Create extractor
+    extractor = FeatureExtractor(
+        requirement_matches=req_by_vacancy,
+        existing_scores=existing_scores,
+        vacancy_meta=vacancy_meta,
+        cross_encoder_scores=ce_scores,
+    )
+
+    # Extract features for each vacancy
+    features_list = []
+    for match_result, application, vacancy in results:
+        feat = extractor.extract(resume_id, vacancy.id)
+        features_list.append(feat)
+
+    return features_list
