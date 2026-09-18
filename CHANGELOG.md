@@ -7,6 +7,11 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Matching A/B replay and hybrid routing (off by default)**: replay harness (quality + p50/p95
+  latency, throughput, CPU, memory, verdicts), data-driven LLM-share margin curve, `hybrid_rank` with
+  baseline/cheap fallbacks behind `APP_MATCHING_HYBRID_ROUTING`, and `scripts/matching_ab.py`.
+  No benchmark has been run yet (no human labels); ONNX/INT8 is not measured.
+
 - **Learning-to-rank tooling (shadow only, off by default)**: metrics (NDCG@10, Recall@10, MRR,
   Precision@10), a pure-Python logistic baseline, optional LightGBM LambdaMART, a benchmark against
   the production score on frozen folds, versioned feature schema and model artifacts, guards

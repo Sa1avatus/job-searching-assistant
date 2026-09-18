@@ -174,6 +174,6 @@ Stage 4 runs alongside it.
 | 2A | done (migration 0043, `/v1/annotation/*` mounted, 25+ regression tests) |
 | 2B | tooling done (migration 0044: annotation workflow UI, pair queue, leakage-safe folds, freezable eval split, coverage report). **The 200-300 human labels themselves are not collected: that is human work and gates 3A/3B** |
 | 3A | tooling done: metrics, logistic baseline, optional LambdaMART, benchmark vs current pipeline on frozen folds, versioned feature schema, guarded training, shadow-only inference behind `APP_LTR_ENABLED`. **No model is trained and no benchmark exists: there are no human labels yet** |
-| 3B | not started (needs a trained challenger) |
+| 3B | tooling done: replay harness, margin-curve routing, `hybrid_rank` with fallbacks behind `APP_MATCHING_HYBRID_ROUTING`, `scripts/matching_ab.py`. **No benchmark/A-B result and no ONNX/INT8 measurement exist** (no labels, no cross-encoder artifact, no onnxruntime) |
 | 4A / 4B | not started |
 | 5A / 5B | not started |

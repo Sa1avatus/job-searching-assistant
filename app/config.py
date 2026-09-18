@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     ltr_enabled: bool = False
     ltr_model_path: Path = Path("models/ltr/current.json")
     ltr_allow_provisional: bool = False
+    # Hybrid routing (cheap ranker first, LLM only near the shortlist boundary): off by default.
+    matching_hybrid_routing_enabled: bool = False
+    matching_llm_margin: float | None = Field(default=None, ge=0)
+    matching_llm_max_share: float = Field(default=0.3, gt=0, le=1)
     matching_v2_shadow_mode: bool = True
     matching_v2_fallback_enabled: bool = True
     matching_model_service_url: str = "http://localhost:8090"
