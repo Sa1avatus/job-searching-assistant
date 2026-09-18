@@ -66,3 +66,23 @@ The following require explicit user approval and are not routine verification:
 
 Never claim external compatibility from fixture tests alone. Record the date, account scope, and
 exact read-only or mutating boundary when an authorized live check is performed.
+
+## Session lifecycle (state machine)
+
+Each user/site pair has an explicit state stored in `browser_session_states` (migration 0042) and
+defined in `app/domain/browser_session_state.py`; the dashboard renders it instead of inferring
+login status.
+
+`DISCONNECTED -> AUTHENTICATING` (login started) `-> AUTHENTICATED` (capture saved) `-> READY` (the
+site confirmed the session; `last_verified_at` is set). A failed verification goes `EXPIRED ->
+REAUTH_REQUIRED`; an abandoned or vanished login window goes to `LOGIN_REQUIRED`, except that a user
+who already had a working capture keeps it.
+
+- `confirm` is only accepted while `AUTHENTICATING`; otherwise the API answers 409 with
+  `{code, message, state, recovery}` and the dashboard re-reads the real state. There are no blind
+  retries.
+- A worker that cannot be reached leaves the state untouched (unknown is not "not waiting"); a
+  window seen as gone is only dropped after a 15 s grace period.
+- Sessions captured before this table existed are bootstrapped from `browser_sessions`
+  (`available` -> `AUTHENTICATED`, `expired`/`corrupted` -> `REAUTH_REQUIRED`).
+- State is per user; another user's session never affects it.

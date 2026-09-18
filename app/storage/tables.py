@@ -826,6 +826,27 @@ class BrowserSessionRow(Base):
     )
 
 
+class BrowserSessionStateRow(Base):
+    """Lifecycle state of a user's login on one site (see app/domain/browser_session_state.py).
+
+    Kept apart from ``browser_sessions`` (which owns the encrypted credential file) so a
+    state exists before, and independently of, any stored credential.
+    """
+
+    __tablename__ = "browser_session_states"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    site_key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    state: Mapped[str] = mapped_column(String(30), index=True)
+    last_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class TaskTransitionRow(Base):
     __tablename__ = "task_transitions"
 

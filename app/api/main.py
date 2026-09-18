@@ -136,6 +136,7 @@ from app.browser.session_store import InvalidBrowserState, delete_browser_state_
 from app.config import Settings, get_settings
 from app.domain.autofill_keys import InvalidAutofillKey
 from app.domain.autofill_sensitivity import evaluate_autofill_usage
+from app.domain.browser_session_state import BrowserSessionEvent, BrowserSessionState
 from app.domain.effective_values import (
     EffectiveValueBlocked,
     EffectiveValueCandidate,
@@ -196,6 +197,7 @@ from app.services.browser_authorization import (
     BrowserAuthorizationSite,
 )
 from app.services.browser_handoff import create_browser_handoff
+from app.services.browser_session_state import BrowserSessionStateService, SessionSnapshot
 from app.services.browser_worker_client import BrowserWorkerClient
 from app.services.company_blacklist import CompanyBlacklistService
 from app.services.email_classification import EmailClassifier
@@ -1706,12 +1708,30 @@ def _worker_http_error(error: httpx.HTTPStatusError) -> HTTPException:
     return HTTPException(status_code=error.response.status_code, detail=str(detail))
 
 
-async def _browser_login_is_waiting(user_id: str, site_key: str) -> bool:
+async def _browser_login_waiting_status(user_id: str, site_key: str) -> bool | None:
+    """Whether the worker still holds a login window; None if the worker cannot be asked."""
     try:
         client = BrowserWorkerClient(get_settings().browser_worker_url)
         return await client.login_is_waiting(user_id=user_id, site_key=site_key)
-    except Exception:
-        return False
+    except Exception as error:  # noqa: BLE001 - reported as unknown, never as "not waiting"
+        logger.warning(
+            "browser_worker_login_status_unavailable",
+            site_key=site_key,
+            error_type=type(error).__name__,
+        )
+        return None
+
+
+def _session_state_conflict(snapshot: SessionSnapshot, message: str, code: str) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": code,
+            "message": message,
+            "state": snapshot.state.value,
+            "recovery": snapshot.recovery_hint,
+        },
+    )
 
 
 @app.get(
@@ -2097,6 +2117,7 @@ async def get_browser_session_statuses(
         *((row.site_key, row.name, True) for row in custom_sites),
     ]
     statuses: list[BrowserSessionStatusResponse] = []
+    state_service = BrowserSessionStateService(session)
     for site_key, site_name, is_custom in sites:
         row = session.scalar(
             select(BrowserSessionRow).where(
@@ -2104,12 +2125,25 @@ async def get_browser_session_statuses(
                 BrowserSessionRow.site_key == site_key,
             )
         )
-        is_authorized = False
+        snapshot = state_service.reconcile_waiting(
+            user_id,
+            site_key,
+            worker_is_waiting=await _browser_login_waiting_status(
+                user_id=user_id, site_key=site_key
+            ),
+        )
         session_probe = None
-        if row is not None and row.status in {"available", "active"}:
+        if row is not None and snapshot.is_authorized:
             try:
                 stored_state = store.load(row.encrypted_state_path)
-                is_authorized = True
+            except InvalidBrowserState:
+                snapshot = state_service.apply(
+                    user_id,
+                    site_key,
+                    BrowserSessionEvent.STATE_CORRUPTED,
+                    error="The saved session file cannot be read",
+                )
+            else:
                 if probe and site_key in KNOWN_AUTHORIZATION_SITES:
                     session_probe = await probe_browser_session(
                         site_key=site_key,
@@ -2118,21 +2152,26 @@ async def get_browser_session_statuses(
                         timeout_ms=settings.browser_timeout_ms,
                         artifact_directory=settings.artifact_directory,
                     )
-                    if session_probe.is_live is False:
-                        is_authorized = False
-                        row.status = "expired"
-                        session.commit()
-            except InvalidBrowserState:
-                is_authorized = False
+                    if session_probe.is_live is not None:
+                        snapshot = state_service.record_verification(
+                            user_id, site_key, is_live=session_probe.is_live
+                        )
+                        if not session_probe.is_live:
+                            row.status = "expired"
+                            session.commit()
         statuses.append(
             BrowserSessionStatusResponse(
                 site_key=site_key,
                 site_name=site_name,
                 is_custom=is_custom,
-                is_authorized=is_authorized,
-                is_waiting_for_login=await _browser_login_is_waiting(
-                    user_id=user_id, site_key=site_key
+                is_authorized=snapshot.is_authorized,
+                is_waiting_for_login=snapshot.is_waiting_for_login,
+                state=snapshot.state.value,
+                last_verified_at=(
+                    snapshot.last_verified_at.isoformat() if snapshot.last_verified_at else None
                 ),
+                last_error=snapshot.last_error,
+                recovery_hint=snapshot.recovery_hint,
                 last_url=row.last_url if row is not None else None,
                 updated_at=row.updated_at.isoformat() if row is not None else None,
                 is_live=session_probe.is_live if session_probe is not None else None,
@@ -2163,6 +2202,7 @@ async def start_browser_authorization(
     if session.get(UserRow, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
     site = _authorization_site(session, user_id=user_id, site_key=site_key)
+    state_service = BrowserSessionStateService(session)
     client = BrowserWorkerClient(settings.browser_worker_url)
     try:
         await client.login_start(
@@ -2171,12 +2211,16 @@ async def start_browser_authorization(
             site=_authorization_site_payload(site),
         )
     except httpx.HTTPStatusError as error:
+        if error.response.status_code == 409:
+            # the worker already holds a window: that is the truth, reflect it
+            state_service.apply(user_id, site_key, BrowserSessionEvent.LOGIN_STARTED)
         raise _worker_http_error(error) from error
     except httpx.HTTPError as error:
         raise HTTPException(
             status_code=502,
             detail="Браузерный воркер недоступен. Запустите browser-worker (--profile browser)",
         ) from error
+    state_service.apply(user_id, site_key, BrowserSessionEvent.LOGIN_STARTED)
     return BrowserAuthorizationResponse(site_key=site_key, state="waiting_for_login")
 
 
@@ -2192,8 +2236,17 @@ async def confirm_browser_authorization(
     if session.get(UserRow, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
     _authorization_site(session, user_id=user_id, site_key=site_key)
+    state_service = BrowserSessionStateService(session)
+    snapshot = state_service.current(user_id, site_key)
+    if snapshot.state is not BrowserSessionState.AUTHENTICATING:
+        raise _session_state_conflict(
+            snapshot,
+            "There is no login in progress to confirm for this site.",
+            "session_not_authenticating",
+        )
     adapter_name = site_key if site_key in KNOWN_AUTHORIZATION_SITES else "generic"
-    client = BrowserWorkerClient(get_settings().browser_worker_url)
+    settings = get_settings()
+    client = BrowserWorkerClient(settings.browser_worker_url)
     try:
         await client.login_confirm(
             user_id=user_id,
@@ -2204,7 +2257,42 @@ async def confirm_browser_authorization(
         raise _worker_http_error(error) from error
     except httpx.HTTPError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+    state_service.apply(user_id, site_key, BrowserSessionEvent.LOGIN_CONFIRMED)
+    if site_key in KNOWN_AUTHORIZATION_SITES:
+        await _verify_captured_session(session, state_service, user_id, site_key, settings)
     return BrowserAuthorizationResponse(site_key=site_key, state="authorized")
+
+
+async def _verify_captured_session(
+    session: Session,
+    state_service: BrowserSessionStateService,
+    user_id: str,
+    site_key: str,
+    settings: Settings,
+) -> None:
+    """Probe a freshly captured session so the state becomes READY only when the site agrees."""
+    row = session.scalar(
+        select(BrowserSessionRow).where(
+            BrowserSessionRow.user_id == user_id, BrowserSessionRow.site_key == site_key
+        )
+    )
+    if row is None:
+        return
+    try:
+        stored_state = create_session_store(settings).load(row.encrypted_state_path)
+        probe = await probe_browser_session(
+            site_key=site_key,
+            state=stored_state,
+            headless=settings.browser_headless,
+            timeout_ms=settings.browser_timeout_ms,
+            artifact_directory=settings.artifact_directory,
+        )
+    except (InvalidBrowserState, RuntimeError) as error:
+        logger.warning("browser_session_verification_skipped", error_type=type(error).__name__)
+        return
+    if probe.is_live is None:
+        return  # inconclusive: stay AUTHENTICATED, the next probe decides
+    state_service.record_verification(user_id, site_key, is_live=probe.is_live)
 
 
 @app.post(
@@ -2222,6 +2310,9 @@ async def cancel_browser_authorization(
     client = BrowserWorkerClient(get_settings().browser_worker_url)
     with suppress(httpx.HTTPError):
         await client.login_cancel(user_id=user_id, site_key=site_key)
+    state_service = BrowserSessionStateService(session)
+    if state_service.current(user_id, site_key).state is BrowserSessionState.AUTHENTICATING:
+        state_service.cancel_login(user_id, site_key)
     return BrowserAuthorizationResponse(site_key=site_key, state="cancelled")
 
 

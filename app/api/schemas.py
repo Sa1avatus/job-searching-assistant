@@ -592,6 +592,10 @@ class BrowserSessionStatusResponse(BaseModel):
     is_authorized: bool
     is_live: bool | None = None
     is_waiting_for_login: bool
+    state: str = "DISCONNECTED"
+    last_verified_at: str | None = None
+    last_error: str | None = None
+    recovery_hint: str = ""
     last_url: str | None = None
     updated_at: str | None = None
     checked_at: str | None = None

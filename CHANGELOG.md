@@ -7,6 +7,11 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Browser session state machine** (migration 0042): DISCONNECTED, LOGIN_REQUIRED, AUTHENTICATING,
+  AUTHENTICATED, READY, EXPIRED, REAUTH_REQUIRED with `last_verified_at`. Status responses gain
+  `state`, `last_verified_at`, `last_error`, `recovery_hint`; confirm outside a login answers a
+  structured 409 instead of failing in the worker; READY needs a successful site probe.
+
 - **User search preferences** (migration 0041, `GET|PUT /v1/users/{id}/preferences`, dashboard panel):
   minimum salary, preferred locations, work formats and employment types. Mismatches are shown as
   application warnings; they never hide vacancies or change scores.

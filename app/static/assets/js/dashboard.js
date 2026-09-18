@@ -1379,6 +1379,23 @@ function ensureBrowserSessionCard(session) {
   return card;
 }
 
+const BROWSER_SESSION_STATE_LABELS = {
+  DISCONNECTED: 'Не подключено',
+  LOGIN_REQUIRED: 'Нужен вход',
+  AUTHENTICATING: 'Ожидаем вход',
+  AUTHENTICATED: 'Сессия сохранена, проверяем',
+  READY: 'Готово',
+  EXPIRED: 'Сессия истекла',
+  REAUTH_REQUIRED: 'Нужна повторная авторизация',
+};
+
+function browserSessionState(session) {
+  // The backend state machine is authoritative; the flags only cover payloads without it.
+  if (session.state) return session.state;
+  if (session.is_waiting_for_login) return 'AUTHENTICATING';
+  return session.is_authorized ? 'AUTHENTICATED' : 'DISCONNECTED';
+}
+
 function renderBrowserSessionStatus(session) {
   browserSessionStatuses[session.site_key] = session;
   const site = session.site_key;
@@ -1389,33 +1406,35 @@ function renderBrowserSessionStatus(session) {
   const confirmButton = card.querySelector('[data-action="confirm"]');
   const cancelButton = card.querySelector('[data-action="cancel"]');
   const label = browserSiteLabel(site);
-  status.classList.toggle('authorized', session.is_authorized);
-  if (session.is_waiting_for_login) {
-    status.textContent = 'Ожидаем вход';
+  const state = browserSessionState(session);
+  const waiting = state === 'AUTHENTICATING';
+  const usable = state === 'READY' || state === 'AUTHENTICATED';
+  const verifiedAt = session.last_verified_at
+    ? new Date(session.last_verified_at).toLocaleString('ru-RU')
+    : null;
+  status.classList.toggle('authorized', usable);
+  status.dataset.state = state;
+  status.textContent = BROWSER_SESSION_STATE_LABELS[state] || state;
+  confirmButton.hidden = !waiting;
+  cancelButton.hidden = !waiting;
+  loginButton.hidden = waiting;
+  if (waiting) {
     details.textContent = 'Завершите вход в открытом окне, затем сохраните сессию.';
-    loginButton.hidden = true;
-    confirmButton.hidden = false;
-    cancelButton.hidden = false;
-  } else if (session.is_authorized) {
-    status.textContent = 'Авторизовано';
+  } else if (state === 'READY') {
+    details.textContent = verifiedAt
+      ? `Сайт подтвердил сессию ${verifiedAt}.`
+      : 'Сайт подтвердил сессию.';
+    loginButton.textContent = `Войти заново в ${label}`;
+  } else if (state === 'AUTHENTICATED') {
     details.textContent = session.check_error
       ? `Сессия сохранена, но сейчас не удалось проверить сайт: ${session.check_error}.`
-      : session.updated_at
-      ? `Сессия сохранена ${new Date(session.updated_at).toLocaleString('ru-RU')}. Если сайт попросит войти снова, повторите авторизацию.`
-      : 'Зашифрованная сессия сохранена.';
+      : 'Зашифрованная сессия сохранена; проверка сайтом ещё не выполнялась.';
     loginButton.textContent = `Войти заново в ${label}`;
-    loginButton.hidden = false;
-    confirmButton.hidden = true;
-    cancelButton.hidden = true;
   } else {
-    status.textContent = 'Не авторизовано';
-    details.textContent = session.is_live === false
-      ? `Проверка ${session.checked_at ? new Date(session.checked_at).toLocaleString('ru-RU') : ''} показала, что сайт снова требует вход.`
+    details.textContent = session.last_error
+      ? `${session.last_error}. Нажмите кнопку входа и авторизуйтесь заново.`
       : 'Нажмите кнопку входа — откроется отдельное окно сайта.';
     loginButton.textContent = `Войти в ${label}`;
-    loginButton.hidden = false;
-    confirmButton.hidden = true;
-    cancelButton.hidden = true;
   }
 }
 
@@ -1565,7 +1584,11 @@ document.querySelector('#browser-sessions').addEventListener('click', async (eve
       }));
       await loadBrowserSessionStatuses();
       showStatus(`${label}: авторизация сохранена.`);
-    } catch (error) { showError(error); }
+    } catch (error) {
+      showError(error);
+      // a rejected confirm usually means the backend state moved on: show the real state
+      loadBrowserSessionStatuses().catch(refreshError => console.warn(refreshError));
+    }
     finally { button.disabled = false; }
   } else if (action === 'cancel') {
     try {
