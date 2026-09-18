@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     opensearch_vacancy_write_alias: str = "vacancies-write"
     embedding_dimensions: int = Field(default=384, ge=1, le=65_536)
     matching_v2_enabled: bool = False
+    # Learning-to-rank: shadow mode only, off by default (docs/matching-data-model.md).
+    ltr_enabled: bool = False
+    ltr_model_path: Path = Path("models/ltr/current.json")
+    ltr_allow_provisional: bool = False
     matching_v2_shadow_mode: bool = True
     matching_v2_fallback_enabled: bool = True
     matching_model_service_url: str = "http://localhost:8090"

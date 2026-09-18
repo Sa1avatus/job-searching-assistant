@@ -35,7 +35,7 @@ from app.matching.cross_encoder.annotation import (
     get_annotation_stats,
     get_dataset_readiness,
     get_pair_queue,
-    resume_match_results_statement,
+    load_features_from_db,
     submit_pairwise,
     submit_pointwise,
 )
@@ -651,65 +651,5 @@ def _load_vacancy_meta(session: Session) -> dict[str, dict]:
 
 
 def _load_features_from_db(session: Session, user_id: str, resume_id: str) -> list[MatchFeatures]:
-    """Load features for a resume by building from database.
-
-    Fallback when pre-computed corpus files are not available.
-    """
-    from collections import defaultdict
-
-    # Same pool the queue ranks (scored results of this user's resume)
-    results = [
-        (match_result, application, vacancy)
-        for match_result, vacancy, application in session.execute(
-            resume_match_results_statement(session, user_id, resume_id)
-        ).all()
-    ]
-    if not results:
-        return []
-
-    # Build existing scores from DB
-    existing_scores: dict[str, dict] = {}
-    vacancy_meta: dict[str, dict] = {}
-    vacancy_ids = []
-    for match_result, application, vacancy in results:
-        key = f"{resume_id}|{vacancy.id}"
-        existing_scores[key] = {
-            "match_score": match_result.final_score,
-            "reranker_score": getattr(match_result, "reranker_score", None),
-            "semantic_similarity": getattr(match_result, "semantic_similarity", None),
-        }
-        vacancy_meta[vacancy.id] = {
-            "id": vacancy.id,
-            "title": vacancy.title,
-            "company": vacancy.company,
-            "location": vacancy.location,
-            "description_text": vacancy.description_text,
-            "required_skills": vacancy.required_skills or [],
-            "preferred_skills": vacancy.preferred_skills or [],
-            "salary_text": vacancy.salary_text,
-            "work_format": vacancy.work_format,
-            "employment_types": vacancy.employment_types or [],
-        }
-        vacancy_ids.append(vacancy.id)
-
-    # No requirement matches available from DB without complex joins
-    req_by_vacancy: dict[str, list[dict]] = defaultdict(list)
-
-    # No CE scores available from DB
-    ce_scores: dict[str, dict[str, float]] = {}
-
-    # Create extractor
-    extractor = FeatureExtractor(
-        requirement_matches=req_by_vacancy,
-        existing_scores=existing_scores,
-        vacancy_meta=vacancy_meta,
-        cross_encoder_scores=ce_scores,
-    )
-
-    # Extract features for each vacancy
-    features_list = []
-    for match_result, application, vacancy in results:
-        feat = extractor.extract(resume_id, vacancy.id)
-        features_list.append(feat)
-
-    return features_list
+    """Features for the annotation pool (shared with LTR training via the matching module)."""
+    return load_features_from_db(session, user_id, resume_id)

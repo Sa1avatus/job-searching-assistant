@@ -173,6 +173,7 @@ Stage 4 runs alongside it.
 | 1A / 1B / 1C | done (commits 0957b0a, e0cfd3c, 5fc1dec): canonical vacancy identity + blacklist on new applications (migration 0040), user preferences (0041), browser session state machine (0042). Applied to the persistent DB, which is at 0042 |
 | 2A | done (migration 0043, `/v1/annotation/*` mounted, 25+ regression tests) |
 | 2B | tooling done (migration 0044: annotation workflow UI, pair queue, leakage-safe folds, freezable eval split, coverage report). **The 200-300 human labels themselves are not collected: that is human work and gates 3A/3B** |
-| 3A / 3B | not started |
+| 3A | tooling done: metrics, logistic baseline, optional LambdaMART, benchmark vs current pipeline on frozen folds, versioned feature schema, guarded training, shadow-only inference behind `APP_LTR_ENABLED`. **No model is trained and no benchmark exists: there are no human labels yet** |
+| 3B | not started (needs a trained challenger) |
 | 4A / 4B | not started |
 | 5A / 5B | not started |

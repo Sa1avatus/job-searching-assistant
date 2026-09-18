@@ -7,6 +7,13 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Learning-to-rank tooling (shadow only, off by default)**: metrics (NDCG@10, Recall@10, MRR,
+  Precision@10), a pure-Python logistic baseline, optional LightGBM LambdaMART, a benchmark against
+  the production score on frozen folds, versioned feature schema and model artifacts, guards
+  (frozen split + ready dataset, provisional models refused, test fold only on an explicit final
+  run) and `scripts/ltr_pipeline.py`. `APP_LTR_ENABLED`/`APP_LTR_MODEL_PATH`/`APP_LTR_ALLOW_PROVISIONAL`
+  settings; shadow runs write only `ltr_*` columns.
+
 - **Human annotation workflow and dataset** (migration 0044): dashboard panel «Разметка»
   (pointwise queue, head-to-head pair queue, reasons, confidence; system ranks hidden from the
   reviewer), leakage-safe group folds, freezable evaluation splits, fold-tagged reproducible export

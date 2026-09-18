@@ -92,3 +92,30 @@ deliberately not shown to the reviewer; they are stored with the label as sampli
 
 Collecting the labels is human work: nothing here generates labels, and LTR training (stage 3) must
 not start before `ready` is true.
+
+## Learning to rank (shadow only)
+
+Code: `app/matching/ltr/` (metrics, rankers, benchmark, artifact schema) and
+`app/services/ltr_training.py`; CLI: `scripts/ltr_pipeline.py`. **Production ranking is unchanged**:
+`APP_LTR_ENABLED` defaults to false and even when enabled LTR only fills the shadow columns
+(`ltr_score`, `ltr_status='shadow'`, `ltr_rank`, `rank_delta`, `ltr_topk_overlap`) of
+`application_match_results`.
+
+- **Gate.** Training needs a frozen split (see the annotation dataset section) and a dataset the
+  coverage report calls `ready`. `--allow-incomplete` produces a *provisional* artifact that inference
+  refuses (`APP_LTR_ALLOW_PROVISIONAL=true` overrides, for experiments only).
+- **Leakage.** Fit on the `train` fold, report on the frozen `validation` fold; the `test` fold is
+  scored only with `--final-test` and the artifact records that it was.
+- **Feature schema.** `FEATURE_SCHEMA_VERSION` plus a hash of the ordered feature names is stored in
+  every artifact; a mismatch refuses to load instead of scoring with shifted columns. Missing
+  features stay `None` (imputed with the train mean), never a silent 0.
+- **Models.** `logistic_regression` (pure Python, soft graded targets) is the baseline; `lambdamart`
+  (LightGBM, optional `ltr` extra) is benchmarked when installed. Only the logistic artifact is
+  wired to shadow scoring so far.
+- **Benchmark.** NDCG@10, Recall@10, MRR, Precision@10 per ranker against the current pipeline's
+  score on the same frozen fold. A challenger is `challenger_beats_baseline` only with a positive
+  NDCG@10 lead on at least 2 groups / 50 items; otherwise `insufficient_evidence` or
+  `baseline_holds`. Undefined metrics (a group with no relevant item) are None, not 0.
+
+No model has been trained on real data yet: there are no human labels (see the annotation section),
+so there is no benchmark result and the production default stays as it is.

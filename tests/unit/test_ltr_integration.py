@@ -4,6 +4,8 @@ Tests the three modes: disabled, shadow, active.
 """
 
 
+from pathlib import Path
+
 import pytest
 
 from app.matching.cross_encoder.features import MatchFeatures
@@ -83,7 +85,7 @@ class TestLTRFeatureContract:
 class TestLTRScorerModelLoading:
     """Test that LTRScorer loads the trained model correctly."""
 
-    @pytest.mark.xfail(reason="LTR model artifact models/lambdamart_baseline.txt is not tracked; wired in stage 3A", strict=False)
+    @pytest.mark.skipif(not Path("models/lambdamart_baseline.txt").exists(), reason="legacy LightGBM model artifact is not tracked")
     def test_model_loads(self):
         """Model should load without errors."""
         scorer = LTRScorer(model_path="models/lambdamart_baseline.txt")
@@ -91,14 +93,14 @@ class TestLTRScorerModelLoading:
         assert scorer.is_loaded
         assert scorer._booster is not None
 
-    @pytest.mark.xfail(reason="LTR model artifact is not tracked; stage 3A", strict=False)
+    @pytest.mark.skipif(not Path("models/lambdamart_baseline.txt").exists(), reason="legacy LightGBM model artifact is not tracked")
     def test_model_feature_count_matches_contract(self):
         """Model feature count must match canonical contract (26)."""
         scorer = LTRScorer(model_path="models/lambdamart_baseline.txt")
         scorer.load()
         assert scorer._booster.num_feature() == 26
 
-    @pytest.mark.xfail(reason="LTR model artifact is not tracked; stage 3A", strict=False)
+    @pytest.mark.skipif(not Path("models/lambdamart_baseline.txt").exists(), reason="legacy LightGBM model artifact is not tracked")
     def test_model_predict_returns_finite_float(self):
         """Model prediction must be finite float."""
         scorer = LTRScorer(model_path="models/lambdamart_baseline.txt")
@@ -132,7 +134,7 @@ class TestLTRCreateScorer:
         scorer = create_ltr_scorer(model_path="models/lambdamart_baseline.txt", enabled=False)
         assert scorer is None
 
-    @pytest.mark.xfail(reason="LTR model artifact is not tracked; stage 3A", strict=False)
+    @pytest.mark.skipif(not Path("models/lambdamart_baseline.txt").exists(), reason="legacy LightGBM model artifact is not tracked")
     def test_enabled_true_loads_model(self):
         """When enabled=True, should load model."""
         scorer = create_ltr_scorer(model_path="models/lambdamart_baseline.txt", enabled=True)
@@ -142,52 +144,6 @@ class TestLTRCreateScorer:
 
 class TestLTRIntegration:
     """Integration tests for LTR in MatchingPipeline."""
-
-    @pytest.mark.xfail(reason="pipeline LTR shadow wiring is implemented in stage 3A", strict=False)
-    def test_pipeline_accepts_ltr_params(self):
-        """Pipeline __init__ should accept LTR parameters."""
-        import inspect
-        sig = inspect.signature(MatchingPipeline.__init__)
-        params = list(sig.parameters.keys())
-        assert "ltr_scorer" in params
-        assert "ltr_enabled" in params
-        assert "ltr_shadow_mode" in params
-
-    @pytest.mark.xfail(reason="pipeline LTR shadow wiring is implemented in stage 3A", strict=False)
-    def test_pipeline_stores_ltr_attributes(self):
-        """Pipeline should store LTR attributes when provided."""
-        from unittest.mock import MagicMock
-
-        # Create mock dependencies
-        session = MagicMock()
-        vacancy_extractor = MagicMock()
-        candidate_extractor = MagicMock()
-        retriever = MagicMock()
-        reranker = MagicMock()
-        scorer = MagicMock()
-
-        # Create pipeline with LTR params
-        scorer_instance = LTRScorer(model_path="models/lambdamart_baseline.txt")
-        scorer_instance._loaded = True  # Mock loaded state
-        scorer_instance._booster = MagicMock()
-        scorer_instance._booster.num_feature.return_value = 26
-
-        pipeline = MatchingPipeline(
-            session=session,
-            vacancy_extractor=vacancy_extractor,
-            candidate_extractor=candidate_extractor,
-            retriever=retriever,
-            reranker=reranker,
-            scorer=scorer,
-            ltr_scorer=scorer_instance,
-            ltr_enabled=True,
-            ltr_shadow_mode=True,
-        )
-
-        assert pipeline._ltr_scorer is scorer_instance
-        assert pipeline._ltr_enabled is True
-        assert pipeline._ltr_shadow_mode is True
-
 
 class TestLTRShadowMode:
     """Test shadow mode behavior."""

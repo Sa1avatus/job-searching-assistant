@@ -12,3 +12,4 @@ debug.log
 
 # Embedded git worktrees must never be staged
 .worktrees/
+models/ltr/

@@ -493,6 +493,47 @@ def _stratified_sample(
     )
 
 
+def load_features_from_db(session: Session, user_id: str, resume_id: str) -> list[MatchFeatures]:
+    """Build match features for the (user, resume) candidate pool straight from the database.
+
+    Only what the database holds is available (existing pipeline scores and vacancy metadata);
+    cross-encoder scores and requirement matches are absent and stay ``None``, never 0.
+    """
+    from app.matching.cross_encoder.features import FeatureExtractor
+
+    results = session.execute(resume_match_results_statement(session, user_id, resume_id)).all()
+    if not results:
+        return []
+
+    existing_scores: dict[str, dict[str, Any]] = {}
+    vacancy_meta: dict[str, dict[str, Any]] = {}
+    for match_result, vacancy, _application in results:
+        existing_scores[f"{resume_id}|{vacancy.id}"] = {
+            "match_score": match_result.final_score,
+            "reranker_score": getattr(match_result, "reranker_score", None),
+            "semantic_similarity": getattr(match_result, "semantic_similarity", None),
+        }
+        vacancy_meta[vacancy.id] = {
+            "id": vacancy.id,
+            "title": vacancy.title,
+            "company": vacancy.company,
+            "location": vacancy.location,
+            "description_text": vacancy.description_text,
+            "required_skills": vacancy.required_skills or [],
+            "preferred_skills": vacancy.preferred_skills or [],
+            "salary_text": vacancy.salary_text,
+            "work_format": vacancy.work_format,
+            "employment_types": vacancy.employment_types or [],
+        }
+    extractor = FeatureExtractor(
+        requirement_matches={},
+        existing_scores=existing_scores,
+        vacancy_meta=vacancy_meta,
+        cross_encoder_scores={},
+    )
+    return [extractor.extract(resume_id, vacancy.id) for _, vacancy, _ in results]
+
+
 MAX_PAIR_APPEARANCES = 2
 
 
