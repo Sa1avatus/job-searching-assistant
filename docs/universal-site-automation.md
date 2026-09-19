@@ -14,10 +14,39 @@ fields, mappings, overrides, or declarative browser workflows.
 - Multiple semantic locator candidates from form discovery.
 - A closed `WorkflowStepType` enum and an ORM `WorkflowDefinitionRow` foundation.
 
-The current Alembic head is `0023`, which covers site fields, mappings, and overrides. Workflow
+- Search recipes for user-defined sites (migration `0048`): see the next section.
+
+The current Alembic head for the autofill foundation is `0023`, which covers site fields, mappings, and overrides. Workflow
 definition persistence has no migration, and step schemas, execution, activation, rollback,
 recording, visual editing, and dry-run evidence are not complete. Do not document arbitrary-site
 execution as operational yet.
+
+## Search recipes for user-defined sites
+
+A site definition can be searched through a `SearchRecipe` (`app/domain/search_recipe.py`): an HTTPS
+URL template containing `{query}` (and optionally `{location}`) plus plain CSS selectors for the
+result card, the link inside it, the title and the company. It is data, never code.
+
+- **Learning.** `POST .../site-definitions/{id}/search-recipe/learn` takes the URL of a results page
+  the person reached themselves and the query they typed. The worker loads that page (with the saved
+  session, if any), replaces the query in the URL with `{query}`, finds the repeated cards from the
+  shared URL shape of the vacancy links (`app/browser/recipe_learning.py`, stdlib HTML parsing) and
+  proves the result by running the derived recipe. The recipe can also be written by hand
+  (`PUT .../search-recipe/draft`).
+- **Lifecycle.** Drafts never run in discovery. A test run (`POST .../{version}/test`) that returns
+  results marks the version verified; only verified versions can be activated. Activating archives
+  the previous active version, which can be activated again to roll back.
+- **Reading pages.** `app/browser/custom_site.py` uses Playwright locators and `text_content` only.
+  Selectors are validated as plain CSS (engine prefixes, chaining and markup are rejected) and are
+  always evaluated with the `css=` engine. Every start URL, redirect target and result link must be
+  on an exact host from the site's allowlist, otherwise the request is refused.
+- **Vacancy extraction.** schema.org `JobPosting` JSON-LD when present, otherwise the page `h1`, the
+  `og:site_name` meta tag and the main text.
+- **Discovery.** An active recipe makes the site a `custom:<site_key>` source in the discovery
+  stream. Vacancies are stored with adapter `custom` and are review-only: no automatic submission.
+
+Known limits: results that need a POST, an infinite scroll or an in-page click are not covered, and
+the query must appear in the results URL for automatic learning (otherwise write the recipe by hand).
 
 ## Value precedence
 

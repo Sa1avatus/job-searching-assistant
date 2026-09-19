@@ -197,6 +197,40 @@ class SiteDefinitionRow(Base):
     )
 
 
+class SiteSearchRecipeRow(Base):
+    """Versioned declarative search recipe of a user-defined site (drafts never run)."""
+
+    __tablename__ = "site_search_recipes"
+    __table_args__ = (
+        UniqueConstraint("site_definition_id", "version", name="uq_site_search_recipes_version"),
+        CheckConstraint(
+            "status IN ('draft', 'active', 'archived')", name="ck_site_search_recipes_status"
+        ),
+        Index(
+            "uq_site_search_recipes_one_active",
+            "site_definition_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+            sqlite_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    site_definition_id: Mapped[str] = mapped_column(
+        ForeignKey("site_definitions.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int]
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    recipe: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    learned_from_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preview: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
 class WorkflowDefinitionRow(Base):
     __tablename__ = "workflow_definitions"
     __table_args__ = (

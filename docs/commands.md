@@ -123,7 +123,7 @@ docker compose exec -T postgres pg_dump -U recruitment -d recruitment > backup.s
 docker compose --profile browser build
 docker compose --profile browser run --rm --no-deps -T api python -m alembic upgrade head
 docker compose --profile browser up -d
-docker compose exec -T api python -m alembic current   # expect 0047
+docker compose exec -T api python -m alembic current   # expect 0048
 ```
 
 Reports and one-off tools (all default to read-only or a dry run; run them inside the `api`

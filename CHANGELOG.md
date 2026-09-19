@@ -5,6 +5,30 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ## [Unreleased]
 
+### Added
+
+- **Search on user-defined sites.** A site added on the "Сессии сайтов" tab can now be searched.
+  A versioned, declarative search recipe (HTTPS URL template with `{query}`/`{location}` plus plain
+  CSS selectors for the result card, link, title and company) is learned from a results page the
+  person produced themselves - the URL of the page they ended on and what they searched for - or
+  written by hand. A recipe stays a draft until a real test run returns results, then it can be
+  activated (older versions stay for rollback) and the site appears as a search source (`custom:<key>`).
+  Vacancies are read from JSON-LD `JobPosting` when present, otherwise from the page text. Pages are
+  read through Playwright locators only; navigation is limited to the site's approved hosts and no
+  page JavaScript runs (ADR 0003). Custom vacancies are review-only: nothing is submitted
+  automatically. Migration `0048` adds `site_search_recipes`.
+
+### Fixed
+
+- **hh.ru search saved nothing.** `POST /v1/browser/extract-headhunter` declared its request model
+  below the route, so with postponed annotations FastAPI read `request` as a required query
+  parameter and every extraction returned `422`. Both extract models now precede their routes and a
+  contract test covers every POST route of the browser worker.
+- **hh.ru `AttributeError` during discovery.** The browser-worker JSON was wrapped without restoring
+  types, so form fields arrived as dicts and `published_at` as a string. `_ExtractedVacancy` now
+  rebuilds `FormField`, enums, tuples and datetimes. Failed sources are logged with a traceback and
+  the discovery stream reports a readable message for custom-site failures.
+
 ## [2.0.0] - 2026-09-19
 
 Release 2.0 is a rollback-based stabilisation followed by the twelve-stage roadmap in

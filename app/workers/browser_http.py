@@ -14,12 +14,21 @@ from sqlalchemy import select
 
 from adapters.job_boards.headhunter_browser import HeadHunterBrowserAdapter
 from adapters.job_boards.linkedin_browser import LinkedInBrowserAdapter
+from app.browser.custom_site import (
+    CustomSiteError,
+    CustomSiteHit,
+    extract_custom_vacancy,
+    fetch_page_html,
+    search_custom_site,
+)
 from app.browser.engine import PlaywrightEngine
+from app.browser.recipe_learning import RecipeLearningError, infer_url_template, learn_selectors
 from app.browser.selector_library import SelectorLibrary
 from app.browser.session_probe import probe_browser_session
 from app.browser.session_service import BrowserSessionService
 from app.browser.session_store import EncryptedBrowserStateStore, InvalidBrowserState
 from app.config import Settings, get_settings
+from app.domain.search_recipe import InvalidSearchRecipe, SearchRecipe, validate_recipe
 from app.observability.logging import configure_logging
 from app.services.browser_authorization import (
     BrowserAuthorizationError,
@@ -195,6 +204,19 @@ async def browser_search(request: SearchRequest) -> SearchResponse:
     return SearchResponse(hits=hits)
 
 
+# Request models must precede the routes that use them: with `from __future__ import annotations`
+# FastAPI resolves annotations when the decorator runs, and an undefined name silently turns the
+# body parameter into a required query parameter (every call then fails with 422).
+class ExtractHeadhunterRequest(StrictModel):
+    user_id: str
+    url: str
+
+
+class ExtractLinkedinRequest(StrictModel):
+    user_id: str
+    url: str
+
+
 @app.post("/v1/browser/extract-headhunter")
 async def extract_headhunter_vacancy(
     request: ExtractHeadhunterRequest,
@@ -224,16 +246,6 @@ async def extract_headhunter_vacancy(
             "description_text": extracted.description_text,
             "source_url": extracted.source_url,
         }
-
-
-class ExtractHeadhunterRequest(StrictModel):
-    user_id: str
-    url: str
-
-
-class ExtractLinkedinRequest(StrictModel):
-    user_id: str
-    url: str
 
 
 @app.post("/v1/browser/extract-linkedin")
@@ -406,3 +418,133 @@ async def login_cancel(request: LoginCancelRequest) -> dict[str, str]:
 @app.get("/v1/browser/login/status")
 async def login_status(user_id: str, site_key: str) -> dict[str, bool]:
     return {"is_waiting": _auth_manager.is_waiting(user_id=user_id, site_key=site_key)}
+
+
+# --- user-defined sites -------------------------------------------------------------------
+# Request models come first for the reason given above the extract routes.
+
+
+class CustomSiteConfig(StrictModel):
+    site_key: str = Field(min_length=1, max_length=100)
+    allowed_hosts: list[str] = Field(min_length=1, max_length=20)
+
+
+class CustomLearnRequest(StrictModel):
+    user_id: str
+    site: CustomSiteConfig
+    results_url: str = Field(max_length=2000)
+    query: str = Field(min_length=1, max_length=200)
+    location: str = Field(default="", max_length=200)
+
+
+class CustomSearchRequest(StrictModel):
+    user_id: str
+    site: CustomSiteConfig
+    recipe: dict[str, str]
+    search_text: str = Field(min_length=1, max_length=500)
+    locations: list[str] = Field(default_factory=list, max_length=20)
+    limit: int = Field(default=15, ge=1, le=50)
+
+
+class CustomExtractRequest(StrictModel):
+    user_id: str
+    site: CustomSiteConfig
+    url: str = Field(max_length=2000)
+
+
+def _custom_engine(request_user_id: str, site: CustomSiteConfig) -> PlaywrightEngine:
+    """Engine for a user-defined site; the saved sign-in is used when there is one."""
+    settings = _get_settings()
+    return PlaywrightEngine(
+        headless=settings.browser_headless,
+        timeout_ms=settings.browser_timeout_ms,
+        artifact_directory=settings.artifact_directory
+        / "browser-worker"
+        / f"custom-{site.site_key}-{request_user_id}",
+        storage_state=_restore_session(request_user_id, site.site_key),
+        selector_library=_get_selector_library(),
+    )
+
+
+def _custom_error(error: Exception) -> HTTPException:
+    return HTTPException(status_code=422, detail=str(error))
+
+
+def _hit_payload(hit: CustomSiteHit) -> dict[str, str]:
+    return {
+        "source_url": hit.source_url,
+        "title": hit.title,
+        "company": hit.company,
+    }
+
+
+@app.post("/v1/browser/custom/learn")
+async def custom_learn(request: CustomLearnRequest) -> dict[str, object]:
+    """Derive a recipe from a results page the person produced and prove it by running it."""
+    hosts = tuple(request.site.allowed_hosts)
+    try:
+        async with _custom_engine(request.user_id, request.site) as engine:
+            final_url, page_html = await fetch_page_html(engine, request.results_url, hosts)
+            template = infer_url_template(final_url, query=request.query, location=request.location)
+            if template is None:
+                raise RecipeLearningError(
+                    "Запрос не найден в адресе страницы (сайт, вероятно, ищет без "
+                    "параметров в URL). "
+                    "Задайте рецепт вручную"
+                )
+            learned = learn_selectors(page_html, page_url=final_url, allowed_hosts=hosts)
+            recipe = validate_recipe(
+                SearchRecipe(
+                    url_template=template,
+                    card_selector=learned.card_selector,
+                    link_selector=learned.link_selector,
+                    title_selector=learned.title_selector,
+                    company_selector=learned.company_selector,
+                ),
+                hosts,
+            )
+            hits = await search_custom_site(
+                engine,
+                recipe=recipe,
+                allowed_hosts=hosts,
+                query=request.query,
+                location=request.location,
+                limit=10,
+            )
+    except (CustomSiteError, RecipeLearningError, InvalidSearchRecipe) as error:
+        raise _custom_error(error) from error
+    return {
+        "recipe": recipe.to_dict(),
+        "card_count": learned.card_count,
+        "preview": [_hit_payload(hit) for hit in hits],
+    }
+
+
+@app.post("/v1/browser/custom/search")
+async def custom_search(request: CustomSearchRequest) -> dict[str, object]:
+    hosts = tuple(request.site.allowed_hosts)
+    try:
+        recipe = validate_recipe(SearchRecipe.from_dict(request.recipe), hosts)
+        async with _custom_engine(request.user_id, request.site) as engine:
+            hits = await search_custom_site(
+                engine,
+                recipe=recipe,
+                allowed_hosts=hosts,
+                query=request.search_text,
+                location=request.locations[0] if request.locations else "",
+                limit=request.limit,
+            )
+    except (CustomSiteError, InvalidSearchRecipe) as error:
+        raise _custom_error(error) from error
+    return {"hits": [_hit_payload(hit) for hit in hits]}
+
+
+@app.post("/v1/browser/custom/extract")
+async def custom_extract(request: CustomExtractRequest) -> dict[str, object]:
+    try:
+        async with _custom_engine(request.user_id, request.site) as engine:
+            return await extract_custom_vacancy(
+                engine, url=request.url, allowed_hosts=tuple(request.site.allowed_hosts)
+            )
+    except CustomSiteError as error:
+        raise _custom_error(error) from error

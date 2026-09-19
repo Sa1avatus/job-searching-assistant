@@ -1666,6 +1666,206 @@ document.querySelector('#add-site-definition').addEventListener('click', async (
   finally { button.disabled = false; }
 });
 
+// --- search recipes for user-defined sites -------------------------------------------------
+const RECIPE_STATUS_LABELS = {draft: 'Черновик', active: 'Активен', archived: 'В архиве'};
+let customSourceNames = {};
+
+function recipeUrl(suffix = '') {
+  const userId = userIdInput.value.trim();
+  const siteId = document.querySelector('#recipe-site').value;
+  if (!userId) throw new Error('Сначала создайте или укажите User ID');
+  if (!siteId) throw new Error('Выберите сайт');
+  return `/v1/users/${userId}/site-definitions/${siteId}/search-recipe${suffix}`;
+}
+
+function recipeQuery() {
+  const query = document.querySelector('#recipe-query').value.trim();
+  if (!query) throw new Error('Укажите, что вы искали на сайте');
+  return {query, location: document.querySelector('#recipe-location').value.trim()};
+}
+
+function fillManualRecipe(recipe) {
+  document.querySelector('#recipe-url-template').value = recipe.url_template || '';
+  document.querySelector('#recipe-card').value = recipe.card_selector || '';
+  document.querySelector('#recipe-link').value = recipe.link_selector || '';
+  document.querySelector('#recipe-title').value = recipe.title_selector || '';
+  document.querySelector('#recipe-company').value = recipe.company_selector || '';
+  document.querySelector('#recipe-manual').open = true;
+}
+
+function renderRecipeVersion(version) {
+  const card = element('article', undefined, 'session-card');
+  card.append(element('h3', `Версия ${version.version}: ${RECIPE_STATUS_LABELS[version.status] || version.status}`));
+  const recipe = version.recipe;
+  card.append(element('div', `Шаблон: ${recipe.url_template}`, 'task-state'));
+  card.append(element(
+    'div',
+    `Карточка: ${recipe.card_selector} · ссылка: ${recipe.link_selector || 'сама карточка'} · `
+      + `название: ${recipe.title_selector || 'текст ссылки'} · компания: ${recipe.company_selector || '—'}`,
+    'task-state'
+  ));
+  card.append(element(
+    'div',
+    version.verified_at
+      ? `Проверена ${new Date(version.verified_at).toLocaleString('ru-RU')}: найдено ${version.preview.length}.`
+      : 'Не проверена: запустите пробный поиск, чтобы активировать рецепт.',
+    'task-state'
+  ));
+  const list = element('ul');
+  version.preview.slice(0, 5).forEach(hit => {
+    const item = element('li');
+    const label = `${hit.title || hit.source_url}${hit.company ? ` — ${hit.company}` : ''}`;
+    if (/^https:\/\//.test(hit.source_url)) {
+      const link = element('a', label);
+      link.href = hit.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      item.append(link);
+    } else item.textContent = label;
+    list.append(item);
+  });
+  card.append(list);
+  const actions = element('div', undefined, 'actions');
+  const run = async (button, path, body, message) => {
+    button.disabled = true;
+    try {
+      await asJson(await fetch(recipeUrl(path), {
+        method: 'POST', headers: headers(true), body: JSON.stringify(body || {})
+      }));
+      await loadRecipeVersions();
+      await loadCustomSources();
+      showStatus(message);
+    } catch (error) { showError(error); }
+    finally { button.disabled = false; }
+  };
+  const test = element('button', 'Проверить поиск'); test.type = 'button';
+  test.addEventListener('click', () => {
+    let query;
+    try { query = recipeQuery(); } catch (error) { showError(error); return; }
+    run(test, `/${version.version}/test`, query, 'Пробный поиск выполнен.');
+  });
+  actions.append(test);
+  if (version.status !== 'active') {
+    const activate = element('button', version.status === 'archived' ? 'Вернуть эту версию' : 'Активировать', 'primary');
+    activate.type = 'button';
+    activate.disabled = !version.verified_at;
+    activate.addEventListener('click', () => run(activate, `/${version.version}/activate`, null, 'Рецепт активирован: сайт доступен в поиске.'));
+    actions.append(activate);
+  }
+  const edit = element('button', 'Править вручную'); edit.type = 'button';
+  edit.addEventListener('click', () => fillManualRecipe(recipe));
+  actions.append(edit);
+  if (version.status !== 'archived') {
+    const archive = element('button', 'В архив'); archive.type = 'button';
+    archive.addEventListener('click', () => run(archive, `/${version.version}/archive`, null, 'Версия убрана в архив.'));
+    actions.append(archive);
+  }
+  card.append(actions);
+  return card;
+}
+
+async function loadRecipeVersions() {
+  const container = document.querySelector('#recipe-versions');
+  const state = document.querySelector('#recipe-state');
+  container.replaceChildren();
+  if (!document.querySelector('#recipe-site').value) { state.textContent = ''; return; }
+  const versions = await asJson(await fetch(recipeUrl(), {headers: headers(false)}));
+  state.textContent = versions.length ? '' : 'Рецепта пока нет: определите его по странице результатов или задайте вручную.';
+  versions.forEach(version => container.append(renderRecipeVersion(version)));
+}
+
+function prefillRecipeUrl() {
+  const select = document.querySelector('#recipe-site');
+  const site = select.selectedOptions[0]?.dataset.siteKey;
+  const lastUrl = browserSessionStatuses[site]?.last_url;
+  const input = document.querySelector('#recipe-results-url');
+  if (lastUrl && !input.value) input.value = lastUrl;
+}
+
+async function loadRecipeSites(definitions) {
+  const select = document.querySelector('#recipe-site');
+  const previous = select.value;
+  select.replaceChildren(new Option('Выберите сайт', ''));
+  definitions.forEach(definition => {
+    const option = new Option(definition.name, definition.id);
+    option.dataset.siteKey = definition.site_key;
+    select.append(option);
+  });
+  if (definitions.some(definition => definition.id === previous)) select.value = previous;
+  await loadRecipeVersions();
+}
+
+async function loadCustomSources() {
+  const userId = userIdInput.value.trim();
+  const holder = document.querySelector('#custom-source-chips');
+  if (!userId) { holder.replaceChildren(); return; }
+  const checked = new Set(Array.from(holder.querySelectorAll('input:checked')).map(node => node.dataset.customSource));
+  const known = holder.dataset.loaded === 'true';
+  const definitions = await asJson(await fetch(`/v1/users/${userId}/site-definitions`, {headers: headers(false)}));
+  const chips = [];
+  customSourceNames = {};
+  for (const definition of definitions) {
+    const versions = await asJson(await fetch(
+      `/v1/users/${userId}/site-definitions/${definition.id}/search-recipe`, {headers: headers(false)}
+    ));
+    if (!versions.some(version => version.status === 'active')) continue;
+    customSourceNames[`custom:${definition.site_key}`] = definition.name;
+    const label = element('label', undefined, 'chip');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.dataset.customSource = definition.site_key;
+    input.checked = known ? checked.has(definition.site_key) : true;
+    label.append(input, ` ${definition.name}`);
+    chips.push(label);
+  }
+  holder.replaceChildren(...chips);
+  holder.dataset.loaded = 'true';
+}
+
+document.querySelector('#recipe-site').addEventListener('change', () => {
+  prefillRecipeUrl();
+  loadRecipeVersions().catch(showError);
+});
+
+document.querySelector('#recipe-learn').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  try {
+    const {query, location} = recipeQuery();
+    const resultsUrl = document.querySelector('#recipe-results-url').value.trim();
+    if (!resultsUrl) throw new Error('Вставьте адрес страницы с результатами поиска');
+    const url = recipeUrl('/learn');
+    button.disabled = true;
+    document.querySelector('#recipe-state').textContent = 'Открываем страницу и определяем карточки вакансий…';
+    const version = await asJson(await fetch(url, {
+      method: 'POST', headers: headers(true),
+      body: JSON.stringify({results_url: resultsUrl, query, location})
+    }));
+    await loadRecipeVersions();
+    showStatus(`Рецепт определён: найдено вакансий — ${version.preview.length}. Проверьте их и активируйте рецепт.`);
+  } catch (error) {
+    document.querySelector('#recipe-state').textContent = '';
+    showError(error);
+  } finally { button.disabled = false; }
+});
+
+document.querySelector('#recipe-save-draft').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  try {
+    const url = recipeUrl('/draft');
+    button.disabled = true;
+    await asJson(await fetch(url, {
+      method: 'PUT', headers: headers(true), body: JSON.stringify({
+        url_template: document.querySelector('#recipe-url-template').value.trim(),
+        card_selector: document.querySelector('#recipe-card').value.trim(),
+        link_selector: document.querySelector('#recipe-link').value.trim(),
+        title_selector: document.querySelector('#recipe-title').value.trim(),
+        company_selector: document.querySelector('#recipe-company').value.trim()
+      })
+    }));
+    await loadRecipeVersions();
+    showStatus('Черновик сохранён. Запустите «Проверить поиск».');
+  } catch (error) { showError(error); }
+  finally { button.disabled = false; }
+});
+
 const effectiveValueSourceLabels = {
   application_override: 'переопределение отклика',
   site_field_override: 'переопределение поля',
@@ -1686,6 +1886,8 @@ async function loadSiteDefinitionsForFields() {
     selectNode.append(new Option(definition.name, definition.id));
   });
   if (definitions.some(definition => definition.id === previous)) selectNode.value = previous;
+  await loadRecipeSites(definitions);
+  await loadCustomSources();
 }
 
 async function loadEffectiveSiteFieldValue(field, output) {
@@ -2675,7 +2877,7 @@ function renderResult(item) {
   const actions = element('div', undefined, 'actions card-actions');
   const accept = element(
     'button',
-    item.source === 'greenhouse' ? 'Открыть для рассмотрения' : 'Принять и откликнуться',
+    isReviewOnlySource(item.source) ? 'Открыть для рассмотрения' : 'Принять и откликнуться',
     'accept'
   ); accept.type = 'button';
   if (['submitted', 'interview'].includes(item.application_status)) {
@@ -2683,7 +2885,7 @@ function renderResult(item) {
     accept.disabled = true;
   }
   accept.addEventListener('click', async () => {
-    if (item.source === 'greenhouse') {
+    if (isReviewOnlySource(item.source)) {
       window.location.href = `/review?application_id=${encodeURIComponent(item.application_id)}`;
       return;
     }
@@ -2931,7 +3133,7 @@ function normalizeSearchResult(item) {
   if (
     !normalized.application_id || !normalized.vacancy_id || !normalized.title
     || !normalized.source_url || !Number.isFinite(normalized.match_score)
-    || !['headhunter', 'linkedin', 'greenhouse'].includes(source)
+    || !(['headhunter', 'linkedin', 'greenhouse'].includes(source) || String(source).startsWith('custom:'))
     || ['rejected', 'employer_rejected', 'skipped', 'submitted', 'interview'].includes(normalized.application_status)
   ) return null;
   normalized.match_score = Math.max(0, Math.min(100, normalized.match_score));
@@ -3016,6 +3218,9 @@ function restoreSearchResults() {
     return false;
   }
 }
+
+// Sites without a dedicated submission adapter are reviewed and applied to by hand.
+const isReviewOnlySource = source => source === 'greenhouse' || String(source).startsWith('custom:');
 
 const vacancySourceLabels = {
   ru: {
@@ -3670,6 +3875,9 @@ document.querySelector('#search').addEventListener('click', async () => {
     if (document.querySelector('#source-headhunter').checked) sources.push({source: 'headhunter', route: 'discover-headhunter-vacancies', requiresSession: true});
     if (document.querySelector('#source-linkedin').checked) sources.push({source: 'linkedin', route: 'discover-linkedin-vacancies', requiresSession: true});
     if (document.querySelector('#source-greenhouse').checked) sources.push({source: 'greenhouse', route: 'discover-greenhouse-vacancies', requiresSession: false});
+    document.querySelectorAll('#custom-source-chips input:checked').forEach(node => {
+      sources.push({source: `custom:${node.dataset.customSource}`, route: null, requiresSession: false});
+    });
     if (!sources.length) throw new Error('Выберите хотя бы один сайт для поиска');
     await loadBrowserSessionStatuses();
     const missingSessions = sources
@@ -3761,7 +3969,7 @@ document.querySelector('#search').addEventListener('click', async () => {
         persistSearchResults(outcomes);
       } else if (event.event === 'source_error') {
         failures.push(
-          `${vacancySourceLabels[currentLanguage][event.source] || event.source}: ${event.error}`
+          `${vacancySourceLabels[currentLanguage][event.source] || customSourceNames[event.source] || event.source}: ${event.message || event.error}`
         );
         updateSearchProgress();
       } else if (event.event === 'source_complete') {

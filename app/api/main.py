@@ -127,6 +127,7 @@ from app.api.schemas import (
     WorkflowTaskResponse,
     WorkFormat,
 )
+from app.api.site_recipes import router as site_recipes_router
 from app.api.statistics_schemas import (
     ApplicationEmailSyncResponse,
     ApplicationStatisticsResponse,
@@ -203,7 +204,7 @@ from app.services.browser_authorization import (
 )
 from app.services.browser_handoff import create_browser_handoff
 from app.services.browser_session_state import BrowserSessionStateService, SessionSnapshot
-from app.services.browser_worker_client import BrowserWorkerClient
+from app.services.browser_worker_client import BrowserWorkerClient, BrowserWorkerRejected
 from app.services.company_blacklist import CompanyBlacklistService
 from app.services.email_classification import EmailClassifier
 from app.services.email_file_import import (
@@ -214,7 +215,11 @@ from app.services.email_file_import import (
 )
 from app.services.email_integrations import EmailIntegrationService, InvalidEmailIntegration
 from app.services.email_vacancy_matcher import EmailVacancyMatcher
-from app.services.http_adapters import HttpHeadHunterAdapter, HttpLinkedInAdapter
+from app.services.http_adapters import (
+    HttpCustomSiteAdapter,
+    HttpHeadHunterAdapter,
+    HttpLinkedInAdapter,
+)
 from app.services.imap_email_provider import ImapApplicationEmailProvider
 from app.services.job_discovery import (
     DiscoveryOutcome,
@@ -256,6 +261,7 @@ from app.services.site_fields import (
     upsert_site_field_mapping,
     upsert_site_value_override,
 )
+from app.services.site_search_recipes import active_recipe, site_payload
 from app.services.user_preferences import UserPreferencesService
 from app.services.vacancy_catalog import VacancyCatalogService
 from app.services.vacancy_metadata import (
@@ -292,8 +298,13 @@ from app.workers.browser_worker import create_session_store
 
 configure_logging()
 logger = structlog.get_logger(__name__)
+
+
+class CustomSiteSourceError(RuntimeError):
+    """A user-defined site cannot be searched (missing site or no active recipe)."""
 app = FastAPI(title="Job Searching Assistant", version="2.0.0")
 app.include_router(annotation_router)
+app.include_router(site_recipes_router)
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"
 UI_ASSETS_PATH = Path(__file__).parents[1] / "static" / "assets"
@@ -3512,6 +3523,38 @@ async def discover_vacancies_stream(
                             cv_file_id=request.cv_file_id,
                             on_outcome=on_outcome,
                         )
+                elif source.startswith("custom:"):
+                    site_key = source.removeprefix("custom:")
+                    with SessionFactory() as site_session:
+                        site_row = site_session.scalar(
+                            select(SiteDefinitionRow).where(
+                                SiteDefinitionRow.user_id == user_id,
+                                SiteDefinitionRow.site_key == site_key,
+                                SiteDefinitionRow.archived_at.is_(None),
+                            )
+                        )
+                        if site_row is None:
+                            raise CustomSiteSourceError(f"Сайт «{site_key}» не найден")
+                        recipe = active_recipe(site_session, site_row)
+                        if recipe is None:
+                            raise CustomSiteSourceError(
+                                f"У сайта «{site_row.name}» нет активного рецепта поиска"
+                            )
+                        site_config = site_payload(site_row)
+                    await service.discover_custom_site_vacancies(
+                        user_id,
+                        adapter=HttpCustomSiteAdapter(
+                            BrowserWorkerClient(settings.browser_worker_url),
+                            user_id,
+                            site_config,
+                            recipe.to_dict(),
+                        ),
+                        locations=request.locations,
+                        limit=discovery_limit,
+                        search_text=request.search_text,
+                        cv_file_id=request.cv_file_id,
+                        on_outcome=on_outcome,
+                    )
                 else:
                     if source == "linkedin" and not settings.enable_linkedin_apply:
                         raise LinkedInSessionRequiredError(
@@ -3566,9 +3609,15 @@ async def discover_vacancies_stream(
                     for outcome, enrichment in direct_results[: request.limit]:
                         await publish_outcome(source, outcome, enrichment)
         except Exception as error:  # noqa: BLE001 - one source must not end the whole stream
-            await queue.put(
-                {"event": "source_error", "source": source, "error": type(error).__name__}
-            )
+            logger.exception("discovery_source_failed", source=source)
+            failure: dict[str, object] = {
+                "event": "source_error",
+                "source": source,
+                "error": type(error).__name__,
+            }
+            if isinstance(error, CustomSiteSourceError | BrowserWorkerRejected):
+                failure["message"] = str(error)
+            await queue.put(failure)
         finally:
             await queue.put({"event": "source_complete", "source": source})
             if enrichment_tasks:

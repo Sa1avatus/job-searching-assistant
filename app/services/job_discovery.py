@@ -194,6 +194,7 @@ class JobDiscoveryService:
         search_text: str | None = None,
         cv_file_id: str | None = None,
         on_outcome: DiscoveryOutcomeCallback | None = None,
+        adapter_name: str = "headhunter",
     ) -> list[DiscoveryOutcome]:
         recruitment = RecruitmentService(self._session)
         user = self._session.get(UserRow, user_id)
@@ -235,6 +236,7 @@ class JobDiscoveryService:
                 user_id,
                 hit.source_url,
                 cv_file.id if cv_file else None,
+                adapter_name=adapter_name,
             )
             if outcome is not None:
                 outcomes.append(outcome)
@@ -244,6 +246,29 @@ class JobDiscoveryService:
                     break
         return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
 
+    async def discover_custom_site_vacancies(
+        self,
+        user_id: str,
+        *,
+        adapter: HeadHunterDiscoveryAdapter,
+        locations: list[str],
+        limit: int = _DEFAULT_LIMIT,
+        search_text: str | None = None,
+        cv_file_id: str | None = None,
+        on_outcome: DiscoveryOutcomeCallback | None = None,
+    ) -> list[DiscoveryOutcome]:
+        """Discover vacancies on a user-defined site through its active search recipe."""
+        return await self.discover_headhunter_vacancies(
+            user_id,
+            headhunter_adapter=adapter,
+            locations=locations,
+            limit=limit,
+            search_text=search_text,
+            cv_file_id=cv_file_id,
+            on_outcome=on_outcome,
+            adapter_name="custom",
+        )
+
     async def _stage_one(
         self,
         recruitment: RecruitmentService,
@@ -251,6 +276,8 @@ class JobDiscoveryService:
         user_id: str,
         source_url: str,
         cv_file_id: str | None,
+        *,
+        adapter_name: str = "headhunter",
     ) -> DiscoveryOutcome | None:
         vacancy: VacancyRow | None = find_vacancy_by_identity(self._session, source_url)
         if vacancy is not None and (vacancy.work_format == "unspecified" or not vacancy.location):
@@ -301,7 +328,7 @@ class JobDiscoveryService:
                     preferred_skills=[],
                     location=extracted.location,
                     description_text=extracted.description_text,
-                    adapter_name="headhunter",
+                    adapter_name=adapter_name,
                     source_evidence_url=extracted.source_url,
                     application_fields=[
                         {

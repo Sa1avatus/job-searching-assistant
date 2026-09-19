@@ -1,7 +1,8 @@
+import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl, SecretStr
+from pydantic import BaseModel, Field, HttpUrl, SecretStr, field_validator
 
 from app.domain.application_status import ApplicationStatus
 from app.domain.autofill import AutofillValueType
@@ -793,16 +794,26 @@ class DiscoverGreenhouseVacanciesRequest(BaseModel):
     cv_file_id: str | None = None
 
 
+_BUILTIN_SOURCES = frozenset({"headhunter", "linkedin", "greenhouse"})
+_CUSTOM_SOURCE = re.compile(r"custom:[A-Za-z0-9_.-]{1,100}")
+
+
 class DiscoverVacanciesStreamRequest(BaseModel):
-    sources: list[Literal["headhunter", "linkedin", "greenhouse"]] = Field(
-        min_length=1, max_length=3
-    )
+    sources: list[str] = Field(min_length=1, max_length=20)
     board_urls: list[HttpUrl] = Field(default_factory=list, max_length=20)
     locations: list[str] = Field(default_factory=list, max_length=20)
     limit: int = Field(default=15, ge=1, le=50)
     search_text: str | None = Field(default=None, max_length=_MAX_SEARCH_TEXT_LENGTH)
     cv_file_id: str | None = None
     direct_rerank: bool = False
+
+    @field_validator("sources")
+    @classmethod
+    def _known_sources(cls, sources: list[str]) -> list[str]:
+        for source in sources:
+            if source not in _BUILTIN_SOURCES and not _CUSTOM_SOURCE.fullmatch(source):
+                raise ValueError(f"Unknown source: {source}")
+        return sources
 
 
 class CompanyBlacklistRequest(BaseModel):

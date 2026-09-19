@@ -29,6 +29,10 @@ class BrowserProbeResult:
     details: str = ""
 
 
+class BrowserWorkerRejected(RuntimeError):
+    """The worker understood the request but refused it; the message is meant for the user."""
+
+
 class BrowserWorkerClient:
     """Thin HTTP client for the browser-worker's browser operations."""
 
@@ -168,12 +172,79 @@ class BrowserWorkerClient:
             response.raise_for_status()
 
     async def login_is_waiting(self, *, user_id: str, site_key: str) -> bool:
-        async with httpx.AsyncClient(
-            timeout=10, follow_redirects=False, trust_env=False
-        ) as client:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False, trust_env=False) as client:
             response = await client.get(
                 f"{self._base_url}/v1/browser/login/status",
                 params={"user_id": user_id, "site_key": site_key},
             )
             response.raise_for_status()
         return bool(response.json().get("is_waiting", False))
+
+    async def _custom_post(self, path: str, payload: dict[str, object]) -> dict[str, object]:
+        async with httpx.AsyncClient(
+            timeout=self._timeout, follow_redirects=False, trust_env=False
+        ) as client:
+            response = await client.post(f"{self._base_url}/v1/browser/custom/{path}", json=payload)
+        if response.status_code == 422:
+            detail = response.json().get("detail")
+            raise BrowserWorkerRejected(detail if isinstance(detail, str) else "Запрос отклонён")
+        response.raise_for_status()
+        return cast(dict[str, object], response.json())
+
+    async def custom_learn(
+        self,
+        *,
+        user_id: str,
+        site: dict[str, object],
+        results_url: str,
+        query: str,
+        location: str = "",
+    ) -> dict[str, object]:
+        return await self._custom_post(
+            "learn",
+            {
+                "user_id": user_id,
+                "site": site,
+                "results_url": results_url,
+                "query": query,
+                "location": location,
+            },
+        )
+
+    async def custom_search(
+        self,
+        *,
+        user_id: str,
+        site: dict[str, object],
+        recipe: dict[str, str],
+        search_text: str,
+        locations: list[str] | None = None,
+        limit: int = 15,
+    ) -> list[BrowserSearchHit]:
+        data = await self._custom_post(
+            "search",
+            {
+                "user_id": user_id,
+                "site": site,
+                "recipe": recipe,
+                "search_text": search_text,
+                "locations": locations or [],
+                "limit": limit,
+            },
+        )
+        raw_hits = data.get("hits")
+        hits = raw_hits if isinstance(raw_hits, list) else []
+        return [
+            BrowserSearchHit(
+                source_url=str(hit["source_url"]),
+                title=str(hit.get("title", "")),
+                company=str(hit.get("company", "")),
+            )
+            for hit in hits
+            if isinstance(hit, dict) and hit.get("source_url")
+        ]
+
+    async def custom_extract(
+        self, *, user_id: str, site: dict[str, object], url: str
+    ) -> dict[str, object]:
+        return await self._custom_post("extract", {"user_id": user_id, "site": site, "url": url})

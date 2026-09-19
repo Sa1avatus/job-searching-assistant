@@ -19,7 +19,7 @@ ORM declarations are in `app/storage/tables.py`. Engine and session construction
 
 ## Migration rules
 
-The committed linear history currently runs from revision `0001` through `0047`. Confirm the actual
+The committed linear history currently runs from revision `0001` through `0048`. Confirm the actual
 head instead of copying that number into a new migration:
 
 ```powershell
@@ -91,7 +91,7 @@ or change a score, and missing or non-comparable data (unspecified format, other
 a violation. Exposed as `GET|PUT /v1/users/{id}/preferences`.
 
 
-## Migrations 0038-0047 at a glance
+## Migrations 0038-0048 at a glance
 
 | Revision | Adds |
 | --- | --- |
@@ -104,6 +104,7 @@ a violation. Exposed as `GET|PUT /v1/users/{id}/preferences`.
 | 0045 | `application_submissions` ledger (backfills confirmed rows for already-submitted applications) |
 | 0046 | email explanation columns (`match_method`, `match_reason`, `review_reason`) |
 | 0047 | `strategy_recommendations` |
+| 0048 | `site_search_recipes` (versioned search recipe per user-defined site; one active version) |
 
 Timeline events (`application_timeline_events`) are append-only at the ORM level. Details of each
 change live in the topic documents: `docs/matching-data-model.md`, `docs/browser-automation.md`,

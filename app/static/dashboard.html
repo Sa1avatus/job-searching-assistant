@@ -341,6 +341,34 @@
         <div id="site-field-mappings"></div>
         <datalist id="site-field-known-keys"></datalist>
       </div>
+      <div id="site-recipe-panel" style="margin-top:24px;">
+        <h3>Поиск по своим сайтам</h3>
+        <div class="hint">Добавьте сайт выше, при необходимости войдите в него и сами найдите вакансии в открытом окне. Затем вставьте адрес страницы с результатами и то, что вы искали: JSA определит карточки вакансий и сам проверит рецепт. После успешной проверки активируйте его — сайт появится среди источников поиска. Рецепт можно задать и вручную CSS-селекторами. Читаются только разрешённые хосты сайта, скрипты на страницах не выполняются.</div>
+        <div class="row" style="margin-top:12px;">
+          <div><label for="recipe-site">Сайт</label><select id="recipe-site"><option value="">Выберите сайт</option></select></div>
+        </div>
+        <div class="row">
+          <div><label for="recipe-results-url">Адрес страницы с результатами</label><input id="recipe-results-url" type="url" placeholder="https://careers.example.com/search?q=python"></div>
+          <div><label for="recipe-query">Что вы искали</label><input id="recipe-query" maxlength="200" placeholder="python"></div>
+          <div><label for="recipe-location">Город (если искали)</label><input id="recipe-location" maxlength="200"></div>
+          <div style="flex:0"><label>&nbsp;</label><button id="recipe-learn" type="button" class="primary">Определить автоматически</button></div>
+        </div>
+        <details id="recipe-manual" style="margin-top:8px;">
+          <summary>Задать рецепт вручную</summary>
+          <div class="row" style="margin-top:8px;">
+            <div><label for="recipe-url-template">Шаблон URL поиска</label><input id="recipe-url-template" placeholder="https://careers.example.com/search?q={query}"></div>
+            <div><label for="recipe-card">CSS карточки</label><input id="recipe-card" placeholder="li.job-card"></div>
+          </div>
+          <div class="row">
+            <div><label for="recipe-link">CSS ссылки в карточке</label><input id="recipe-link" placeholder="a.job-link (пусто — сама карточка)"></div>
+            <div><label for="recipe-title">CSS названия</label><input id="recipe-title" placeholder="h2 (пусто — текст ссылки)"></div>
+            <div><label for="recipe-company">CSS компании</label><input id="recipe-company" placeholder="span.company"></div>
+            <div style="flex:0"><label>&nbsp;</label><button id="recipe-save-draft" type="button">Сохранить черновик</button></div>
+          </div>
+        </details>
+        <div id="recipe-state" class="task-state"></div>
+        <div id="recipe-versions"></div>
+      </div>
     </section>
 
     <section class="step" data-panel="resume">
@@ -394,6 +422,7 @@
         <label class="chip"><input id="source-headhunter" type="checkbox" checked> hh.ru</label>
         <label class="chip"><input id="source-linkedin" type="checkbox" checked> LinkedIn</label>
         <label class="chip"><input id="source-greenhouse" type="checkbox" checked> Greenhouse</label>
+        <span id="custom-source-chips" class="chips"></span>
       </div>
       <label for="greenhouse-boards">Доски Greenhouse</label>
       <textarea id="greenhouse-boards" placeholder="По одной ссылке на строку, например https://boards.greenhouse.io/company. Если оставить пустым, используются Greenhouse-доски из уже сохранённых вакансий."></textarea>
