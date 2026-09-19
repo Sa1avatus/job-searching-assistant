@@ -110,3 +110,20 @@ verified beyond controlled fixtures.
   non-production installations. An unfinished sign-in window is held in the browser worker's
   process memory and must be started again if that worker restarts; already saved encrypted
   sessions remain durable.
+
+
+## Release 2.0 gaps
+
+- **No ranking model exists.** Learning to rank, the A/B benchmark and hybrid routing are implemented
+  and tested on synthetic data only; they need the 200-300 human labels (plus a frozen split and pointwise
+  labels, not only pairs) before any real result can be claimed. Production ranking is unchanged.
+- **ONNX/INT8** for the cross-encoder was not measured: no cross-encoder artifact ships with the
+  repository and `onnxruntime` is not installed.
+- **Materials workflow** has no generate-validate-approve state machine, and real submission is never
+  exercised end to end in tests (only through fakes).
+- **Email identity** is a SHA-256 of subject and body; the IMAP Message-ID is not used, so a re-sent
+  identical message is deduplicated and a reworded one is not.
+- **Strategy** recommendations need at least 30 matured submissions and clearly different groups; with
+  the current answer rate they are usually empty. They describe correlations, never causes.
+- Labels imported from an older version were attached to the current resume on the assumption that it
+  continues the old one (`source = legacy_timeline`); roll them back if that is wrong.

@@ -38,13 +38,18 @@ database (`python -m alembic upgrade head`) also requires confirmation.
 
 - `app/domain/` — policy and typed domain values; keep it independent of adapters and storage.
 - `app/services/` and `app/workflows/` — application use cases and durable state transitions.
-- `app/api/` and `app/static/` — HTTP contracts and the local dashboard/review UI.
+- `app/api/` and `app/static/` — HTTP contracts and the local dashboard/review UI; scripts and
+  styles are classic (non-module) files under `app/static/assets`, served at `/assets`.
 - `app/storage/` and `migrations/` — SQLAlchemy persistence and the linear Alembic history. Read
   `docs/database.md` before changing either.
 - `app/browser/`, `app/workers/`, and `adapters/job_boards/` — browser execution, queues, and site
   integrations. Read `docs/browser-automation.md` first.
 - `app/matching/`, `ml_service/`, and `evaluation/` — explainable matching. Start with
-  `docs/matching-architecture.md`.
+  `docs/matching-architecture.md`. Human labels, dataset splits, LTR and A/B live in
+  `app/matching/cross_encoder`, `app/matching/ltr`, `app/matching/ab` and
+  `docs/matching-data-model.md`; application lifecycle, CRM and strategy in
+  `app/domain/application_lifecycle.py`, `app/services/application_crm.py`,
+  `app/services/job_strategy.py` (see `docs/architecture.md`).
 - `tests/` and `fixtures/` — controlled tests and local browser pages. See `docs/testing.md`.
 
 ## Context routing

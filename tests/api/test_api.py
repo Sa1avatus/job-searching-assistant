@@ -122,7 +122,7 @@ def test_openapi_reports_current_version() -> None:
     response = client.get("/openapi.json")
 
     assert response.status_code == 200
-    assert response.json()["info"]["version"] == "1.4.1"
+    assert response.json()["info"]["version"] == "2.0.0"
 
 
 def test_discovery_outcome_with_slots_is_serialized_for_dashboard() -> None:

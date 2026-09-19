@@ -19,7 +19,7 @@ ORM declarations are in `app/storage/tables.py`. Engine and session construction
 
 ## Migration rules
 
-The committed linear history currently runs from revision `0001` through `0035`. Confirm the actual
+The committed linear history currently runs from revision `0001` through `0047`. Confirm the actual
 head instead of copying that number into a new migration:
 
 ```powershell
@@ -89,4 +89,23 @@ vacancy; `prepare_application` turns each demonstrated mismatch into an applicat
 (`Preference mismatch (<code>): ...`). Constraints are soft by design - they never hide a vacancy
 or change a score, and missing or non-comparable data (unspecified format, other currency) is never
 a violation. Exposed as `GET|PUT /v1/users/{id}/preferences`.
+
+
+## Migrations 0038-0047 at a glance
+
+| Revision | Adds |
+| --- | --- |
+| 0038, 0039 | `annotation_feedback`; LTR shadow columns on `application_match_results` |
+| 0040 | vacancy identity: `source_key`, `source_id`, `canonical_url`, `dedup_fingerprint` (backfilled, non-unique indexes) |
+| 0041 | `user_preferences` |
+| 0042 | `browser_session_states` |
+| 0043 | annotation `pair_key`, provenance, confidence and partial unique indexes (stops on real duplicates) |
+| 0044 | `annotation_splits` (freezable evaluation splits) |
+| 0045 | `application_submissions` ledger (backfills confirmed rows for already-submitted applications) |
+| 0046 | email explanation columns (`match_method`, `match_reason`, `review_reason`) |
+| 0047 | `strategy_recommendations` |
+
+Timeline events (`application_timeline_events`) are append-only at the ORM level. Details of each
+change live in the topic documents: `docs/matching-data-model.md`, `docs/browser-automation.md`,
+`docs/email-foundation.md`, `docs/architecture.md`.
 

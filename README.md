@@ -7,9 +7,41 @@ vacancies, analyses resumes, calculates explainable matches, drafts application 
 prepares supported browser forms for human review. Real HeadHunter and LinkedIn submission is
 disabled by default and requires explicit configuration and user confirmation.
 
-Current version: **1.5.5**.
+Current version: **2.0.0**.
 
-## Current release
+## Release 2.0
+
+Version 2.0 makes the job-search loop measurable and safer to run. Migrations `0038`-`0047` are new.
+
+- **Stable dashboard.** Scripts and styles live in `app/static/assets` (classic scripts, no module
+  bundler). Top-level tabs never collapse; deeper sections remember their expanded/collapsed state.
+- **Vacancies.** Canonical identity (source + posting id) removes duplicates across URL spellings,
+  the company blacklist also blocks new applications, and search preferences (minimum salary,
+  locations, work format, employment) add warnings to applications without hiding vacancies.
+- **Applications.** One lifecycle governs every status change with an audit trail, and real
+  submission is idempotent and crash-safe: a submission ledger is written before the browser acts, an
+  unresolved attempt is verified (site probe or your answer) and never resubmitted blindly.
+- **Browser sessions.** An explicit state machine (`DISCONNECTED` ... `READY`, `REAUTH_REQUIRED`)
+  replaces frontend guesses; the browser-worker image pins Playwright to its base image and starts the
+  display in dependency order.
+- **Email.** Statuses from emails go through the lifecycle, links are explained (`match_method`,
+  reasons), review items carry a class (informational, interview, action required, rejection, offer),
+  and stored bodies expire (`APP_EMAIL_BODY_RETENTION_DAYS`, default 30).
+- **Human labels for ranking.** A labelling panel (pointwise and head-to-head pairs), duplicate-proof
+  labels, leakage-safe train/validation/test folds, freezable evaluation splits, a readiness report
+  against the 200-label target, and an importer for labels from older versions.
+- **Learning to rank and A/B (off by default).** Metrics, a logistic baseline, optional LightGBM,
+  a benchmark against the production score on frozen folds, replay A/B and a data-driven hybrid
+  router. Nothing changes production ranking, and training refuses until the dataset is ready.
+- **Analytics and strategy.** An application CRM (journey, funnels by source, resume, role, score band
+  and matching version with mature-only rates and confidence intervals) and evidence-gated
+  recommendations you accept or reject; nothing changes without your decision.
+
+Not done yet: the 200-300 human labels (so no LTR model or A/B result exists), ONNX/INT8 measurement,
+a generate-validate-approve state machine for materials, and IMAP Message-ID email identity. See
+[`docs/known-limitations.md`](docs/known-limitations.md) and [`docs/ARCHITECTURE_PLAN.md`](docs/ARCHITECTURE_PLAN.md).
+
+## Previous release (1.5.x) highlights
 
 - Matching recalculation is split into a fast **smart recalculation** (reuses cached LLM
   results; unchanged content returns immediately) and a **full recalculation** for after
@@ -54,7 +86,8 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the complete version history.
 - isolated Playwright sessions for HeadHunter, LinkedIn, Greenhouse, and configured sites;
 - user-selected Anthropic, Gemini, or OpenAI-compatible material generation;
 - encrypted browser state, LLM keys, and sensitive autofill values;
-- controlled fixtures for browser and end-to-end verification.
+- controlled fixtures for browser and end-to-end verification;
+- human-label tooling, application analytics, and shadow-mode ranking experiments (2.0).
 
 The dashboard is available locally at `http://127.0.0.1:8000/dashboard` and on the trusted LAN at
 `http://192.168.1.93:8000/dashboard`; the corresponding review pages use `/review`. Compose exposes
@@ -202,7 +235,10 @@ See [`docs/commands.md`](docs/commands.md) for service and diagnostic commands a
 - [`docs/security.md`](docs/security.md) — secrets, access, and personal data;
 - [`docs/known-limitations.md`](docs/known-limitations.md) — verified gaps and connector risks;
 - [`docs/adapter-guide.md`](docs/adapter-guide.md) — site-specific behavior;
-- [`docs/matching-architecture.md`](docs/matching-architecture.md) — matching v2 entry point.
+- [`docs/matching-architecture.md`](docs/matching-architecture.md) — matching v2 entry point;
+- [`docs/matching-data-model.md`](docs/matching-data-model.md) — human labels, dataset splits, LTR;
+- [`docs/matching-evaluation.md`](docs/matching-evaluation.md) — evaluation, A/B and hybrid routing;
+- [`docs/ARCHITECTURE_PLAN.md`](docs/ARCHITECTURE_PLAN.md) — the 2.0 roadmap and its status.
 
 ## Safety
 

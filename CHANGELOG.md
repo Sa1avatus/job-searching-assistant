@@ -5,6 +5,38 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-19
+
+Release 2.0 is a rollback-based stabilisation followed by the twelve-stage roadmap in
+`docs/ARCHITECTURE_PLAN.md`. Migrations `0038`-`0047` were added (`0038`/`0039` restore the schema
+of the annotation/LTR work that the persistent database already carried). Apply them with
+`alembic upgrade head` after a database backup.
+
+### Fixed
+
+- **Browser-worker login window (502 "check the Chromium installation").** `Dockerfile.browser`
+  installed the newest `playwright` while the base image ships the browser build of its own tag; one
+  `PLAYWRIGHT_VERSION` build argument now drives both. The virtual display no longer races on a fixed
+  `sleep`: `scripts/start_browser_worker_with_desktop.sh` waits for Xvfb (`xdpyinfo`, package
+  `x11-utils`), then starts x11vnc, websockify and the HTTP server, and fails/restarts without a
+  display.
+- **Annotation candidate pool.** Only applications with an explicit selected resume (15 of 917 in the
+  real database) and placeholder scores from pending/failed matches were considered; the pool is now
+  the scored results of the user's applications for the resume (applications without a selection count
+  for the active resume).
+- **Stratified sampler** quotas counted only new members, so overlapping strata starved each other.
+- **Dashboard**: clear message for 401 responses, the browser-session confirm/cancel actions guard an
+  empty user id, background poll errors are logged instead of swallowed, `/favicon.ico` no longer
+  404s, and the annotation panel lists splits instead of probing a missing one.
+
+### Changed (2.0)
+
+- **Static assets**: dashboard and review scripts/styles moved out of the HTML into `app/static/assets`
+  (`/assets`, `Cache-Control: no-cache`); the extracted JavaScript is AST-identical to the original.
+- `numpy` is no longer required by the API image (rank normalisation is pure Python); LightGBM,
+  scikit-learn and numpy are the optional `ltr` extra.
+- Version strings: `VERSION`, `pyproject.toml`, OpenAPI `info.version` and both READMEs say 2.0.0.
+
 ### Added
 
 - **Legacy label import** (`scripts/import_legacy_annotations.py`): moves human labels an older JSA

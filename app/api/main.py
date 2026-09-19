@@ -292,7 +292,7 @@ from app.workers.browser_worker import create_session_store
 
 configure_logging()
 logger = structlog.get_logger(__name__)
-app = FastAPI(title="Job Searching Assistant", version="1.4.1")
+app = FastAPI(title="Job Searching Assistant", version="2.0.0")
 app.include_router(annotation_router)
 REVIEW_UI_PATH = Path(__file__).parents[1] / "static" / "review.html"
 DASHBOARD_UI_PATH = Path(__file__).parents[1] / "static" / "dashboard.html"

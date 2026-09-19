@@ -42,6 +42,20 @@ Tests are organized by behavior rather than by source-file parity. Follow the ne
 assertion style. Add regression coverage for the user-visible failure being fixed; do not broadly
 mock away persistence, policy, host validation, or submission boundaries.
 
+## Release 2.0 test areas
+
+- Dashboard behaviour is asserted on the page *and* its linked assets: use
+  `tests/unit/ui_source.py::read_ui_source` (unit) or `tests/api/ui_http.py::get_ui_page` (HTTP), never
+  `read_text` on `dashboard.html` alone. `tests/api/test_ui_assets.py` guards that no inline script or
+  style returns and that every referenced asset is served.
+- Migrations are verified on a scratch PostgreSQL database (upgrade, downgrade one step, upgrade)
+  before they touch the persistent one; SQLite tests create tables from metadata.
+- Annotation, dataset-split, LTR, A/B, lifecycle, CRM and strategy tests use synthetic labelled data;
+  no test claims a benchmark result. Optional LightGBM tests skip when the `ltr` extra is absent.
+- Browser tests need Chromium (`python -m playwright install chromium`); without it they fail on
+  launch, which is an environment problem, not a code failure.
+- `tests/unit/test_browser_worker_image.py` guards the Playwright pin and the display start order.
+
 ## Database and service dependencies
 
 Most unit/API tests create SQLite tables directly from SQLAlchemy metadata. PostgreSQL migration and

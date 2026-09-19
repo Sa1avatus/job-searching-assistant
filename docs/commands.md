@@ -112,3 +112,33 @@ and obtain approval before supplying a target or opening a session:
 
 Do not exercise apply endpoints, authenticated discovery, or submission flags as part of a normal
 documentation or code check.
+
+
+## Release 2.0 operations
+
+Deploy order when a release adds migrations (the persistent database holds real data):
+
+```powershell
+docker compose exec -T postgres pg_dump -U recruitment -d recruitment > backup.sql
+docker compose --profile browser build
+docker compose --profile browser run --rm --no-deps -T api python -m alembic upgrade head
+docker compose --profile browser up -d
+docker compose exec -T api python -m alembic current   # expect 0047
+```
+
+Reports and one-off tools (all default to read-only or a dry run; run them inside the `api`
+container with `PYTHONPATH=/app` or locally with `APP_DATABASE_URL`):
+
+```powershell
+python scripts/report_vacancy_duplicates.py                       # read-only duplicate report
+python scripts/import_legacy_annotations.py --from-resume OLD --to-resume NEW          # dry run
+python scripts/import_legacy_annotations.py --from-resume OLD --to-resume NEW --apply
+python scripts/import_legacy_annotations.py --to-resume NEW --rollback
+python scripts/ltr_pipeline.py train --split gold-v1              # refuses until the dataset is ready
+python scripts/ltr_pipeline.py shadow --user-id U --resume-id R  # needs APP_LTR_ENABLED=true
+python scripts/matching_ab.py --split gold-v1                     # replay A/B on a frozen fold
+```
+
+The browser-worker image pins Playwright to the version of its base image (`PLAYWRIGHT_VERSION` in
+`Dockerfile.browser`). If a login window fails with "Executable doesn't exist", the two have drifted;
+rebuild after aligning them.
