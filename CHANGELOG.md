@@ -7,6 +7,11 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Closed-loop job strategy** (migration 0047): evidence-gated recommendations (matured sample,
+  non-overlapping intervals) with stated confounders, explicit accept/reject decisions stored as an
+  audit trail, one narrow reversible action (switch active resume), and before/after follow-up.
+  Says what is missing when the data cannot support advice.
+
 - **Application CRM and analytics**: per-application journey, owner-scoped funnel (source, company,
   resume, role, score band, matching version) with mature-only rates and Wilson intervals, descriptive
   insights, an immutable timeline audit log, and the dashboard panel «Аналитика откликов».

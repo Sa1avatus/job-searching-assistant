@@ -8,7 +8,7 @@ from contextlib import suppress
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlsplit
 
 # Playwright launches the browser as a subprocess. On Windows, asyncio's default
@@ -223,6 +223,7 @@ from app.services.job_discovery import (
     LinkedInSessionRequiredError,
     NoSearchKeywordsError,
 )
+from app.services.job_strategy import JobStrategyService, RecommendationClosed
 from app.services.materials_generation import (
     MaterialsGenerationService,
     MaterialsLanguageMismatchError,
@@ -1399,6 +1400,74 @@ def crm_application_journey(
     """vacancy -> application -> response -> interview -> outcome, with the evidence for each."""
     try:
         return ApplicationCrmService(session).journey(user_id, application_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+class StrategyDecisionRequest(BaseModel):
+    decision: Literal["accept", "reject"]
+    note: str | None = Field(default=None, max_length=1000)
+
+
+@app.post("/v1/users/{user_id}/strategy/recommendations/generate")
+def generate_strategy_recommendations(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> dict[str, Any]:
+    """Look for evidence-backed recommendations. Proposes nothing when the data cannot support it
+    and says what is missing; never changes a setting by itself."""
+    try:
+        result = JobStrategyService(session).generate(user_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    session.commit()
+    return result
+
+
+@app.get("/v1/users/{user_id}/strategy/recommendations")
+def list_strategy_recommendations(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    try:
+        return JobStrategyService(session).list(user_id, status=status)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/v1/users/{user_id}/strategy/recommendations/{recommendation_id}/decision")
+def decide_strategy_recommendation(
+    user_id: str,
+    recommendation_id: str,
+    request: StrategyDecisionRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> dict[str, Any]:
+    """Accept (applies the recommendation's single narrow action, if any) or reject it."""
+    try:
+        result = JobStrategyService(session).decide(
+            user_id, recommendation_id, decision=request.decision, note=request.note
+        )
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RecommendationClosed as error:
+        session.rollback()
+        raise HTTPException(
+            status_code=409, detail={"code": "recommendation_closed", "message": str(error)}
+        ) from error
+    session.commit()
+    return result
+
+
+@app.get("/v1/users/{user_id}/strategy/recommendations/{recommendation_id}/followup")
+def strategy_recommendation_followup(
+    user_id: str,
+    recommendation_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> dict[str, Any]:
+    """Did answers change after the decision? Descriptive, with sample sizes; never causal."""
+    try:
+        return JobStrategyService(session).followup(user_id, recommendation_id)
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 

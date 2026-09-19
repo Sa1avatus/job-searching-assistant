@@ -121,3 +121,30 @@ dimensions.
 On the real database (134 submitted applications) this yields a 3 % response rate (95 % interval
 1.2-7.4 %) and one interview - a sparse signal, which is exactly why intervals and the low-sample flag
 are shown.
+
+## Closed-loop job strategy (stage 5B)
+
+`app/services/job_strategy.py` closes the loop search -> match -> apply -> outcome -> learning ->
+strategy. It reads the CRM funnels and proposes changes; the user decides.
+
+- **Evidence gate.** A recommendation exists only when at least 30 matured submissions exist overall
+  and two groups of one dimension (resume, source, role, score band) each have 10+ matured submissions
+  with **non-overlapping** 95 % Wilson intervals. Otherwise `POST .../strategy/recommendations/generate`
+  returns no recommendation and `no_recommendation_because` lists exactly what is missing (too few
+  submissions, too few comparable groups, overlapping intervals).
+- **Explainable.** Each recommendation stores its statement, evidence (best/worst group, successes, n,
+  rate, interval), `causal: false` and the confounders to keep in mind (different resumes went to
+  different vacancies, sources differ in mix, ...).
+- **Human approval.** Generating changes nothing. `POST .../recommendations/{id}/decision` with
+  `accept` applies at most one narrow, reversible action - switching the active resume when the
+  recommended file is unambiguous - or, for advice, records that the user adopted it and changes no
+  setting. `reject` is remembered and the same recommendation is not proposed again. A decision is
+  final (409 afterwards) and every decision, with its note, baseline and result, is kept in
+  `strategy_recommendations` (migration 0047) as the audit trail.
+- **Follow-up.** `GET .../recommendations/{id}/followup` compares the response rate of matured
+  submissions before and after the decision. It says `too_early` until 10 matured submissions exist
+  after the decision, and never claims causality even when the difference is real.
+- **Ownership.** All endpoints are scoped to the user; another user's recommendation is a 404.
+
+With the current real history (134 submitted, ~3 % answered) the gate produces **no**
+recommendation, which is the intended, honest outcome: there is not yet enough signal to steer on.

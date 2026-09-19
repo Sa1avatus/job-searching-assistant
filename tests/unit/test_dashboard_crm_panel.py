@@ -11,3 +11,15 @@ def test_dashboard_has_an_analytics_panel_wired_to_the_crm_api() -> None:
     assert "async function loadCrm()" in dashboard
     assert "'annotation', 'crm'];" in dashboard  # deep-linkable
     assert "не причинно-следственный вывод" in dashboard  # the caveat is shown to the user
+
+
+def test_strategy_recommendations_need_an_explicit_decision_in_the_ui() -> None:
+    dashboard = read_ui_source("dashboard")
+
+    assert 'id="strategy-generate"' in dashboard and 'id="strategy-list"' in dashboard
+    assert "/strategy/recommendations/generate" in dashboard
+    assert "/strategy/recommendations/${item.id}/decision" in dashboard
+    assert "['accept', 'Принять', 'primary'], ['reject', 'Отклонить']" in dashboard
+    assert "ничего не изменится без вашего решения" in dashboard.lower() or (
+        "ничего не меняется без вашего решения" in dashboard
+    )

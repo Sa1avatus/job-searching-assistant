@@ -164,3 +164,23 @@ def test_crm_endpoints_are_owner_scoped_and_validate_group_by(env) -> None:
     journey = client.get("/v1/users/u1/crm/applications/a1/journey").json()
     assert [s["stage"] for s in journey["stages"] if s["reached"]] == ["saved", "submitted"]
     assert client.get("/v1/users/u1/crm/applications/nope/journey").status_code == 404
+
+
+def test_strategy_endpoints_require_evidence_and_are_owner_scoped(env) -> None:
+    client, _ = env
+
+    generated = client.post("/v1/users/u1/strategy/recommendations/generate")
+    assert generated.status_code == 200
+    body = generated.json()
+    assert body["created"] == [] and body["no_recommendation_because"]
+    assert client.get("/v1/users/u1/strategy/recommendations").json() == []
+    assert client.post("/v1/users/nobody/strategy/recommendations/generate").status_code == 404
+    decision = client.post(
+        "/v1/users/u1/strategy/recommendations/missing/decision", json={"decision": "accept"}
+    )
+    assert decision.status_code == 404
+    bad = client.post(
+        "/v1/users/u1/strategy/recommendations/missing/decision", json={"decision": "maybe"}
+    )
+    assert bad.status_code == 422
+    assert client.get("/v1/users/u1/strategy/recommendations/missing/followup").status_code == 404

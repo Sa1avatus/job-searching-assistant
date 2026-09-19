@@ -4342,3 +4342,60 @@ async function loadCrm() {
 document.querySelector('#crm-refresh').addEventListener('click', () => loadCrm().catch(showError));
 document.querySelector('#crm-group-by').addEventListener('change', () => loadCrm().catch(showError));
 document.querySelector('[data-menu="crm"]').addEventListener('click', () => loadCrm().catch(showError));
+
+// ── Job strategy recommendations ────────────────────────────────────────
+function renderStrategyItem(item) {
+  const box = element('div', undefined, 'annotation-card');
+  box.append(element('h4', item.statement));
+  const evidence = item.evidence || {};
+  if (evidence.confounders?.length) box.append(element('div', `Осторожно: ${evidence.confounders.join(' ')} Это корреляция в небольшой выборке, а не причина.`, 'meta'));
+  const action = item.payload?.action === 'set_active_resume'
+    ? `При принятии активным станет резюме «${item.payload.label}».`
+    : 'Совет: система ничего не изменит сама.';
+  box.append(element('div', action, 'meta'));
+  if (item.status === 'proposed') {
+    const actions = element('div', undefined, 'annotation-actions');
+    [['accept', 'Принять', 'primary'], ['reject', 'Отклонить']].forEach(([decision, text, cls]) => {
+      const button = element('button', text, cls);
+      button.type = 'button';
+      button.addEventListener('click', async () => {
+        try {
+          const userId = userIdInput.value.trim();
+          await asJson(await fetchWithTimeout(`/v1/users/${userId}/strategy/recommendations/${item.id}/decision`, {
+            method: 'POST', headers: headers(true), body: JSON.stringify({decision})
+          }));
+          await loadStrategy();
+        } catch (error) { showError(error); }
+      });
+      actions.append(button);
+    });
+    box.append(actions);
+  } else {
+    box.append(element('div', item.status === 'accepted' ? 'Принято.' : 'Отклонено.', 'meta'));
+  }
+  return box;
+}
+
+async function loadStrategy() {
+  const userId = userIdInput.value.trim();
+  const list = document.querySelector('#strategy-list');
+  if (!userId) { list.replaceChildren(); return; }
+  const items = await asJson(await fetchWithTimeout(`/v1/users/${userId}/strategy/recommendations`, {headers: headers(false)}));
+  list.replaceChildren(...(items.length ? items.map(renderStrategyItem) : [element('div', 'Рекомендаций пока нет.', 'hint')]));
+}
+
+document.querySelector('#strategy-generate').addEventListener('click', async () => {
+  try {
+    const userId = userIdInput.value.trim();
+    if (!userId) throw new Error('Сначала создайте или укажите User ID');
+    const result = await asJson(await fetchWithTimeout(`/v1/users/${userId}/strategy/recommendations/generate`, {
+      method: 'POST', headers: headers(false)
+    }));
+    await loadStrategy();
+    if (!result.created.length) {
+      const why = result.no_recommendation_because.join(' ') || 'Новых рекомендаций нет.';
+      document.querySelector('#strategy-list').prepend(element('div', `Рекомендаций нет: ${why}`, 'hint'));
+    }
+  } catch (error) { showError(error); }
+});
+document.querySelector('[data-menu="crm"]').addEventListener('click', () => loadStrategy().catch(showError));

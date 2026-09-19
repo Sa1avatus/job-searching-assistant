@@ -926,6 +926,34 @@ class AnnotationSplitRow(Base):
     frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class StrategyRecommendationRow(Base):
+    """An evidence-backed suggestion the user accepts or rejects; kept as the audit trail."""
+
+    __tablename__ = "strategy_recommendations"
+    __table_args__ = (
+        UniqueConstraint("user_id", "fingerprint", name="uq_strategy_recommendations_fingerprint"),
+        CheckConstraint(
+            "status IN ('proposed', 'accepted', 'rejected')",
+            name="ck_strategy_recommendations_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    dimension: Mapped[str] = mapped_column(String(30))
+    fingerprint: Mapped[str] = mapped_column(String(32))
+    statement: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    evidence: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="proposed", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    applied: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    baseline: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+
+
 class TaskTransitionRow(Base):
     __tablename__ = "task_transitions"
 
