@@ -25,7 +25,7 @@ def test_dashboard_has_an_annotation_panel_wired_to_the_annotation_api() -> None
         "/v1/annotation/${path}",
     ):
         assert endpoint in dashboard
-    assert "'annotation'];" in dashboard  # deep-linkable via ?panel=annotation
+    assert "'annotation', 'crm'];" in dashboard  # deep-linkable via ?panel=annotation
 
 
 def test_annotation_ui_hides_system_ranks_and_scores_from_the_reviewer() -> None:
