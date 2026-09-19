@@ -136,4 +136,3 @@ On the real database this imported the 407 labels of the old ML resume (`47fd2e1
 other old (ITSM) resume were deliberately not imported. Which old resume was which was inferred from the
 labelled vacancies (winners of the ML resume's decisive pairs are ML-like 40:7, the other resume's lean
 the opposite way 10:44).
-
