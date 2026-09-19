@@ -3912,7 +3912,7 @@ initializeDashboardSubsections();
 collapseAllDashboardSubsections();
 
 const requestedPanel = new URLSearchParams(window.location.search).get('panel');
-const validPanels = ['vacancies', 'search', 'blacklist', 'resume', 'sessions', 'model', 'access', 'annotation'];
+const validPanels = ['vacancies', 'search', 'blacklist', 'resume', 'sessions', 'model', 'access', 'annotation', 'crm'];
 localStorage.removeItem('dashboardActivePanel');
 collapseAllPanels();
 if (validPanels.includes(requestedPanel)) activatePanel(requestedPanel);
@@ -4300,3 +4300,45 @@ document.querySelector('#annotation-freeze-split').addEventListener('click', asy
 document.querySelector('[data-menu="annotation"]').addEventListener('click', () => {
   loadAnnotationResumes().then(refreshAnnotationReport).catch(showError);
 });
+
+// ── Application analytics (CRM) ─────────────────────────────────────────
+function crmPercent(stat) {
+  if (!stat || stat.value == null) return '—';
+  const range = stat.low != null ? ` (${Math.round(stat.low * 100)}–${Math.round(stat.high * 100)}%)` : '';
+  return `${Math.round(stat.value * 100)}% · ${stat.successes}/${stat.n}${range}`;
+}
+
+function renderCrmTable(funnel) {
+  const table = document.querySelector('#crm-table');
+  const head = element('tr');
+  ['Группа', 'Откликов', 'Отправлено', 'Ждут ответа', 'Ответили', 'Собеседования', 'Офферы', 'Отказы']
+    .forEach(title => head.append(element('th', title)));
+  const rows = [funnel.totals, ...funnel.groups].map((group, index) => {
+    const row = element('tr', undefined, group.response.low_sample ? 'low' : undefined);
+    row.append(element('td', index === 0 ? 'Все' : group.group));
+    [group.applications, group.submitted, group.pending].forEach(value => row.append(element('td', String(value), 'num')));
+    [group.response, group.interview, group.offer, group.rejection]
+      .forEach(stat => row.append(element('td', crmPercent(stat), 'num')));
+    return row;
+  });
+  table.replaceChildren(head, ...rows);
+}
+
+async function loadCrm() {
+  const userId = userIdInput.value.trim();
+  const insights = document.querySelector('#crm-insights');
+  if (!userId) { insights.textContent = ''; document.querySelector('#crm-table').replaceChildren(); return; }
+  const groupBy = document.querySelector('#crm-group-by').value;
+  const [funnel, found] = await Promise.all([
+    asJson(await fetchWithTimeout(`/v1/users/${userId}/crm/funnel?group_by=${encodeURIComponent(groupBy)}`, {headers: headers(false)})),
+    asJson(await fetchWithTimeout(`/v1/users/${userId}/crm/insights`, {headers: headers(false)})),
+  ]);
+  renderCrmTable(funnel);
+  const lines = found.findings.map(finding => element('div', finding.statement));
+  lines.push(element('div', funnel.notes.join(' '), 'hint'));
+  insights.replaceChildren(...lines);
+}
+
+document.querySelector('#crm-refresh').addEventListener('click', () => loadCrm().catch(showError));
+document.querySelector('#crm-group-by').addEventListener('change', () => loadCrm().catch(showError));
+document.querySelector('[data-menu="crm"]').addEventListener('click', () => loadCrm().catch(showError));

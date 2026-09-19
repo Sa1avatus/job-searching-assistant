@@ -90,3 +90,34 @@ starting or configuring the Worker.
 
 Production deployment is not defined. Do not infer production readiness from the local Compose
 topology.
+
+## Application CRM (stage 5A)
+
+`app/services/application_crm.py` derives everything from recorded **events**: timeline
+`status_change` and `email_received` rows, the submission ledger (`confirmed`, non-legacy) and the
+current status as a fallback for legacy rows. `manual_update` timeline rows are human matching
+feedback (labels for the ranker), never outcomes, and are ignored. Model scores are not used to
+compute any outcome; the production score band and the scoring version appear only as grouping
+dimensions.
+
+- **Journey.** `GET /v1/users/{id}/crm/applications/{aid}/journey`: saved -> submitted -> responded ->
+  interview -> offer, each with `reached`, the first timestamp and the evidence, plus the outcome
+  (`offer`, `employer_rejected`, `withdrawn`, `rejected`, `skipped`, `open`). A response means an
+  employer email or a decision status (interview/offer/employer_rejected); a manual pre-submission
+  `approved` is not a response.
+- **Funnel.** `GET /v1/users/{id}/crm/funnel?group_by=source|company|resume|role|score_band|strategy`
+  returns per group: applications, submitted, mature submitted, pending, and response / interview /
+  offer / rejection rates. Rates use only **mature** submissions (sent >= 14 days ago, or already
+  answered), so recent applications do not deflate them, each with n and a 95 % Wilson interval;
+  groups under 10 mature submissions are `low_sample`.
+- **Insights.** `GET /v1/users/{id}/crm/insights` compares the best and worst group per dimension,
+  only among groups with enough data, and states whether the intervals overlap. It is descriptive: it
+  never recommends an action and says so.
+- **Immutability.** Timeline events are an append-only audit log: an ORM update or delete raises
+  `ImmutableTimelineEvent`; corrections are new events.
+- **Ownership.** Every endpoint is scoped to the user; another user's application is a 404.
+- **Dashboard.** Panel "Аналитика откликов" (`?panel=crm`).
+
+On the real database (134 submitted applications) this yields a 3 % response rate (95 % interval
+1.2-7.4 %) and one interview - a sparse signal, which is exactly why intervals and the low-sample flag
+are shown.

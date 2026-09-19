@@ -7,6 +7,10 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Application CRM and analytics**: per-application journey, owner-scoped funnel (source, company,
+  resume, role, score band, matching version) with mature-only rates and Wilson intervals, descriptive
+  insights, an immutable timeline audit log, and the dashboard panel «Аналитика откликов».
+
 - **Email intelligence hardening** (migration 0046): five email classes in the review API, email-driven
   status changes validated by the application lifecycle (refused moves go to review with a reason),
   implied submissions recorded in the ledger, explainable linking (`match_method`/`match_reason`/

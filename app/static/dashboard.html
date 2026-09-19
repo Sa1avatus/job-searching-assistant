@@ -37,6 +37,7 @@
       <button class="menu-button" type="button" data-menu="model" aria-expanded="false">Модель</button>
       <button class="menu-button" type="button" data-menu="queue" aria-expanded="false">Очередь матчинга</button>
       <button class="menu-button" type="button" data-menu="annotation" aria-expanded="false">Разметка</button>
+      <button class="menu-button" type="button" data-menu="crm" aria-expanded="false">Аналитика откликов</button>
       <button class="menu-button" type="button" data-menu="access" aria-expanded="false">Профиль и доступ</button>
       <button class="menu-button" type="button" data-menu="debug" aria-expanded="false">Отладка</button>
     </nav>
@@ -406,6 +407,25 @@
 
     <section id="results" class="step" data-panel="search"></section>
 
+    <section class="step" data-panel="crm">
+      <h2>Аналитика откликов</h2>
+      <div class="hint">Доли ответов, собеседований и офферов считаются по реальным событиям (смена статуса, письма работодателя). Учитываются отклики, отправленные не менее 14 дней назад или уже получившие ответ. Это описание вашей выборки, а не причинно-следственный вывод.</div>
+      <div class="row">
+        <div><label for="crm-group-by">Группировать по</label>
+          <select id="crm-group-by">
+            <option value="source">Источнику</option>
+            <option value="resume">Резюме</option>
+            <option value="score_band">Диапазону оценки</option>
+            <option value="strategy">Версии матчинга</option>
+            <option value="role">Должности</option>
+            <option value="company">Компании</option>
+          </select>
+        </div>
+        <div style="flex:0"><button id="crm-refresh" type="button" class="primary">Обновить</button></div>
+      </div>
+      <div id="crm-insights" class="task-state"></div>
+      <div id="crm-table-wrap"><table id="crm-table" class="crm-table"></table></div>
+    </section>
     <section class="step" data-panel="annotation">
       <h2>Разметка вакансий</h2>
       <div class="hint">Ваши оценки — единственная «истина» для обучения ранжирования. Ранги и оценки системы скрыты, чтобы не влиять на решение. Нужно не менее 200 осмысленных оценок, включая пары и трудные случаи.</div>

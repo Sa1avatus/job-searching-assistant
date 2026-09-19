@@ -177,4 +177,5 @@ Stage 4 runs alongside it.
 | 3B | tooling done: replay harness, margin-curve routing, `hybrid_rank` with fallbacks behind `APP_MATCHING_HYBRID_ROUTING`, `scripts/matching_ab.py`. **No benchmark/A-B result and no ONNX/INT8 measurement exist** (no labels, no cross-encoder artifact, no onnxruntime) |
 | 4A | lifecycle + submission ledger done (migration 0045, crash-safe idempotent real submission, audited transitions). Not done: a generate->validate->approve state machine for materials, async-task recovery UI, browser E2E of review-to-submit (real submit is never run in tests) |
 | 4B | done (migration 0046): classes, lifecycle-validated email status updates, ledger for implied submissions, explainable linking, body retention. Deduplication key unchanged (SHA-256 of subject+body; no IMAP Message-ID yet) |
-| 5A / 5B | not started |
+| 5A | done: journey, funnel, insights, immutable timeline, dashboard panel (no migration). Real data: 134 submitted, 3 % response |
+| 5B | not started |

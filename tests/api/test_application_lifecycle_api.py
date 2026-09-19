@@ -148,3 +148,19 @@ def test_email_review_items_expose_class_and_explanations(env) -> None:
     assert item["email_class"] == "rejection"
     assert item["match_method"] == "none" and item["match_reason"]
     assert "not linked confidently" in item["review_reason"]
+
+
+def test_crm_endpoints_are_owner_scoped_and_validate_group_by(env) -> None:
+    client, _ = env
+    _status(client, "submitted")
+
+    funnel = client.get("/v1/users/u1/crm/funnel?group_by=source").json()
+    assert funnel["totals"]["submitted"] == 1 and funnel["groups"][0]["group"]
+    assert "Rates use only mature submissions" in funnel["notes"][0]
+    assert client.get("/v1/users/u1/crm/funnel?group_by=salary").status_code == 422
+    assert client.get("/v1/users/nobody/crm/funnel").status_code == 404
+    assert client.get("/v1/users/u1/crm/insights").json()["findings"] == []
+
+    journey = client.get("/v1/users/u1/crm/applications/a1/journey").json()
+    assert [s["stage"] for s in journey["stages"] if s["reached"]] == ["saved", "submitted"]
+    assert client.get("/v1/users/u1/crm/applications/nope/journey").status_code == 404

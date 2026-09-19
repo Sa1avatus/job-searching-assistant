@@ -50,10 +50,14 @@ def change_status(
     if not check_transition(previous, target, actor):
         return False
     application.status = target
-    timeline = ApplicationTimelineService(session)
-    event = timeline.record_status_change(application.id, previous, target, source=source)
-    if detail:
-        event.detail_json = detail
+    ApplicationTimelineService(session).record(
+        application.id,
+        "status_change",
+        previous_value=previous,
+        new_value=target,
+        detail=detail,
+        source=source,
+    )
     return True
 
 

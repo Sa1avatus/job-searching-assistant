@@ -185,6 +185,7 @@ from app.observability.metrics import metrics
 from app.prompts.registry import PromptRegistry
 from app.security.autofill_decryption import decrypt_autofill_value
 from app.security.autofill_encryption import InvalidAutofillValueEncryption
+from app.services.application_crm import ApplicationCrmService
 from app.services.application_email_events import ApplicationEmailEventService
 from app.services.application_email_sync import (
     ApplicationEmailProvider,
@@ -1357,6 +1358,49 @@ def _email_review_response(event: ApplicationEmailEventRow) -> EmailReviewItemRe
         candidates=candidates,
         processed_at=event.processed_at,
     )
+
+
+@app.get("/v1/users/{user_id}/crm/funnel")
+def crm_funnel(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+    group_by: str = "source",
+) -> dict[str, Any]:
+    """Owner-scoped response/interview/offer rates per source, company, resume, role, score band
+    or matching strategy, computed from recorded events (with sample sizes and intervals)."""
+    try:
+        return ApplicationCrmService(session).funnel(user_id, group_by)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422, detail={"code": "invalid_group_by", "message": str(error)}
+        ) from error
+
+
+@app.get("/v1/users/{user_id}/crm/insights")
+def crm_insights(
+    user_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> dict[str, Any]:
+    """Descriptive comparisons with evidence; small samples are flagged, never recommended on."""
+    try:
+        return ApplicationCrmService(session).insights(user_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/v1/users/{user_id}/crm/applications/{application_id}/journey")
+def crm_application_journey(
+    user_id: str,
+    application_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> dict[str, Any]:
+    """vacancy -> application -> response -> interview -> outcome, with the evidence for each."""
+    try:
+        return ApplicationCrmService(session).journey(user_id, application_id)
+    except EntityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.get("/v1/users/{user_id}/email-review", response_model=list[EmailReviewItemResponse])

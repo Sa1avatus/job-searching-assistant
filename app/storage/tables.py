@@ -637,6 +637,20 @@ class ApplicationTimelineEventRow(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class ImmutableTimelineEvent(RuntimeError):
+    """Timeline events are an append-only audit log: corrections are new events."""
+
+
+@event.listens_for(ApplicationTimelineEventRow, "before_update")
+def _timeline_events_are_immutable(_mapper: object, _connection: object, _row: object) -> None:
+    raise ImmutableTimelineEvent("application timeline events cannot be modified")
+
+
+@event.listens_for(ApplicationTimelineEventRow, "before_delete")
+def _timeline_events_are_not_deletable(_mapper: object, _connection: object, _row: object) -> None:
+    raise ImmutableTimelineEvent("application timeline events cannot be deleted")
+
+
 class RequirementMatchRow(Base):
     __tablename__ = "requirement_matches"
     __table_args__ = (
