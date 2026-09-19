@@ -108,4 +108,3 @@ a violation. Exposed as `GET|PUT /v1/users/{id}/preferences`.
 Timeline events (`application_timeline_events`) are append-only at the ORM level. Details of each
 change live in the topic documents: `docs/matching-data-model.md`, `docs/browser-automation.md`,
 `docs/email-foundation.md`, `docs/architecture.md`.
-
