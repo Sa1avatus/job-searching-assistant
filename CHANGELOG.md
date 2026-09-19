@@ -7,6 +7,10 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Legacy label import** (`scripts/import_legacy_annotations.py`): moves human labels an older JSA
+  version kept in the timeline onto an existing resume (dry run by default, idempotent, reversible,
+  `source=legacy_timeline`).
+
 - **Closed-loop job strategy** (migration 0047): evidence-gated recommendations (matured sample,
   non-overlapping intervals) with stated confounders, explicit accept/reject decisions stored as an
   audit trail, one narrow reversible action (switch active resume), and before/after follow-up.

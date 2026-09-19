@@ -119,3 +119,21 @@ Code: `app/matching/ltr/` (metrics, rankers, benchmark, artifact schema) and
 
 No model has been trained on real data yet: there are no human labels (see the annotation section),
 so there is no benchmark result and the production default stays as it is.
+
+### Importing labels from an older JSA version
+
+Older versions stored human labels as `application_timeline_events` rows (`manual_update`,
+`detail_json.type = matching_feedback`, `label_source = human`). `scripts/import_legacy_annotations.py`
+(`app/services/legacy_annotation_import.py`) moves the labels given for **one named source resume**
+onto an existing target resume: dry run by default, `--apply` to write, `--rollback` to remove exactly
+what it wrote. Rows get `source = legacy_timeline`, keep the original timestamp and confidence, go
+through the same pair canonicalisation as live labels, are skipped (never duplicated) when a live or
+earlier-imported label exists, and the original events are untouched. Only `human` labels of the
+owning user are imported.
+
+On the real database this imported the 407 labels of the old ML resume (`47fd2e1d...`, 3 pointwise and
+404 pairs: 101 decisive, 293 `neither`, 10 `both_equal`) onto the current resume; the 403 labels of the
+other old (ITSM) resume were deliberately not imported. Which old resume was which was inferred from the
+labelled vacancies (winners of the ML resume's decisive pairs are ML-like 40:7, the other resume's lean
+the opposite way 10:44).
+
