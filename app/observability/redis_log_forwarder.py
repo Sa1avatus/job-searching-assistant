@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from collections.abc import MutableMapping
 from typing import Any
 
@@ -22,22 +23,38 @@ _REDIS_LOG_TTL = 86400  # 24h TTL on the key
 
 _redis_client: redis.Redis | None = None
 _init_lock = threading.Lock()
+# Every log call asks for the client. When Redis is down or wedged (a dead Docker port forward
+# accepts the TCP connection and never answers), retrying on each call stalled the whole process,
+# so sockets time out fast and a failed attempt is not repeated for a while.
+_SOCKET_TIMEOUT_SECONDS = 0.5
+_RETRY_AFTER_SECONDS = 30.0
+_retry_not_before = 0.0
 
 
 def _get_redis() -> redis.Redis | None:
-    global _redis_client
+    global _redis_client, _retry_not_before
     if _redis_client is not None:
         return _redis_client
+    if time.monotonic() < _retry_not_before:
+        return None
     with _init_lock:
         if _redis_client is not None:
             return _redis_client
+        if time.monotonic() < _retry_not_before:
+            return None
         redis_url = os.environ.get("APP_REDIS_URL", "redis://localhost:6379/0")
         try:
-            client = redis.from_url(redis_url, decode_responses=True)
+            client = redis.from_url(
+                redis_url,
+                decode_responses=True,
+                socket_connect_timeout=_SOCKET_TIMEOUT_SECONDS,
+                socket_timeout=_SOCKET_TIMEOUT_SECONDS,
+            )
             client.ping()
             _redis_client = client
             return client
         except Exception:
+            _retry_not_before = time.monotonic() + _RETRY_AFTER_SECONDS
             return None
 
 
@@ -116,8 +133,7 @@ def read_redis_logs(
                 msg_str = json.dumps(fields, ensure_ascii=False)
             else:
                 msg_str = str(fields)
-            if (search_lower not in event_text.casefold()
-                    and search_lower not in msg_str.casefold()):
+            if search_lower not in event_text.casefold() and search_lower not in msg_str.casefold():
                 continue
 
         # Build message from event + fields
