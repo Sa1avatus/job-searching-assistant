@@ -21,7 +21,7 @@ def test_failed_real_submission_can_be_scheduled_again() -> None:
     task.transitions = []
 
     session = MagicMock()
-    session.scalar.side_effect = [application, task]
+    session.scalar.side_effect = [application, None, task]  # application, open ledger row, task
     session.get.return_value = vacancy
 
     result = RecruitmentService(session).schedule_real_submission_apply(

@@ -7,6 +7,12 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Application lifecycle and crash-safe submission** (migration 0045): one transition table for
+  every status change with timeline audit and structured 409s; a submission ledger written before
+  the browser acts, so a crashed or inconclusive attempt is verified (site probe / human
+  `POST .../submission/resolve`) instead of resubmitted, and a confirmed submission is never sent
+  twice. Site-verified and manual submissions are recorded too.
+
 - **Matching A/B replay and hybrid routing (off by default)**: replay harness (quality + p50/p95
   latency, throughput, CPU, memory, verdicts), data-driven LLM-share margin curve, `hybrid_rank` with
   baseline/cheap fallbacks behind `APP_MATCHING_HYBRID_ROUTING`, and `scripts/matching_ab.py`.

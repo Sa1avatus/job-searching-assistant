@@ -86,3 +86,39 @@ who already had a working capture keeps it.
 - Sessions captured before this table existed are bootstrapped from `browser_sessions`
   (`available` -> `AUTHENTICATED`, `expired`/`corrupted` -> `REAUTH_REQUIRED`).
 - State is per user; another user's session never affects it.
+
+## Application lifecycle and crash-safe submission
+
+**Lifecycle** (`app/domain/application_lifecycle.py`, applied by
+`app/services/application_lifecycle.py::change_status`). One transition table governs every status
+change: shortlist (`draft`/`saved`) -> review (`awaiting_review`) -> human approval (`approved`) ->
+`submitted` -> tracking (`interview`/`offer`/`employer_rejected`), with `rejected`/`skipped`/
+`withdrawn` exits and `needs_review` for anything unclassified. Nothing moves backwards once
+submitted (that is how a duplicate submission would be prepared), `withdrawn` is final, and
+`employer_rejected` can only go to `needs_review`. A person may record what happened outside the app
+(pre-submission -> interview/offer/rejection), which also records a manual submission. Automation
+cannot take human-only transitions (approval, restoring a rejected/skipped entry). Setting the same
+status again is a no-op. Every real change writes a timeline event (`status_change`, with its
+source). `PATCH /v1/applications/{id}/status` answers an illegal change with a structured 409
+`{code: illegal_transition, message, current, requested, allowed}`.
+
+**Submission ledger** (`application_submissions`, migration 0045). A real submission is recorded
+*before* the browser touches the site (`attempting`) and resolved afterwards: `confirmed`,
+`unknown` (adapter could not tell, e.g. `ApplyBlocked`) or `failed` (definitely not sent: no session,
+CAPTCHA before submitting). A partial unique index allows only one attempting/unknown/confirmed row per
+application. Consequences:
+
+- a crashed worker leaves `attempting`; the next run **probes the site** (`has_submitted_application`)
+  and marks the application submitted if it shows the earlier attempt, otherwise it waits for a human
+  (`verify_submission`) - it never resubmits blindly;
+- a confirmed submission is never sent again, even if the status was reset by mistake;
+- scheduling a new real submission is refused (409) while an attempt is open or confirmed;
+- `GET /v1/applications/{id}/submission` shows the state, every attempt and the allowed next statuses;
+  `POST /v1/applications/{id}/submission/resolve {"submitted": true|false}` is the human answer for an
+  unresolved attempt (`false` frees exactly one new attempt; nothing is submitted by the call);
+- site probes (sync, discovery) that see an application as submitted record a `confirmed` row too;
+- the migration backfills a `confirmed` row (`verified_by='legacy'`) for every application already
+  submitted/interview/offer.
+
+Real submission is still gated by `APP_ENABLE_*_APPLY`, an explicit confirmation request and a
+captured session; this change adds no way to submit without them.

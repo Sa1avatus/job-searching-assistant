@@ -30,7 +30,7 @@ import structlog
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import SecretStr
+from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -135,6 +135,7 @@ from app.api.statistics_schemas import (
 from app.browser.session_probe import probe_browser_session
 from app.browser.session_store import InvalidBrowserState, delete_browser_state_file
 from app.config import Settings, get_settings
+from app.domain.application_lifecycle import IllegalApplicationTransition, allowed_targets
 from app.domain.autofill_keys import InvalidAutofillKey
 from app.domain.autofill_sensitivity import evaluate_autofill_usage
 from app.domain.browser_session_state import BrowserSessionEvent, BrowserSessionState
@@ -188,6 +189,7 @@ from app.services.application_email_sync import (
     ApplicationEmailProvider,
     ApplicationEmailSyncService,
 )
+from app.services.application_lifecycle import SubmissionBlocked, SubmissionLedger, change_status
 from app.services.application_sync import ApplicationStatusSyncService, ApplicationSubmissionProbe
 from app.services.autofill_value_delete import delete_autofill_value
 from app.services.autofill_value_list import list_autofill_values
@@ -437,6 +439,7 @@ def required_api_scope(method: str, path: str) -> str:
         path.endswith("/decision")
         or path.endswith("/status")
         or path.endswith("/reject-vacancy")
+        or path.endswith("/submission/resolve")
         or path.endswith("/retry")
         or path.endswith("/materials")
         or path.endswith("/generate-materials")
@@ -4085,6 +4088,76 @@ def list_review_queue(
     ]
 
 
+@app.get("/v1/applications/{application_id}/submission")
+def get_application_submission(
+    application_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> dict[str, object]:
+    """Submission ledger of one application: open state and every attempt so far."""
+    application = session.get(ApplicationRow, application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+    ledger = SubmissionLedger(session)
+    open_row = ledger.open_row(application_id)
+    return {
+        "application_status": application.status,
+        "allowed_next_statuses": allowed_targets(application.status),
+        "state": open_row.state if open_row is not None else "none",
+        "attempts": [
+            {
+                "state": row.state,
+                "site_key": row.site_key,
+                "verified_by": row.verified_by,
+                "evidence": list(row.evidence or []),
+                "detail": row.detail,
+                "created_at": row.created_at.isoformat(),
+                "updated_at": row.updated_at.isoformat(),
+            }
+            for row in ledger.history(application_id)
+        ],
+    }
+
+
+class SubmissionResolveRequest(BaseModel):
+    submitted: bool
+    note: str | None = Field(default=None, max_length=1000)
+
+
+@app.post("/v1/applications/{application_id}/submission/resolve")
+def resolve_application_submission(
+    application_id: str,
+    request: SubmissionResolveRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> dict[str, object]:
+    """Human answer for an attempt whose outcome is unknown: it went through, or it did not.
+
+    ``submitted: true`` records the submission and marks the application submitted;
+    ``submitted: false`` frees it for another attempt. Nothing is submitted by this call.
+    """
+    application = session.scalar(
+        select(ApplicationRow).where(ApplicationRow.id == application_id).with_for_update()
+    )
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+    ledger = SubmissionLedger(session)
+    try:
+        row = ledger.resolve_unknown(application_id, submitted=request.submitted, note=request.note)
+        if request.submitted:
+            change_status(session, application, "submitted", actor="human", source="submission_resolved")
+    except SubmissionBlocked as error:
+        session.rollback()
+        raise HTTPException(
+            status_code=409, detail={"code": "no_unresolved_submission", "message": str(error)}
+        ) from error
+    except IllegalApplicationTransition as error:
+        session.rollback()
+        raise HTTPException(
+            status_code=409, detail={"code": "illegal_transition", "message": str(error)}
+        ) from error
+    session.commit()
+    return {"state": row.state, "application_status": application.status}
+
+
 @app.post("/v1/applications/{application_id}/decision", response_model=ApplicationResponse)
 def decide_application(
     application_id: str,
@@ -4117,6 +4190,17 @@ def update_application_status(
         )
     except EntityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except IllegalApplicationTransition as error:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "illegal_transition",
+                "message": str(error),
+                "current": error.current,
+                "requested": error.target,
+                "allowed": allowed_targets(error.current),
+            },
+        ) from error
     return ApplicationResponse.model_validate(application, from_attributes=True)
 
 

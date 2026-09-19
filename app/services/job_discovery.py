@@ -35,6 +35,7 @@ from adapters.job_boards.linkedin_browser import ExtractedLinkedInVacancy, Linke
 from app.config import get_settings
 from app.domain.vacancy_attributes import detect_employment_types
 from app.matching.jobs import MatchingJobService
+from app.services.application_lifecycle import mark_submitted_from_site
 from app.services.company_blacklist import CompanyBlacklistService
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError, RecruitmentService
 from app.services.vacancy_identity import find_vacancy_by_identity
@@ -537,7 +538,9 @@ class JobDiscoveryService:
             if existing_application.status in _TERMINAL_DISCOVERY_STATUSES:
                 return None
             if application_submitted:
-                existing_application.status = "submitted"
+                mark_submitted_from_site(
+                    self._session, existing_application, vacancy.adapter_name, source="discovery"
+                )
                 self._mark_linkedin_duplicates_submitted(user_id, vacancy)
                 return None
             existing_application.selected_cv_file_id = cv_file_id
@@ -566,7 +569,9 @@ class JobDiscoveryService:
             return None
         self._rescore_from_text(application, vacancy, cv_file_id)
         if application_submitted:
-            application.status = "submitted"
+            mark_submitted_from_site(
+                self._session, application, vacancy.adapter_name, source="discovery"
+            )
             self._mark_linkedin_duplicates_submitted(user_id, vacancy)
             self._session.commit()
             return None
@@ -613,7 +618,9 @@ class JobDiscoveryService:
                 for value in (vacancy.title, vacancy.company, vacancy.location)
             )
             if vacancy_key == submitted_key:
-                application.status = "submitted"
+                mark_submitted_from_site(
+                    self._session, application, vacancy.adapter_name, source="discovery_duplicate"
+                )
         self._session.commit()
 
     async def discover_greenhouse_vacancies(

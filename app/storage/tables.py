@@ -565,6 +565,45 @@ class ApplicationEmailEventRow(Base):
     previous_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
 
+class ApplicationSubmissionRow(Base):
+    """Ledger of real (irreversible) submission attempts, one open/confirmed row per application.
+
+    States: ``attempting`` (browser is running or crashed mid-run), ``unknown`` (the adapter
+    could not tell whether the site accepted it), ``confirmed`` (the site or a person confirmed
+    it) and ``failed`` (definitely not submitted; retry is safe). The partial unique index lets
+    only one attempting/unknown/confirmed row exist per application, so a second submission can
+    never be started while the first one's outcome is unresolved.
+    """
+
+    __tablename__ = "application_submissions"
+    __table_args__ = (
+        Index(
+            "uq_application_submissions_open",
+            "application_id",
+            unique=True,
+            postgresql_where=text("state IN ('attempting', 'unknown', 'confirmed')"),
+            sqlite_where=text("state IN ('attempting', 'unknown', 'confirmed')"),
+        ),
+        CheckConstraint(
+            "state IN ('attempting', 'unknown', 'confirmed', 'failed')",
+            name="ck_application_submissions_state",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    site_key: Mapped[str] = mapped_column(String(100))
+    state: Mapped[str] = mapped_column(String(20))
+    verified_by: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    evidence: Mapped[list[str]] = mapped_column(JSON, default=list)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class ApplicationTimelineEventRow(Base):
     __tablename__ = "application_timeline_events"
     __table_args__ = (

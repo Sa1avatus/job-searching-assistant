@@ -8,10 +8,20 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.domain.application_lifecycle import (
+    POST_SUBMISSION,
+    SUBMISSION_IMPLIED,
+    IllegalApplicationTransition,
+)
 from app.domain.application_status import APPLICATION_STATUSES, ApplicationStatus
 from app.domain.models import ApplicationQuestion, ProfileFact, TaskState, Vacancy
 from app.domain.policy import SENSITIVE_CATEGORIES, assess_vacancy, prepare_answers
 from app.domain.vacancy_attributes import EMPLOYMENT_TYPE_ORDER, EmploymentType
+from app.services.application_lifecycle import (
+    SubmissionBlocked,
+    SubmissionLedger,
+    change_status,
+)
 from app.services.vacancy_identity import find_vacancy_by_identity
 from app.storage.documents import SavedDocument
 from app.storage.tables import (
@@ -539,6 +549,10 @@ class RecruitmentService:
             raise EntityNotFoundError("Application not found")
         if application.status != "awaiting_review":
             raise DuplicateEntityError("Application is no longer awaiting review")
+        try:
+            SubmissionLedger(self._session).guard_new_submission(application_id)
+        except SubmissionBlocked as error:
+            raise DuplicateEntityError(str(error)) from error
         vacancy = self._session.get(VacancyRow, application.vacancy_id)
         if vacancy is None:
             raise EntityNotFoundError("Vacancy not found")
@@ -786,9 +800,13 @@ class RecruitmentService:
             raise EntityNotFoundError("Application not found")
         if application.status != "awaiting_review":
             raise DuplicateEntityError("Application is no longer awaiting review")
-        application.status = {"approve": "approved", "reject": "rejected", "skip": "skipped"}[
-            decision
-        ]
+        change_status(
+            self._session,
+            application,
+            {"approve": "approved", "reject": "rejected", "skip": "skipped"}[decision],
+            actor="human",
+            source="review_decision",
+        )
         workflow_task = self._session.scalar(
             select(WorkflowTaskRow)
             .where(WorkflowTaskRow.application_id == application_id)
@@ -829,7 +847,19 @@ class RecruitmentService:
             raise EntityNotFoundError("Application not found")
         if status not in APPLICATION_STATUSES:
             raise ValueError("Unsupported application status")
-        application.status = status
+        previous_status = application.status
+        try:
+            changed = change_status(
+                self._session, application, status, actor="human", source="manual_status"
+            )
+        except IllegalApplicationTransition:
+            self._session.rollback()
+            raise
+        if changed and status in SUBMISSION_IMPLIED and previous_status not in POST_SUBMISSION:
+            vacancy = self._session.get(VacancyRow, application.vacancy_id)
+            SubmissionLedger(self._session).record_manual_submission(
+                application, vacancy.adapter_name if vacancy is not None else "manual"
+            )
         self._session.commit()
         return application
 

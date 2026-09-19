@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy.orm import Session, sessionmaker
@@ -20,8 +20,9 @@ from app.browser.session_store import EncryptedBrowserStateStore, InvalidBrowser
 from app.config import Settings
 from app.domain.failures import FailureCategory
 from app.domain.models import TaskState
+from app.services.application_lifecycle import SubmissionLedger, change_status
 from app.storage.documents import DocumentStorage
-from app.storage.tables import ApplicationRow, CvFileRow, VacancyRow
+from app.storage.tables import ApplicationRow, ApplicationSubmissionRow, CvFileRow, VacancyRow
 from app.storage.task_repository import ClaimedTask
 from app.workers.dispatcher import ExecutionOutcome, HumanActionRequest, TaskHandler
 
@@ -343,8 +344,116 @@ def _mark_application_submitted(
         application = session.get(ApplicationRow, application_id)
         if application is None:
             raise LookupError(f"Application {application_id} no longer exists")
-        application.status = "submitted"
+        change_status(session, application, "submitted", actor="system", source="browser_worker")
         session.commit()
+
+
+def _submission_begin(
+    session_factory: sessionmaker[Session], application_id: str, site_key: str
+) -> tuple[str, str | None]:
+    """Write the ``attempting`` ledger row *before* the browser touches the site.
+
+    Returns (action, ledger_row_id); action is proceed | already_submitted | verify_first.
+    """
+    with session_factory() as session:
+        application = session.get(ApplicationRow, application_id)
+        if application is None:
+            raise LookupError(f"Application {application_id} no longer exists")
+        decision = SubmissionLedger(session).begin(application, site_key)
+        session.commit()
+        return decision.action, decision.row.id if decision.row is not None else None
+
+
+def _submission_resolve(
+    session_factory: sessionmaker[Session],
+    application_id: str,
+    row_id: str | None,
+    *,
+    outcome: str,
+    verified_by: str | None = None,
+    evidence: list[str] | None = None,
+    detail: str = "",
+) -> None:
+    """Record how the attempt ended: confirmed (and mark submitted), unknown, or failed."""
+    if row_id is None:
+        return
+    with session_factory() as session:
+        row = session.get(ApplicationSubmissionRow, row_id)
+        application = session.get(ApplicationRow, application_id)
+        if row is None or application is None:
+            raise LookupError("submission ledger row or application no longer exists")
+        ledger = SubmissionLedger(session)
+        if outcome == "confirmed":
+            ledger.confirm(
+                row, verified_by=verified_by or "worker", evidence=evidence, detail=detail
+            )
+            change_status(
+                session, application, "submitted", actor="system", source="browser_worker"
+            )
+        elif outcome == "unknown":
+            ledger.mark_unknown(row, detail=detail, evidence=evidence)
+        else:
+            ledger.mark_failed(row, detail=detail, evidence=evidence)
+        session.commit()
+
+
+async def _handle_open_submission(
+    session_factory: sessionmaker[Session],
+    application_id: str,
+    row_id: str | None,
+    adapter: Any,
+    source_url: str,
+    *,
+    action: str,
+    site_key: str,
+) -> ExecutionOutcome | None:
+    """Never resubmit blindly: settle an already-confirmed or unresolved earlier attempt.
+
+    Returns an outcome that ends the task, or None when it is safe to submit.
+    """
+    if action == "proceed":
+        return None
+    if action == "already_submitted":
+        _mark_application_submitted(session_factory, application_id)
+        return ExecutionOutcome(
+            TaskState.COMPLETED,
+            f"{site_key} application was already submitted earlier; nothing was sent again",
+            (f"application:{application_id}", "submission:already_confirmed"),
+        )
+    try:
+        already_there = await adapter.has_submitted_application(source_url)
+    except Exception as error:  # noqa: BLE001 - an inconclusive probe must not trigger a resubmit
+        already_there = None
+        probe_error = type(error).__name__
+    else:
+        probe_error = ""
+    if already_there:
+        _submission_resolve(
+            session_factory,
+            application_id,
+            row_id,
+            outcome="confirmed",
+            verified_by="probe",
+            evidence=["site shows the earlier attempt as submitted"],
+        )
+        return ExecutionOutcome(
+            TaskState.COMPLETED,
+            f"{site_key} shows the earlier attempt went through; nothing was sent again",
+            (f"application:{application_id}", "submission:verified_by_probe"),
+        )
+    return ExecutionOutcome(
+        TaskState.WAITING_FOR_USER,
+        "an earlier submission attempt has an unknown outcome; not submitting again",
+        ("submission:unknown", *((f"probe_error:{probe_error}",) if probe_error else ())),
+        HumanActionRequest(
+            kind="verify_submission",
+            instructions=(
+                f"Check {site_key} yourself: did the earlier application go through? Then answer "
+                f"POST /v1/applications/{application_id}/submission/resolve with "
+                '{"submitted": true|false}. Only "false" allows another attempt.'
+            ),
+        ),
+    )
 
 
 _REAUTH_INSTRUCTIONS = (
@@ -426,9 +535,30 @@ class HeadHunterApplyHandler:
             selector_library=SelectorLibrary(self._settings.artifact_directory),
         ) as browser_engine:
             adapter = self._adapter_factory(browser_engine)
+            action, row_id = _submission_begin(
+                self._session_factory, claimed_task.application_id, self.site_key
+            )
+            settled = await _handle_open_submission(
+                self._session_factory,
+                claimed_task.application_id,
+                row_id,
+                adapter,
+                source_url,
+                action=action,
+                site_key="hh.ru",
+            )
+            if settled is not None:
+                return settled
             try:
                 result = await adapter.apply(source_url, cover_letter=cover_letter or None)
             except LoginRequired:
+                _submission_resolve(
+                    self._session_factory,
+                    claimed_task.application_id,
+                    row_id,
+                    outcome="failed",
+                    detail="hh.ru session was not authenticated",
+                )
                 return ExecutionOutcome(
                     TaskState.WAITING_FOR_USER,
                     "hh.ru session is no longer authenticated",
@@ -439,6 +569,13 @@ class HeadHunterApplyHandler:
                     ),
                 )
             except CaptchaChallenge as challenge:
+                _submission_resolve(
+                    self._session_factory,
+                    claimed_task.application_id,
+                    row_id,
+                    outcome="failed",
+                    detail="hh.ru presented a verification checkpoint before submitting",
+                )
                 return ExecutionOutcome(
                     TaskState.WAITING_FOR_USER,
                     "hh.ru presented a CAPTCHA/verification checkpoint",
@@ -455,6 +592,13 @@ class HeadHunterApplyHandler:
                     ),
                 )
             except ApplyBlocked as blocked:
+                _submission_resolve(
+                    self._session_factory,
+                    claimed_task.application_id,
+                    row_id,
+                    outcome="unknown",
+                    detail=str(blocked)[:500],
+                )
                 return ExecutionOutcome(
                     TaskState.FAILED,
                     "hh.ru response could not be completed automatically",
@@ -462,7 +606,14 @@ class HeadHunterApplyHandler:
                 )
             fresh_state = await browser_engine.storage_state()
 
-        _mark_application_submitted(self._session_factory, claimed_task.application_id)
+        _submission_resolve(
+            self._session_factory,
+            claimed_task.application_id,
+            row_id,
+            outcome="confirmed",
+            verified_by="site" if result.already_applied else "worker",
+            evidence=[f"confirmation_url:{result.confirmation_url}"],
+        )
         _persist_browser_session(
             self._session_factory,
             self._session_store,
@@ -557,9 +708,30 @@ class LinkedInApplyHandler:
             selector_library=SelectorLibrary(self._settings.artifact_directory),
         ) as browser_engine:
             adapter = self._adapter_factory(browser_engine)
+            action, row_id = _submission_begin(
+                self._session_factory, claimed_task.application_id, self.site_key
+            )
+            settled = await _handle_open_submission(
+                self._session_factory,
+                claimed_task.application_id,
+                row_id,
+                adapter,
+                source_url,
+                action=action,
+                site_key="LinkedIn",
+            )
+            if settled is not None:
+                return settled
             try:
                 result = await adapter.apply(source_url, answers=answers)
             except LoginRequired:
+                _submission_resolve(
+                    self._session_factory,
+                    claimed_task.application_id,
+                    row_id,
+                    outcome="failed",
+                    detail="LinkedIn session was not authenticated",
+                )
                 return ExecutionOutcome(
                     TaskState.WAITING_FOR_USER,
                     "LinkedIn session is no longer authenticated",
@@ -570,6 +742,13 @@ class LinkedInApplyHandler:
                     ),
                 )
             except CaptchaChallenge as challenge:
+                _submission_resolve(
+                    self._session_factory,
+                    claimed_task.application_id,
+                    row_id,
+                    outcome="failed",
+                    detail="LinkedIn presented a verification checkpoint before submitting",
+                )
                 return ExecutionOutcome(
                     TaskState.WAITING_FOR_USER,
                     "LinkedIn presented a verification checkpoint",
@@ -586,6 +765,13 @@ class LinkedInApplyHandler:
                     ),
                 )
             except ApplyBlocked as blocked:
+                _submission_resolve(
+                    self._session_factory,
+                    claimed_task.application_id,
+                    row_id,
+                    outcome="unknown",
+                    detail=str(blocked)[:500],
+                )
                 return ExecutionOutcome(
                     TaskState.FAILED,
                     "LinkedIn Easy Apply could not be completed automatically",
@@ -593,7 +779,14 @@ class LinkedInApplyHandler:
                 )
             fresh_state = await browser_engine.storage_state()
 
-        _mark_application_submitted(self._session_factory, claimed_task.application_id)
+        _submission_resolve(
+            self._session_factory,
+            claimed_task.application_id,
+            row_id,
+            outcome="confirmed",
+            verified_by="worker",
+            evidence=[f"confirmation_url:{result.confirmation_url}"],
+        )
         _persist_browser_session(
             self._session_factory,
             self._session_store,

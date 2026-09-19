@@ -7,6 +7,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services.application_lifecycle import mark_submitted_from_site
 from app.services.recruitment import EntityNotFoundError
 from app.storage.tables import ApplicationRow, UserRow, VacancyRow
 
@@ -64,8 +65,12 @@ class ApplicationStatusSyncService:
             if not is_submitted:
                 unchanged += 1
                 continue
-            application.status = "submitted"
-            updated += 1
+            if mark_submitted_from_site(
+                self._session, application, vacancy.adapter_name, source="application_sync"
+            ):
+                updated += 1
+            else:
+                skipped += 1
         self._session.commit()
         return ApplicationSyncSummary(
             checked=checked,

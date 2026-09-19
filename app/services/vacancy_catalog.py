@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime, time
 from sqlalchemy import Select, String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.services.application_lifecycle import change_status
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError
 from app.services.vacancy_metadata import (
     detect_work_format,
@@ -182,7 +183,9 @@ class VacancyCatalogService:
             raise DuplicateEntityError(
                 "Submitted or interview-stage applications cannot be rejected as vacancies"
             )
-        application.status = "rejected"
+        change_status(
+            self._session, application, "rejected", actor="human", source="reject_vacancy"
+        )
         self._session.commit()
         return application
 
