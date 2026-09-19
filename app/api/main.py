@@ -881,6 +881,11 @@ def debug_logs_clear() -> dict[str, str]:
     return {"status": "cleared"}
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @app.get("/review", include_in_schema=False)
 def review_interface() -> FileResponse:
     return FileResponse(

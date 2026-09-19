@@ -476,6 +476,16 @@ def create_dataset_split(
     return _split_response(row)
 
 
+@router.get("/splits", response_model=list[SplitResponse])
+def list_dataset_splits(session: Session = Depends(session_scope)) -> list[SplitResponse]:
+    from sqlalchemy import select
+
+    from app.storage.tables import AnnotationSplitRow
+
+    rows = session.scalars(select(AnnotationSplitRow).order_by(AnnotationSplitRow.name))
+    return [_split_response(row) for row in rows]
+
+
 @router.get("/splits/{name}", response_model=SplitResponse)
 def read_dataset_split(name: str, session: Session = Depends(session_scope)) -> SplitResponse:
     try:

@@ -172,3 +172,11 @@ def test_pair_queue_endpoint_rejects_foreign_resume_with_an_empty_queue(client: 
     response = client.get("/v1/annotation/pair-queue?user_id=alice&resume_id=cv-bob")
 
     assert response.status_code == 200 and response.json()["items"] == []
+
+
+def test_splits_can_be_listed_and_favicon_does_not_404(client: TestClient) -> None:
+    assert client.get("/v1/annotation/splits").json() == []
+    client.post("/v1/annotation/splits", json={"name": "gold-v1"})
+
+    assert [s["name"] for s in client.get("/v1/annotation/splits").json()] == ["gold-v1"]
+    assert client.get("/favicon.ico").status_code == 204

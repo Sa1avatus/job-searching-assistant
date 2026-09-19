@@ -4177,10 +4177,9 @@ async function refreshAnnotationReport() {
 
 async function annotationSplitExists(name) {
   if (!name) return false;
-  const response = await fetch(`/v1/annotation/splits/${encodeURIComponent(name)}`, {headers: headers(false)});
-  if (response.status === 404) return false;
-  await asJson(response);
-  return true;
+  // list instead of probing a single name: an unknown split would log a 404 in the console
+  const splits = await asJson(await fetch('/v1/annotation/splits', {headers: headers(false)}));
+  return splits.some(split => split.name === name);
 }
 
 function annotationCard(item, title) {

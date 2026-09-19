@@ -1,10 +1,16 @@
-FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
+# The Playwright version installed by pip MUST equal the base image tag: the image ships the browser
+# builds for exactly that release, and an unpinned pip install pulls the newest playwright, which then
+# looks for a Chromium build the image does not contain ("Executable doesn't exist").
+ARG PLAYWRIGHT_VERSION=1.62.0
+FROM mcr.microsoft.com/playwright/python:v${PLAYWRIGHT_VERSION}-noble
+ARG PLAYWRIGHT_VERSION
 
 WORKDIR /app
 COPY requirements.txt ./
-RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt \
+    && pip install "playwright==${PLAYWRIGHT_VERSION}"
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends novnc websockify x11vnc \
+    && apt-get install -y --no-install-recommends novnc websockify x11vnc x11-utils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
