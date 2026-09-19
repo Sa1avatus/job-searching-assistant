@@ -87,6 +87,10 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Changed
 
+- **Dashboard collapsing**: top-level tabs and panel titles no longer collapse (clicking the active tab keeps it open);
+  second-level and deeper sections stay collapsible and each remembers its expanded/collapsed state
+  (`localStorage` key `dashboardSubsectionState`, keyed by panel and position, collapsed by default).
+
 - **Raised matching inference budgets for dense vacancies.** Extraction `max_tokens` and the
   extraction/decompose/entailment context windows (`APP_MATCHING_EXTRACTION_MAX_TOKENS`,
   `APP_MATCHING_EXTRACTION_CONTEXT_SIZE`, `APP_MATCHING_DECOMPOSE_CONTEXT_SIZE`,

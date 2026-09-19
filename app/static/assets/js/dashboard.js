@@ -1139,6 +1139,7 @@ function initializeDashboardSubsections() {
 
     Array.from(section.children).forEach(child => {
       if (!child.matches?.('h2, h3')) return;
+      if (child.matches('h2')) return; // top level: the panel title is always open
       if (child.classList.contains('dashboard-subsection-toggle')) return;
 
       child.classList.add('dashboard-subsection-toggle');
@@ -1160,6 +1161,18 @@ function initializeDashboardSubsections() {
     });
   });
 
+  // Stable keys: panel name + position among that panel's collapsible headings (independent
+  // of the interface language, unlike the heading text).
+  const positions = new Map();
+  document.querySelectorAll('section.step').forEach(section => {
+    const panel = section.dataset.panel || 'panel';
+    section.querySelectorAll('.dashboard-subsection-toggle').forEach(heading => {
+      const position = positions.get(panel) || 0;
+      positions.set(panel, position + 1);
+      heading.dataset.stateKey = `${panel}:${position}`;
+    });
+  });
+
   const toggleSubsection = heading => {
     const body = heading.nextElementSibling;
     if (!body?.classList.contains('dashboard-subsection-body')) return;
@@ -1167,6 +1180,7 @@ function initializeDashboardSubsections() {
     const shouldOpen = body.hidden;
     body.hidden = !shouldOpen;
     heading.setAttribute('aria-expanded', String(shouldOpen));
+    saveSubsectionState(heading.dataset.stateKey, shouldOpen);
   };
 
   document.addEventListener('click', event => {
@@ -1184,11 +1198,36 @@ function initializeDashboardSubsections() {
   });
 }
 
-function collapseAllDashboardSubsections(root = document) {
+const SUBSECTION_STATE_KEY = 'dashboardSubsectionState';
+
+function readSubsectionState() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SUBSECTION_STATE_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    return {}; // unreadable or blocked storage: every section starts collapsed
+  }
+}
+
+function saveSubsectionState(key, open) {
+  if (!key) return;
+  try {
+    const state = readSubsectionState();
+    state[key] = open;
+    localStorage.setItem(SUBSECTION_STATE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.warn('Could not remember the collapsed/expanded state:', error);
+  }
+}
+
+// Collapsed by default; a section the user opened (or closed) before keeps that choice.
+function applyStoredSubsectionState(root = document) {
+  const state = readSubsectionState();
   root.querySelectorAll('.dashboard-subsection-toggle').forEach(heading => {
-    heading.setAttribute('aria-expanded', 'false');
+    const open = state[heading.dataset.stateKey] === true;
+    heading.setAttribute('aria-expanded', String(open));
     const body = heading.nextElementSibling;
-    if (body?.classList.contains('dashboard-subsection-body')) body.hidden = true;
+    if (body?.classList.contains('dashboard-subsection-body')) body.hidden = !open;
   });
 }
 
@@ -1309,7 +1348,7 @@ document.querySelector('#matching-queue-refresh').addEventListener('click', () =
 
 document.querySelectorAll('[data-menu]').forEach(button => {
   button.addEventListener('click', () => {
-    const expanded = activatePanel(button.dataset.menu, {toggle: true});
+    const expanded = activatePanel(button.dataset.menu); // top-level tabs never collapse
     if (!expanded) return;
 
     if (button.dataset.menu === 'vacancies') loadSavedVacancies().catch(showError);
@@ -3909,7 +3948,7 @@ document.querySelector('#load-user').addEventListener('click', () => {
 translateTree();
 renderLanguageSelector();
 initializeDashboardSubsections();
-collapseAllDashboardSubsections();
+applyStoredSubsectionState();
 
 const requestedPanel = new URLSearchParams(window.location.search).get('panel');
 const validPanels = ['vacancies', 'search', 'blacklist', 'resume', 'sessions', 'model', 'access', 'annotation', 'crm'];
