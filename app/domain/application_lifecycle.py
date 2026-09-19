@@ -23,7 +23,7 @@ from typing import Literal
 
 from app.domain.application_status import APPLICATION_STATUSES
 
-Actor = Literal["human", "system"]
+Actor = Literal["human", "system", "email"]
 
 # The person may record what happened outside the app (they applied by hand and got an
 # interview or a rejection), so the pre-submission statuses can jump to the tracking statuses.
@@ -73,6 +73,13 @@ HUMAN_ONLY: frozenset[tuple[str, str]] = frozenset(
     | {("approved", "awaiting_review"), ("employer_rejected", "needs_review")}
 )
 
+# An acknowledgement email ("we received your application") is the one automated signal allowed
+# to set ``approved``: it means the employer accepted the application into its process.
+EMAIL_EXTRA: frozenset[tuple[str, str]] = frozenset(
+    (source, "approved")
+    for source in ("draft", "saved", "awaiting_review", "needs_review", "submitted")
+) | {("needs_review", "awaiting_review")}
+
 # Statuses from which a real (irreversible) submission may still be prepared.
 SUBMITTABLE_STATUSES = frozenset({"awaiting_review"})
 
@@ -100,9 +107,11 @@ def check_transition(current: str, target: str, actor: Actor = "human") -> bool:
         raise IllegalApplicationTransition(current, target, "unknown current status")
     if current == target:
         return False
+    if actor == "email" and (current, target) in EMAIL_EXTRA:
+        return True
     if target not in TRANSITIONS[current]:
         raise IllegalApplicationTransition(current, target, "not an allowed transition")
-    if actor == "system" and (current, target) in HUMAN_ONLY:
+    if actor in ("system", "email") and (current, target) in HUMAN_ONLY:
         raise IllegalApplicationTransition(current, target, "requires an explicit human action")
     return True
 

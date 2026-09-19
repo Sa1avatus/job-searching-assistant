@@ -7,6 +7,11 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Email intelligence hardening** (migration 0046): five email classes in the review API, email-driven
+  status changes validated by the application lifecycle (refused moves go to review with a reason),
+  implied submissions recorded in the ledger, explainable linking (`match_method`/`match_reason`/
+  `review_reason`) and `APP_EMAIL_BODY_RETENTION_DAYS` body retention.
+
 - **Application lifecycle and crash-safe submission** (migration 0045): one transition table for
   every status change with timeline audit and structured 409s; a submission ledger written before
   the browser acts, so a crashed or inconclusive attempt is verified (site probe / human

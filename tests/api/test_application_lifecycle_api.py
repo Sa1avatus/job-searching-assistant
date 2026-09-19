@@ -130,3 +130,21 @@ def test_resolving_without_an_open_attempt_is_a_409(env) -> None:
 def test_resolve_uses_the_review_write_scope() -> None:
     assert required_api_scope("POST", "/v1/applications/a1/submission/resolve") == "review:write"
     assert required_api_scope("GET", "/v1/applications/a1/submission") == "review:read"
+
+
+def test_email_review_items_expose_class_and_explanations(env) -> None:
+    client, factory = env
+    with factory() as db:
+        from app.services.application_email_events import ApplicationEmailEventService
+
+        ApplicationEmailEventService(db).ingest(
+            "u1", "Application update", "Unfortunately, we will not be moving forward."
+        )
+
+    items = client.get("/v1/users/u1/email-review").json()
+
+    assert len(items) == 1
+    item = items[0]
+    assert item["email_class"] == "rejection"
+    assert item["match_method"] == "none" and item["match_reason"]
+    assert "not linked confidently" in item["review_reason"]

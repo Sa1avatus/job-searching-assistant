@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     browser_state_encryption_key: SecretStr | None = None
     max_browser_state_bytes: int = Field(default=2_097_152, ge=1_024, le=10_485_760)
     global_browser_concurrency: int = Field(default=2, ge=1, le=10)
+    # Email bodies are only needed to review or classify a message; drop them after this long.
+    email_body_retention_days: int = Field(default=30, ge=1, le=3650)
     api_key: SecretStr | None = None
     api_clients_json: SecretStr | None = None
     redis_url: str = "redis://localhost:6379/0"

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.browser.session_store import InvalidBrowserState, delete_browser_state_file
 from app.storage.documents import DocumentStorage, InvalidDocumentError
-from app.storage.tables import BrowserSessionRow, CvFileRow
+from app.storage.tables import ApplicationEmailEventRow, BrowserSessionRow, CvFileRow
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,3 +127,35 @@ def purge_expired_browser_sessions(
         deleted_records += 1
     session.commit()
     return BrowserSessionRetentionReport(deleted_records, failed_records)
+
+
+@dataclass(frozen=True, slots=True)
+class EmailBodyRetentionReport:
+    cleared_bodies: int
+
+
+def purge_email_bodies(
+    session: Session, *, retention_days: int, now: datetime | None = None
+) -> EmailBodyRetentionReport:
+    """Erase stored email bodies that no workflow needs any more.
+
+    An email body is only needed while a person may still have to read it. Bodies of resolved
+    events, and of events that never needed review, are cleared once they are ``retention_days``
+    old; bodies of unresolved review items are kept. The subject, fingerprint, category and
+    outcome stay, so deduplication and the timeline keep working.
+    """
+    if retention_days < 1:
+        raise ValueError("retention_days must be positive")
+    cutoff = (now or datetime.now(UTC)) - timedelta(days=retention_days)
+    rows = session.scalars(
+        select(ApplicationEmailEventRow).where(
+            ApplicationEmailEventRow.body.is_not(None),
+            ApplicationEmailEventRow.processed_at < cutoff,
+            (ApplicationEmailEventRow.resolved.is_(True))
+            | (ApplicationEmailEventRow.needs_review.is_(False)),
+        )
+    ).all()
+    for row in rows:
+        row.body = None
+    session.commit()
+    return EmailBodyRetentionReport(cleared_bodies=len(rows))

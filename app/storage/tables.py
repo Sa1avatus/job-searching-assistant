@@ -563,6 +563,10 @@ class ApplicationEmailEventRow(Base):
     candidates: Mapped[list[dict[str, object]] | None] = mapped_column(JSON, nullable=True)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     previous_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Why the email is linked to this application (explainable) and why it needs a human.
+    match_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    match_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ApplicationSubmissionRow(Base):

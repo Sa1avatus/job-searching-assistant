@@ -57,3 +57,36 @@ def status_for_category(category: EmailCategory) -> str | None:
 
 
 APPLICATION_EMAIL_CATEGORIES: tuple[str, ...] = tuple(c.value for c in EmailCategory)
+
+
+class EmailClass(StrEnum):
+    """The five states the review workflow reasons about, derived from the fine category."""
+
+    INFORMATIONAL = "informational"
+    INTERVIEW = "interview"
+    ACTION_REQUIRED = "action_required"  # screening: a question, a test, a recruiter asking
+    REJECTION = "rejection"
+    OFFER = "offer"
+
+
+_CATEGORY_CLASS_MAP: dict[EmailCategory, EmailClass] = {
+    EmailCategory.APPLICATION_RECEIVED: EmailClass.INFORMATIONAL,
+    EmailCategory.FOLLOW_UP: EmailClass.INFORMATIONAL,
+    EmailCategory.OTHER: EmailClass.INFORMATIONAL,
+    EmailCategory.RECRUITER_CONTACT: EmailClass.ACTION_REQUIRED,
+    EmailCategory.QUESTION: EmailClass.ACTION_REQUIRED,
+    EmailCategory.TEST_ASSIGNMENT: EmailClass.ACTION_REQUIRED,
+    EmailCategory.INTERVIEW_INVITATION: EmailClass.INTERVIEW,
+    EmailCategory.INTERVIEW_RESCHEDULE: EmailClass.INTERVIEW,
+    EmailCategory.OFFER: EmailClass.OFFER,
+    EmailCategory.REJECTION: EmailClass.REJECTION,
+}
+assert set(_CATEGORY_CLASS_MAP) == set(EmailCategory), "every category needs a class"
+
+
+def email_class_for_category(category: str | None) -> EmailClass:
+    """Class of a stored category; unknown or missing categories are informational."""
+    try:
+        return _CATEGORY_CLASS_MAP[EmailCategory(category or "other")]
+    except ValueError:
+        return EmailClass.INFORMATIONAL

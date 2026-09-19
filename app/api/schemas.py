@@ -454,7 +454,11 @@ class EmailReviewItemResponse(BaseModel):
     category: str | None
     confidence: float | None
     outcome: str
+    email_class: str = "informational"
     application_id: str | None
+    match_method: str | None = None
+    match_reason: str | None = None
+    review_reason: str | None = None
     candidates: list[EmailReviewCandidateResponse]
     processed_at: datetime
 

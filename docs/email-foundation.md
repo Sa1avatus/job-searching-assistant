@@ -120,3 +120,28 @@ All file importers implement `ApplicationEmailProvider` and can be used with
 Each email is fingerprinted by SHA-256 of normalized subject + body. The same message arriving
 via IMAP and EML will produce the same fingerprint and be deduplicated by the unique constraint
 on `(user_id, message_fingerprint)`.
+
+## Review workflow, validation and retention (stage 4B)
+
+- **Classes.** Every category maps to one of `informational`, `interview`, `action_required`
+  (question / test assignment / recruiter contact), `rejection`, `offer`
+  (`app/domain/application_email.py::email_class_for_category`); the review API returns `email_class`.
+- **Controlled status updates.** Emails never write a status directly. They go through the
+  application lifecycle (`app/domain/application_lifecycle.py`) with the `email` actor: an
+  acknowledgement may set `approved`, an interview/offer/rejection may advance the status, but a move
+  the lifecycle forbids (offer -> interview, anything out of `withdrawn`) is **not applied**; the email
+  is queued for review with `review_reason` explaining the refused change. Applying still needs
+  classifier confidence >= 0.7 and an unambiguous link.
+- **No duplicate sends.** An email-driven status that only exists after sending (interview, offer,
+  employer rejection) also records a confirmed submission in the ledger (`verified_by='email'`), so the
+  application can never be submitted again.
+- **Explainable linking.** Each event stores `match_method` (`explicit`, `entity`, `text`, `rag`,
+  `ambiguous`, `none`), `match_reason` in plain words, and `review_reason` when a person is needed
+  (low confidence, no confident link, refused transition); the dashboard shows them.
+- **Identity and dedup.** `message_fingerprint` (SHA-256 of subject+body) is unique per user; one
+  timeline `email_received` event is written per new message and repeated syncs change nothing.
+  Ownership is checked on every link.
+- **Retention.** Bodies are only needed while a person may read them: the retention worker clears the
+  body of resolved events and of events that never needed review after
+  `APP_EMAIL_BODY_RETENTION_DAYS` (default 30); bodies of unresolved review items are kept. Subject,
+  fingerprint, category and outcome stay so deduplication and the timeline keep working.

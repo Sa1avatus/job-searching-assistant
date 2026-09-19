@@ -2377,6 +2377,8 @@ function renderEmailReviewItem(item) {
     ? `Category: ${item.category || '—'} · Confidence: ${confidence}`
     : `Категория: ${emailCategoryLabels[item.category] || item.category || '—'} · Уверенность: ${confidence}`;
   wrap.append(element('div', meta, 'email-review__meta'));
+  const why = [item.match_reason, item.review_reason].filter(Boolean).join(' · ');
+  if (why) wrap.append(element('div', (currentLanguage === 'en' ? 'Why: ' : 'Почему: ') + why, 'email-review__meta'));
   if (item.body) wrap.append(element('div', item.body.slice(0, 800), 'email-review__body'));
   const actions = element('div', undefined, 'email-review__actions');
   (item.candidates || []).forEach(candidate => {

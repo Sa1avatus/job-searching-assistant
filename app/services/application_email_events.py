@@ -9,8 +9,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domain.application_email import EmailCategory, outcome_for_category, status_for_category
+from app.domain.application_lifecycle import SUBMISSION_IMPLIED, IllegalApplicationTransition
 from app.domain.application_status import TERMINAL_STATUSES
 from app.services.application_email_classifier import classify_email_category
+from app.services.application_lifecycle import change_status, record_implied_submission
 from app.services.application_timeline import ApplicationTimelineService
 from app.services.email_classification import EmailClassification, EmailClassifier
 from app.services.email_entity_extraction import extract_email_entities
@@ -39,15 +41,38 @@ def _decide(
     matched: bool,
 ) -> tuple[bool, bool]:
     """Return ``(apply_status, needs_review)`` for a classified + matched email."""
-    apply = (
-        target_status is not None
-        and matched
-        and confidence >= _MIN_CLASSIFICATION_CONFIDENCE
-    )
+    apply = target_status is not None and matched and confidence >= _MIN_CLASSIFICATION_CONFIDENCE
     needs_review = not apply and (
         target_status is not None or confidence < _MIN_CLASSIFICATION_CONFIDENCE
     )
     return apply, needs_review
+
+
+@dataclass(frozen=True, slots=True)
+class MatchInfo:
+    """How an email was linked to an application, in words a person can check."""
+
+    method: str  # explicit | entity | text | rag | ambiguous | none
+    reason: str
+
+
+_NO_MATCH = MatchInfo("none", "No application could be linked to this email")
+
+
+def _review_reason(
+    target_status: str | None, confidence: float, matched: bool, info: MatchInfo | None
+) -> str | None:
+    """Why a human is needed, or None when the email can be handled automatically."""
+    reasons: list[str] = []
+    if confidence < _MIN_CLASSIFICATION_CONFIDENCE:
+        reasons.append(
+            f"classification confidence {confidence:.2f} is below {_MIN_CLASSIFICATION_CONFIDENCE}"
+        )
+    if target_status is not None and not matched:
+        reasons.append(
+            (info.reason if info is not None else _NO_MATCH.reason) + " (not linked confidently)"
+        )
+    return "; ".join(reasons) or None
 
 
 class ApplicationEmailEventService:
@@ -83,6 +108,7 @@ class ApplicationEmailEventService:
         vacancy_title: str | None = None,
     ) -> ApplicationEmailEventResult:
         self._require_user(user_id)
+        info = MatchInfo("explicit", "The application was given explicitly")
         if application_id is None:
             entities = extract_email_entities(subject, body)
             application_id = self.match_application(
@@ -90,12 +116,18 @@ class ApplicationEmailEventService:
                 company=company or entities.company,
                 vacancy_title=vacancy_title or entities.vacancy_title,
             )
+            info = MatchInfo(
+                "entity", "Company and vacancy title in the email match one application"
+            )
         if application_id is None:
             application_id = self.match_application_text(
                 user_id,
                 text=f"{subject}\n{body}",
             )
+            info = MatchInfo("text", "A unique vacancy title or company appears in the email text")
         self._require_owned_application(user_id, application_id)
+        if application_id is None:
+            info = _NO_MATCH
 
         classification = _deterministic_classification(subject, body)
         return self._ingest_common(
@@ -107,6 +139,7 @@ class ApplicationEmailEventService:
             classification=classification,
             candidates=None,
             mark_review_vacancy=False,
+            match_info=info,
         )
 
     # ── RAG + LLM ingestion ───────────────────────────────────────────────
@@ -125,7 +158,7 @@ class ApplicationEmailEventService:
         classification = await self._classify(subject, body)
 
         if application_id is None:
-            application_id, matched, candidates = await self._match(
+            application_id, matched, candidates, info = await self._match(
                 user_id,
                 subject,
                 body,
@@ -136,6 +169,7 @@ class ApplicationEmailEventService:
             self._require_owned_application(user_id, application_id)
             matched = True
             candidates = None
+            info = MatchInfo("explicit", "The application was given explicitly")
 
         return self._ingest_common(
             user_id,
@@ -146,6 +180,7 @@ class ApplicationEmailEventService:
             classification=classification,
             candidates=candidates,
             mark_review_vacancy=True,
+            match_info=info,
         )
 
     # ── Shared persistence ────────────────────────────────────────────────
@@ -161,6 +196,7 @@ class ApplicationEmailEventService:
         classification: EmailClassification,
         candidates: list[EmailVacancyCandidate] | None,
         mark_review_vacancy: bool,
+        match_info: MatchInfo | None = None,
     ) -> ApplicationEmailEventResult:
         category = classification.category
         confidence = classification.confidence
@@ -168,6 +204,7 @@ class ApplicationEmailEventService:
         target_status = status_for_category(EmailCategory(category))
         apply, needs_review = _decide(target_status, confidence, matched)
         candidate_payload = _serialize_candidates(candidates) if candidates else None
+        review_reason = _review_reason(target_status, confidence, matched, match_info)
 
         fingerprint = _message_fingerprint(subject, body)
         existing = self._find_by_fingerprint(user_id, fingerprint)
@@ -212,6 +249,9 @@ class ApplicationEmailEventService:
             body=body,
             needs_review=needs_review,
             candidates=candidate_payload,
+            match_method=match_info.method if match_info is not None else None,
+            match_reason=match_info.reason if match_info is not None else None,
+            review_reason=review_reason if needs_review else None,
         )
         self._session.add(event)
         if application_id is not None:
@@ -305,7 +345,7 @@ class ApplicationEmailEventService:
         *,
         company: str | None,
         vacancy_title: str | None,
-    ) -> tuple[str | None, bool, list[EmailVacancyCandidate] | None]:
+    ) -> tuple[str | None, bool, list[EmailVacancyCandidate] | None, MatchInfo]:
         """Resolve the application this email belongs to, plus a confidence flag.
 
         Returns ``(application_id, matched, candidates)`` where ``matched`` is True only when
@@ -314,12 +354,22 @@ class ApplicationEmailEventService:
         # Strongest signal: exact normalized company/title match.
         entity_id = self.match_application(user_id, company=company, vacancy_title=vacancy_title)
         if entity_id is not None:
-            return entity_id, True, None
+            return (
+                entity_id,
+                True,
+                None,
+                MatchInfo("entity", "Company and vacancy title in the email match one application"),
+            )
 
         # Text substring match (unique title, then unique company).
         text_id = self.match_application_text(user_id, text=f"{subject}\n{body}")
         if text_id is not None:
-            return text_id, True, None
+            return (
+                text_id,
+                True,
+                None,
+                MatchInfo("text", "A unique vacancy title or company appears in the email text"),
+            )
 
         # Semantic retrieval against the vacancies RAG collection.
         candidates: list[EmailVacancyCandidate] = []
@@ -336,12 +386,67 @@ class ApplicationEmailEventService:
             second = candidates[1] if len(candidates) > 1 else None
             clear_winner = second is None or (top.score - second.score) >= _RAG_SCORE_MARGIN
             if top.score >= _RAG_MIN_SCORE and clear_winner:
-                return top.application_id, True, None
-            return top.application_id, False, candidates
+                return (
+                    top.application_id,
+                    True,
+                    None,
+                    MatchInfo(
+                        "rag",
+                        f"Semantic retrieval ranked this application first (score {top.score:.2f})",
+                    ),
+                )
+            why = (
+                f"best semantic score {top.score:.2f} is below {_RAG_MIN_SCORE}"
+                if top.score < _RAG_MIN_SCORE
+                else f"the top two candidates are within {_RAG_SCORE_MARGIN} of each other"
+            )
+            return (
+                top.application_id,
+                False,
+                candidates,
+                MatchInfo("ambiguous", f"Several applications fit: {why}"),
+            )
 
-        return None, False, None
+        return None, False, None, _NO_MATCH
 
     # ── Status application ────────────────────────────────────────────────
+
+    def _move_status(
+        self,
+        event: ApplicationEmailEventRow,
+        application: ApplicationRow,
+        target: str,
+        *,
+        actor: str,
+        source: str,
+    ) -> bool:
+        """Change status through the lifecycle. A refused change never applies silently: the
+        email goes to the review queue with the reason instead."""
+        try:
+            changed = change_status(
+                self._session,
+                application,
+                target,
+                actor=actor,  # type: ignore[arg-type]
+                source=source,
+            )
+        except IllegalApplicationTransition as error:
+            if actor == "human":
+                raise
+            event.needs_review = True
+            event.review_reason = (
+                f"Automatic status change refused: {error.reason} "
+                f"({error.current} -> {error.target})"
+            )
+            return False
+        if changed and target in SUBMISSION_IMPLIED:
+            record_implied_submission(
+                self._session,
+                application,
+                verified_by="email",
+                evidence=f"email classified as {event.category} implies it was sent",
+            )
+        return changed
 
     def _apply_status(self, event: ApplicationEmailEventRow, target_status: str | None) -> bool:
         if event.status_applied or event.application_id is None:
@@ -353,15 +458,11 @@ class ApplicationEmailEventService:
         application = self._session.get(ApplicationRow, event.application_id)
         if application is None or application.user_id != event.user_id:
             return False
-        previous_status = application.status
-        application.status = target_status
+        if not self._move_status(
+            event, application, target_status, actor="email", source="email_event"
+        ):
+            return False
         event.status_applied = True
-        self._timeline.record_status_change(
-            event.application_id,
-            previous_status,
-            target_status,
-            source="email_event",
-        )
         return True
 
     def _mark_needs_review(self, event: ApplicationEmailEventRow) -> bool:
@@ -374,14 +475,11 @@ class ApplicationEmailEventService:
         if application.status in TERMINAL_STATUSES or application.status == _REVIEW_STATUS:
             return False
         previous_status = application.status
-        application.status = _REVIEW_STATUS
+        if not self._move_status(
+            event, application, _REVIEW_STATUS, actor="email", source="email_event"
+        ):
+            return False
         event.previous_status = previous_status
-        self._timeline.record_status_change(
-            application.id,
-            previous_status,
-            _REVIEW_STATUS,
-            source="email_event",
-        )
         return True
 
     # ── Review resolution ─────────────────────────────────────────────────
@@ -411,7 +509,7 @@ class ApplicationEmailEventService:
                 event.application_id = application_id
                 event.status_applied = False
             if target_status is not None:
-                self._apply_status_to(application_id, target_status)
+                self._apply_status_to(event, application_id, target_status)
                 event.status_applied = True
             else:
                 self._revert_needs_review(event)
@@ -423,6 +521,7 @@ class ApplicationEmailEventService:
 
         event.resolved = True
         event.needs_review = False
+        event.review_reason = None
         self._session.commit()
         return event
 
@@ -433,30 +532,18 @@ class ApplicationEmailEventService:
         if application is None or application.status != _REVIEW_STATUS:
             return
         previous = event.previous_status or "saved"
-        application.status = previous
+        self._move_status(event, application, previous, actor="human", source="email_review")
         event.previous_status = None
-        self._timeline.record_status_change(
-            application.id,
-            _REVIEW_STATUS,
-            previous,
-            source="email_event",
-        )
 
-    def _apply_status_to(self, application_id: str, target_status: str) -> bool:
+    def _apply_status_to(
+        self, event: ApplicationEmailEventRow, application_id: str, target_status: str
+    ) -> bool:
         application = self._session.get(ApplicationRow, application_id)
         if application is None:
             return False
-        previous = application.status
-        if previous == target_status:
-            return False
-        application.status = target_status
-        self._timeline.record_status_change(
-            application_id,
-            previous,
-            target_status,
-            source="email_event",
+        return self._move_status(
+            event, application, target_status, actor="human", source="email_review"
         )
-        return True
 
     # ── Matching helpers (unchanged behaviour) ────────────────────────────
 

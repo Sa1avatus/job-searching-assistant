@@ -135,6 +135,7 @@ from app.api.statistics_schemas import (
 from app.browser.session_probe import probe_browser_session
 from app.browser.session_store import InvalidBrowserState, delete_browser_state_file
 from app.config import Settings, get_settings
+from app.domain.application_email import email_class_for_category
 from app.domain.application_lifecycle import IllegalApplicationTransition, allowed_targets
 from app.domain.autofill_keys import InvalidAutofillKey
 from app.domain.autofill_sensitivity import evaluate_autofill_usage
@@ -1348,7 +1349,11 @@ def _email_review_response(event: ApplicationEmailEventRow) -> EmailReviewItemRe
         category=event.category,
         confidence=event.confidence,
         outcome=event.outcome,
+        email_class=email_class_for_category(event.category).value,
         application_id=event.application_id,
+        match_method=event.match_method,
+        match_reason=event.match_reason,
+        review_reason=event.review_reason,
         candidates=candidates,
         processed_at=event.processed_at,
     )

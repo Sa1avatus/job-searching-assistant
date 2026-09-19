@@ -23,7 +23,7 @@ from app.domain.application_lifecycle import (
     check_transition,
 )
 from app.services.application_timeline import ApplicationTimelineService
-from app.storage.tables import ApplicationRow, ApplicationSubmissionRow
+from app.storage.tables import ApplicationRow, ApplicationSubmissionRow, VacancyRow
 
 STATE_ATTEMPTING = "attempting"
 STATE_UNKNOWN = "unknown"
@@ -91,6 +91,29 @@ def mark_submitted_from_site(
             row, verified_by=verified_by, evidence=[f"site shows it as submitted ({source})"]
         )
     return True
+
+
+def record_implied_submission(
+    session: Session, application: ApplicationRow, *, verified_by: str, evidence: str
+) -> None:
+    """A status that only exists after sending (interview, offer, rejection by the employer)
+    proves the application was sent: remember it so it can never be submitted again."""
+    ledger = SubmissionLedger(session)
+    row = ledger.open_row(application.id)
+    if row is None:
+        vacancy = session.get(VacancyRow, application.vacancy_id)
+        session.add(
+            ApplicationSubmissionRow(
+                application_id=application.id,
+                user_id=application.user_id,
+                site_key=vacancy.adapter_name if vacancy is not None else "unknown",
+                state=STATE_CONFIRMED,
+                verified_by=verified_by,
+                evidence=[evidence],
+            )
+        )
+    elif row.state != STATE_CONFIRMED:
+        ledger.confirm(row, verified_by=verified_by, evidence=[evidence])
 
 
 @dataclass(frozen=True, slots=True)

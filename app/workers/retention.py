@@ -11,6 +11,7 @@ from app.observability.logging import configure_logging
 from app.storage.database import SessionFactory
 from app.storage.documents import DocumentStorage
 from app.storage.retention import (
+    purge_email_bodies,
     purge_expired_artifacts,
     purge_expired_browser_sessions,
     purge_expired_cv_files,
@@ -34,6 +35,9 @@ def run_retention_cycle(settings: Settings) -> None:
             settings.artifact_directory,
             retention_days=settings.retention_days,
         )
+        email_report = purge_email_bodies(
+            session, retention_days=settings.email_body_retention_days
+        )
         session.merge(
             WorkerHeartbeatRow(
                 worker_name="retention",
@@ -53,6 +57,7 @@ def run_retention_cycle(settings: Settings) -> None:
         failed_cv_records=cv_report.failed_records,
         deleted_browser_sessions=browser_session_report.deleted_records,
         failed_browser_sessions=browser_session_report.failed_records,
+        cleared_email_bodies=email_report.cleared_bodies,
         deleted_artifacts=artifact_report.deleted_files,
         reclaimed_bytes=artifact_report.reclaimed_bytes,
     )
