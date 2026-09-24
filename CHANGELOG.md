@@ -5,6 +5,20 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ## [Unreleased]
 
+### Performance
+
+- **"Сразу в реранкер" and "Переранжировать" no longer discard the matching cache.** Both always
+  scheduled a `force=true` recalculation - a full LLM recompute from scratch - even for a vacancy
+  already scored with the same resume and model, since the idempotency key already covers exactly
+  that content. They now schedule a smart recalculation instead, which reuses the cached result
+  for unchanged content and only recomputes what actually changed; a genuine forced recompute
+  (e.g. after deliberately changing something to fix a bad match) stays available per vacancy via
+  its own "Полный перерасчёт" button. "Переранжировать" also now waits for all scheduled vacancies
+  concurrently instead of one at a time, each with a 15-minute cap instead of 30 seconds (matching
+  is GPU-bound and a single vacancy can legitimately take minutes - the old cap made slow-but-
+  progressing vacancies silently keep their stale score). The server-side wait inside
+  "discover-vacancies-stream" for "Сразу в реранкер" got the same 15-minute cap, up from 60s.
+
 ### Fixed
 
 - **Login confirmation stuck forever on a site where sign-in and the account area share a URL.**

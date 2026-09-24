@@ -3240,6 +3240,13 @@ async def discover_greenhouse_vacancies(
     return serialize_discovery_outcomes(outcomes)
 
 
+# Matching on a local model is GPU-bound and can legitimately take minutes per vacancy (see
+# docs/matching-architecture.md's performance model) - matches the dashboard's own
+# waitForMatchingTask timeout so a slow-but-progressing vacancy isn't reported as an error
+# while it is still genuinely running on the worker.
+_STREAM_MATCHING_POLL_SECONDS = 900
+
+
 @app.post("/v1/users/{user_id}/discover-vacancies-stream")
 async def discover_vacancies_stream(
     user_id: str,
@@ -3407,7 +3414,11 @@ async def discover_vacancies_stream(
                     )
 
             if request.direct_rerank:
-                await schedule_matching(force=True)
+                # Smart recalculation: the content version already covers vacancy/resume/model
+                # changes, so unchanged content reuses the cached result instead of a full LLM
+                # recompute. A genuine forced recompute stays available per vacancy via its own
+                # "Полный перерасчёт" button (e.g. after fixing a bad match on purpose).
+                await schedule_matching(force=False)
 
             try:
                 async with httpx.AsyncClient(
@@ -3460,7 +3471,7 @@ async def discover_vacancies_stream(
                 )
 
             if matching_was_scheduled:
-                for _ in range(60):
+                for _ in range(_STREAM_MATCHING_POLL_SECONDS):
                     with SessionFactory() as poll_session:
                         aggregate = poll_session.get(ApplicationMatchResultRow, application_id)
                         application = poll_session.get(ApplicationRow, application_id)

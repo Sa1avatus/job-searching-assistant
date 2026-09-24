@@ -4340,47 +4340,49 @@ document.querySelector('#rerank-all').addEventListener('click', async () => {
       );
     };
     updateProgress();
-    // Dispatch re-ranking for each vacancy
-    const appIds = [];
+    // Dispatch a smart recalculation for each vacancy - unchanged vacancy/resume/model content
+    // reuses the cached result instead of a full LLM recompute. A full forced recompute is
+    // still available per vacancy via its own "Полный перерасчёт" button.
+    const appTasks = [];
     for (const card of cards) {
       const appId = card.dataset.applicationId;
       if (!appId) { done++; continue; }
-      appIds.push(appId);
       try {
-        await fetch(`/v1/applications/${appId}/recalculate-match?force=true`, {
+        const task = await asJson(await fetch(`/v1/applications/${appId}/recalculate-match`, {
           method: 'POST', headers: headers(false)
-        });
+        }));
+        appTasks.push([appId, task]);
       } catch { failed++; }
       done++;
       updateProgress();
     }
-    // Poll for updated scores
+    // Wait for every scheduled task concurrently instead of one at a time - real throughput
+    // is bounded by the matching worker, not by how many we watch at once, and matching can
+    // legitimately take minutes on a local model (see waitForMatchingTask's 15-minute cap).
     showStatus(currentLanguage === 'en'
       ? 'Waiting for scores to update…'
       : 'Ожидание обновления оценок…');
     const scoreMap = new Map();
-    for (const appId of appIds) {
-      let scoreFound = false;
-      for (let attempt = 0; attempt < 30; attempt++) {
-        try {
-          const resp = await fetch(`/v1/applications/${appId}/match-details`, { headers: headers(false) });
-          if (resp.ok) {
-            const data = await resp.json();
-            console.log(`[rerank] ${appId} attempt=${attempt} status=${data.status} final_score=${data.final_score}`);
-            if (['scored', 'degraded', 'failed'].includes(data.status)) {
-              scoreMap.set(appId, Math.round(data.final_score));
-              scoreFound = true;
-              break;
-            }
-          } else {
-            console.log(`[rerank] ${appId} attempt=${attempt} HTTP ${resp.status}`);
-          }
-        } catch (e) { console.log(`[rerank] ${appId} attempt=${attempt} error=${e.message}`); }
-        await new Promise(r => setTimeout(r, 1000));
+    let waited = 0;
+    const updateWaitProgress = () => {
+      showStatus(
+        currentLanguage === 'en'
+          ? `Re-ranking: ${waited}/${appTasks.length}`
+          : `Переранжирование: ${waited}/${appTasks.length}`
+      );
+    };
+    updateWaitProgress();
+    await Promise.all(appTasks.map(async ([appId, task]) => {
+      try {
+        await waitForMatchingTask(task, () => {});
+        const data = await asJson(await fetch(`/v1/applications/${appId}/match-details`, { headers: headers(false) }));
+        scoreMap.set(appId, Math.round(data.final_score));
+      } catch (e) {
+        console.warn(`[rerank] ${appId} — ${e.message}`);
       }
-      if (!scoreFound) console.warn(`[rerank] ${appId} — no score after 30 attempts`);
-    }
-    console.log(`[rerank] scoreMap:`, Object.fromEntries(scoreMap));
+      waited++;
+      updateWaitProgress();
+    }));
     // Update cards with new scores
     const results = document.querySelector('#results');
     const cardsArray = Array.from(results.querySelectorAll('.vacancy-card'));

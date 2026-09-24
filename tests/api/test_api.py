@@ -297,7 +297,9 @@ def test_direct_rerank_stream_enriches_before_emitting_sorted_vacancies(monkeypa
         return SimpleNamespace(document_id="vacancy-doc", status="indexed")
 
     def schedule_matching(service, application_id, *, force=False, priority=100):
-        assert force is True
+        # direct_rerank now uses smart recalculation (unchanged content reuses the cache)
+        # instead of always discarding it - see discover_vacancies_stream.
+        assert force is False
         assert priority == 50
         operation_order.append("matching")
         application = service._session.get(ApplicationRow, application_id)
