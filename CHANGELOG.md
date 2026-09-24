@@ -30,6 +30,11 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Fixed
 
+- **Testing a recorded search scenario always failed with 422.** `CustomSearchRequest.recipe` was
+  typed `dict[str, str]`, so any recipe carrying `reach_steps` (nested step dicts under a string
+  key) failed FastAPI's own request-body validation before `custom_search` ever ran - "Проверить
+  поиск" could never succeed for a recorded scenario. Widened to `dict[str, object]`, matching the
+  client's own type, with a regression test asserting the model accepts a nested recipe.
 - **hh.ru search saved nothing.** `POST /v1/browser/extract-headhunter` declared its request model
   below the route, so with postponed annotations FastAPI read `request` as a required query
   parameter and every extraction returned `422`. Both extract models now precede their routes and a
