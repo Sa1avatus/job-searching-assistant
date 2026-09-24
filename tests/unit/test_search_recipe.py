@@ -82,6 +82,28 @@ def test_url_template_is_inferred_from_the_results_url() -> None:
     assert infer_url_template("https://python.example.com/search?q=go", query="python") is None
 
 
+def test_url_template_is_inferred_from_an_seo_slug() -> None:
+    """Some sites put the query into the URL as a hyphenated slug rather than percent/plus
+    encoding (e.g. CareerViet: ".../ML-Engineer-k-en.html" for the query "ML Engineer")."""
+    assert (
+        infer_url_template(
+            "https://jobs.example.com/jobs/ML-Engineer-k-en.html", query="ML Engineer"
+        )
+        == "https://jobs.example.com/jobs/{query-slug}-k-en.html"
+    )
+
+
+def test_slug_url_template_round_trips_and_builds_urls() -> None:
+    recipe = validate_recipe(
+        _recipe(url_template="https://jobs.example.com/jobs/{query-slug}-k-en.html"), HOSTS
+    )
+    assert SearchRecipe.from_dict(recipe.to_dict()) == recipe
+    assert (
+        build_search_url(recipe, query="ML Engineer")
+        == "https://jobs.example.com/jobs/ML-Engineer-k-en.html"
+    )
+
+
 def test_selectors_are_learned_from_a_results_page() -> None:
     learned = learn_selectors(
         FIXTURE.read_text(encoding="utf-8"), page_url=PAGE, allowed_hosts=HOSTS

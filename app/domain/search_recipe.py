@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from urllib.parse import quote_plus, urljoin, urlsplit
+from urllib.parse import quote, quote_plus, urljoin, urlsplit
 
 from pydantic import ValidationError
 
@@ -21,6 +21,23 @@ from app.domain.workflow_step_parser import parse_workflow_step
 
 QUERY_PLACEHOLDER = "{query}"
 LOCATION_PLACEHOLDER = "{location}"
+# Some sites put the search text into the URL as an SEO slug (spaces turned into hyphens, e.g.
+# ".../ML-Engineer-k-en.html") rather than standard percent/plus encoding. A template can use
+# these instead of {query}/{location} when that is the shape the site actually uses.
+QUERY_SLUG_PLACEHOLDER = "{query-slug}"
+LOCATION_SLUG_PLACEHOLDER = "{location-slug}"
+_ALL_PLACEHOLDERS = (
+    QUERY_PLACEHOLDER,
+    LOCATION_PLACEHOLDER,
+    QUERY_SLUG_PLACEHOLDER,
+    LOCATION_SLUG_PLACEHOLDER,
+)
+
+
+def slugify(text: str) -> str:
+    """Collapse whitespace into single hyphens, the shape an SEO-friendly search URL expects."""
+    return re.sub(r"\s+", "-", text.strip())
+
 
 _MAX_SELECTOR_LENGTH = 300
 _MAX_URL_LENGTH = 2000
@@ -137,18 +154,25 @@ def _parse_reach_steps(raw: object) -> tuple[ReachStep, ...]:
 def _validate_url_template(template: str, allowed_hosts: tuple[str, ...] | list[str]) -> str:
     if len(template) > _MAX_URL_LENGTH:
         raise InvalidSearchRecipe("Шаблон URL слишком длинный")
-    if QUERY_PLACEHOLDER not in template:
-        raise InvalidSearchRecipe(f"Шаблон URL должен содержать {QUERY_PLACEHOLDER}")
-    probe = urlsplit(template.replace(QUERY_PLACEHOLDER, "x").replace(LOCATION_PLACEHOLDER, "x"))
+    if QUERY_PLACEHOLDER not in template and QUERY_SLUG_PLACEHOLDER not in template:
+        raise InvalidSearchRecipe(
+            f"Шаблон URL должен содержать {QUERY_PLACEHOLDER} или {QUERY_SLUG_PLACEHOLDER}"
+        )
+    probe_url = template
+    for placeholder in _ALL_PLACEHOLDERS:
+        probe_url = probe_url.replace(placeholder, "x")
+    probe = urlsplit(probe_url)
     if probe.scheme != "https":
         raise InvalidSearchRecipe("Шаблон URL должен начинаться с https://")
     if probe.username or probe.password:
         raise InvalidSearchRecipe("В URL не должно быть логина и пароля")
     if not is_allowed_host(probe.hostname, allowed_hosts):
         raise InvalidSearchRecipe(f"Хост {probe.hostname} не входит в разрешённые хосты сайта")
-    leftover = re.sub(r"\{(query|location)\}", "", template)
+    leftover = re.sub(r"\{(query|location)(-slug)?\}", "", template)
     if "{" in leftover or "}" in leftover:
-        raise InvalidSearchRecipe("Допустимы только подстановки {query} и {location}")
+        raise InvalidSearchRecipe(
+            "Допустимы только подстановки {query}, {location}, {query-slug} и {location-slug}"
+        )
     return template
 
 
@@ -206,8 +230,11 @@ def validate_recipe(
 
 
 def build_search_url(recipe: SearchRecipe, *, query: str, location: str = "") -> str:
-    return recipe.url_template.replace(QUERY_PLACEHOLDER, quote_plus(query.strip())).replace(
-        LOCATION_PLACEHOLDER, quote_plus(location.strip())
+    return (
+        recipe.url_template.replace(QUERY_PLACEHOLDER, quote_plus(query.strip()))
+        .replace(LOCATION_PLACEHOLDER, quote_plus(location.strip()))
+        .replace(QUERY_SLUG_PLACEHOLDER, quote(slugify(query), safe="-"))
+        .replace(LOCATION_SLUG_PLACEHOLDER, quote(slugify(location), safe="-"))
     )
 
 

@@ -17,8 +17,11 @@ from urllib.parse import quote, quote_plus, urlsplit
 
 from app.domain.search_recipe import (
     LOCATION_PLACEHOLDER,
+    LOCATION_SLUG_PLACEHOLDER,
     QUERY_PLACEHOLDER,
+    QUERY_SLUG_PLACEHOLDER,
     resolve_hit_url,
+    slugify,
 )
 
 _VOID_TAGS = frozenset(
@@ -179,20 +182,27 @@ def infer_url_template(results_url: str, *, query: str, location: str = "") -> s
     base = f"{parts.scheme}://{parts.netloc}"
     rest = results_url[len(base) :]
 
-    def substitute(value: str, text: str, placeholder: str) -> str | None:
+    def substitute(value: str, text: str, placeholder: str, slug_placeholder: str) -> str | None:
         for variant in dict.fromkeys((quote_plus(text), quote(text, safe=""), text)):
             if variant and re.search(re.escape(variant), value, re.IGNORECASE):
                 return re.sub(re.escape(variant), placeholder, value, flags=re.IGNORECASE)
+        # Some sites put the search text into the URL as an SEO slug instead of standard
+        # encoding (e.g. ".../ML-Engineer-k-en.html" for the query "ML Engineer").
+        slug = slugify(text)
+        if slug and slug != text and re.search(re.escape(slug), value, re.IGNORECASE):
+            return re.sub(re.escape(slug), slug_placeholder, value, flags=re.IGNORECASE)
         return None
 
     query = query.strip()
     if not query:
         return None
-    replaced = substitute(rest, query, QUERY_PLACEHOLDER)
+    replaced = substitute(rest, query, QUERY_PLACEHOLDER, QUERY_SLUG_PLACEHOLDER)
     if replaced is None:
         return None
     if location.strip():
-        with_location = substitute(replaced, location.strip(), LOCATION_PLACEHOLDER)
+        with_location = substitute(
+            replaced, location.strip(), LOCATION_PLACEHOLDER, LOCATION_SLUG_PLACEHOLDER
+        )
         replaced = with_location or replaced
     return base + replaced
 
