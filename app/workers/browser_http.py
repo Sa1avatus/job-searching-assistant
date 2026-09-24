@@ -445,7 +445,7 @@ class CustomLearnRequest(StrictModel):
 class CustomSearchRequest(StrictModel):
     user_id: str
     site: CustomSiteConfig
-    recipe: dict[str, str]
+    recipe: dict[str, object]
     search_text: str = Field(min_length=1, max_length=500)
     locations: list[str] = Field(default_factory=list, max_length=20)
     limit: int = Field(default=15, ge=1, le=50)
