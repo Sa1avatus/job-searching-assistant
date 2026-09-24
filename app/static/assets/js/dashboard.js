@@ -1610,6 +1610,8 @@ document.querySelector('#browser-sessions').addEventListener('click', async (eve
     } catch (error) {
       if (loginWindow && !loginWindow.closed) loginWindow.close();
       showError(error);
+      const details = card.querySelector('.task-state');
+      if (details) details.textContent = error.message;
     }
     finally { button.disabled = false; }
   } else if (action === 'confirm') {
@@ -1625,8 +1627,13 @@ document.querySelector('#browser-sessions').addEventListener('click', async (eve
       showStatus(`${label}: авторизация сохранена.`);
     } catch (error) {
       showError(error);
-      // a rejected confirm usually means the backend state moved on: show the real state
-      loadBrowserSessionStatuses().catch(refreshError => console.warn(refreshError));
+      // A rejected confirm usually means the backend state moved on: show the real state. The
+      // refresh re-renders `.task-state` from the server, so the error is written after it, not
+      // before - otherwise it would be overwritten instantly and never seen (same failure mode
+      // already fixed for the recipe panel: an error far from the button is easy to miss).
+      await loadBrowserSessionStatuses().catch(refreshError => console.warn(refreshError));
+      const details = card.querySelector('.task-state');
+      if (details) details.textContent = error.message;
     }
     finally { button.disabled = false; }
   } else if (action === 'cancel') {
