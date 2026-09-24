@@ -1793,7 +1793,20 @@ async function loadRecipeVersions() {
   if (!document.querySelector('#recipe-site').value) { state.textContent = ''; return; }
   const versions = await asJson(await fetch(recipeUrl(), {headers: headers(false)}));
   state.textContent = versions.length ? '' : 'Рецепта пока нет: определите его по странице результатов или задайте вручную.';
-  versions.forEach(version => container.append(renderRecipeVersion(version)));
+  // Every saved draft/recording attempt keeps its old versions archived for rollback (nothing is
+  // ever deleted), so this list only grows. Keep the current draft/active versions visible and
+  // tuck archived ones behind a collapsed summary so the panel does not fill up with history.
+  const current = versions.filter(version => version.status !== 'archived');
+  const archived = versions.filter(version => version.status === 'archived');
+  current.forEach(version => container.append(renderRecipeVersion(version)));
+  if (archived.length) {
+    const details = element('details');
+    details.style.marginTop = '8px';
+    const summary = element('summary', `Архивные версии (${archived.length})`);
+    details.append(summary);
+    archived.forEach(version => details.append(renderRecipeVersion(version)));
+    container.append(details);
+  }
 }
 
 function prefillRecipeUrl() {
