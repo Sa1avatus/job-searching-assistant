@@ -61,6 +61,14 @@ class ModelRuntime:
         self.reranker_model_revision = os.getenv("RERANKER_MODEL_REVISION", "main")
         self.device = os.getenv("MODEL_DEVICE", "cpu")
         self.batch_size = int(os.getenv("MODEL_BATCH_SIZE", "8"))
+        # A deployment that only needs /v1/rerank (e.g. a cheap CPU-only reranker
+        # alongside an embedding model already served elsewhere) can skip loading
+        # the embedding model entirely, instead of loading it unused.
+        self.load_embedding_model = os.getenv("LOAD_EMBEDDING_MODEL", "true").casefold() not in (
+            "false",
+            "0",
+            "no",
+        )
         self.embedding_model: Any = None
         self.reranker_model: Any = None
 
@@ -68,12 +76,13 @@ class ModelRuntime:
         from sentence_transformers import CrossEncoder, SentenceTransformer
 
         cache_dir = os.getenv("HF_HUB_CACHE")
-        self.embedding_model = SentenceTransformer(
-            self.embedding_model_name,
-            revision=self.embedding_model_revision,
-            cache_folder=cache_dir,
-            device=self.device,
-        )
+        if self.load_embedding_model:
+            self.embedding_model = SentenceTransformer(
+                self.embedding_model_name,
+                revision=self.embedding_model_revision,
+                cache_folder=cache_dir,
+                device=self.device,
+            )
         self.reranker_model = CrossEncoder(
             self.reranker_model_name,
             revision=self.reranker_model_revision,
@@ -82,7 +91,9 @@ class ModelRuntime:
 
     @property
     def is_loaded(self) -> bool:
-        return self.embedding_model is not None and self.reranker_model is not None
+        if self.load_embedding_model and self.embedding_model is None:
+            return False
+        return self.reranker_model is not None
 
 
 runtime = ModelRuntime()
