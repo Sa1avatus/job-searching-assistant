@@ -9,9 +9,10 @@ is derived from what the cards have in common.
 
 from __future__ import annotations
 
+import os.path
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from html.parser import HTMLParser
 from urllib.parse import quote, quote_plus, urlsplit
 
@@ -134,6 +135,10 @@ class Sel:
     classes: tuple[str, ...] = ()
     attribute: tuple[str, str] | None = None
     href_contains: str | None = None
+    # :has(a[href*="..."]) - a card can be structurally identical to another list item that
+    # never got real content (e.g. an empty carousel slot sharing the same bare <li> markup),
+    # distinguishable only by actually containing the vacancy link.
+    has_link_href_contains: str | None = None
 
     def css(self) -> str:
         text = self.tag + "".join(f".{name}" for name in self.classes)
@@ -141,6 +146,8 @@ class Sel:
             text += f'[{self.attribute[0]}="{self.attribute[1]}"]'
         if self.href_contains is not None:
             text += f'[href*="{self.href_contains}"]'
+        if self.has_link_href_contains is not None:
+            text += f':has(a[href*="{self.has_link_href_contains}"])'
         return text
 
     def matches(self, node: Node) -> bool:
@@ -150,7 +157,13 @@ class Sel:
             return False
         if self.attribute is not None and node.attrs.get(self.attribute[0]) != self.attribute[1]:
             return False
-        return self.href_contains is None or self.href_contains in node.attrs.get("href", "")
+        if self.href_contains is not None and self.href_contains not in node.attrs.get("href", ""):
+            return False
+        return self.has_link_href_contains is None or any(
+            descendant.tag == "a"
+            and self.has_link_href_contains in descendant.attrs.get("href", "")
+            for descendant in node.walk()[1:]
+        )
 
 
 def _stable_classes(node: Node) -> tuple[str, ...]:
@@ -345,6 +358,74 @@ def _learn_company_selector(cards: list[tuple[Node, Node]]) -> str:
     return selector.css() if _share(nodes, selector) >= 0.5 else ""
 
 
+_MAX_DISAMBIGUATION_LEVELS = 4
+
+
+def _matches_some_ancestor(node: Node, selector: Sel) -> bool:
+    ancestor = node.parent
+    while ancestor is not None:
+        if selector.matches(ancestor):
+            return True
+        ancestor = ancestor.parent
+    return False
+
+
+def _disambiguate_card_selector(
+    root: Node, cards: list[tuple[Node, Node]], selector: Sel, count: int
+) -> tuple[str, int] | None:
+    """A card is often a bare tag with no class of its own (e.g. a plain ``<li>``) that also
+    matches unrelated elements elsewhere on the page (nav menus, footers). Its immediate parent
+    can be just as bare (a plain ``<ul>``). Walk up one ancestor level at a time - not just the
+    direct parent - for the closest ancestor shared by every card whose own selector, chained in
+    front as a descendant selector, narrows the match count back down to roughly just the cards.
+    """
+    level_nodes: list[Node | None] = [card for card, _anchor in cards]
+    for _level in range(_MAX_DISAMBIGUATION_LEVELS):
+        level_nodes = [node.parent if node else None for node in level_nodes]
+        if any(node is None for node in level_nodes):
+            return None
+        signatures = Counter(_selector_for(node) for node in level_nodes)  # type: ignore[arg-type]
+        ancestor_selector, frequency = signatures.most_common(1)[0]
+        if frequency < len(level_nodes):
+            continue  # not shared by every card at this depth; try one level further up
+        chained = [
+            node
+            for node in root.walk()
+            if selector.matches(node) and _matches_some_ancestor(node, ancestor_selector)
+        ]
+        if chained and len(chained) <= count * 2:
+            return f"{ancestor_selector.css()} {selector.css()}", min(count, len(chained))
+    return None
+
+
+def _content_disambiguated_selector(
+    root: Node, cards: list[tuple[Node, Node]], selector: Sel, count: int
+) -> tuple[str, int] | None:
+    """Some sites repeat the exact same card markup for an unrelated widget (e.g. a "most
+    searched" or "related jobs" list using the same bare ``<li><a href="/jobs/...">`` markup as
+    the real results, or an empty placeholder slot for another breakpoint), so even the closest
+    classed ancestor is shared with it. What only a real card has is the vacancy link itself -
+    require it, the same way a person would refine the selector by hand. The known-good cards'
+    own links usually share more than just the site's generic "/jobs/"-style path prefix (a
+    per-query slug, a shared id fragment); prefer that longer, more specific common prefix over
+    the generic one when it is there, so a same-shaped but unrelated link list is still excluded.
+    """
+    hrefs = [anchor.attrs.get("href", "") for _card, anchor in cards]
+    if not hrefs:
+        return None
+    common_prefix = os.path.commonprefix(hrefs)
+    prefix = common_prefix if len(common_prefix) > 8 else _literal_prefix(hrefs[0])
+    if not prefix or '"' in prefix:
+        return None
+    refined = replace(selector, has_link_href_contains=prefix)
+    if not all(refined.matches(card) for card, _anchor in cards):
+        return None
+    matches = [node for node in root.walk() if refined.matches(node)]
+    if matches and len(matches) <= count * 2:
+        return refined.css(), len(matches)
+    return None
+
+
 def learn_selectors(
     html: str, *, page_url: str, allowed_hosts: tuple[str, ...] | list[str]
 ) -> LearnedSelectors:
@@ -360,19 +441,12 @@ def learn_selectors(
     total_matches = sum(1 for node in root.walk() if selector.matches(node))
     card_css = selector.css()
     if total_matches > count * 2:
-        parents = Counter(_selector_for(card.parent) for card, _a in cards if card.parent)
-        parent_selector = parents.most_common(1)[0][0] if parents else None
-        if parent_selector is None:
+        disambiguated = _content_disambiguated_selector(
+            root, cards, selector, count
+        ) or _disambiguate_card_selector(root, cards, selector, count)
+        if disambiguated is None:
             raise RecipeLearningError("Селектор карточки неоднозначен")
-        chained = [
-            n
-            for n in root.walk()
-            if selector.matches(n) and n.parent and parent_selector.matches(n.parent)
-        ]
-        if len(chained) > count * 2:
-            raise RecipeLearningError("Селектор карточки неоднозначен")
-        card_css = f"{parent_selector.css()} > {selector.css()}"
-        count = min(count, len(chained))
+        card_css, count = disambiguated
     return LearnedSelectors(
         card_selector=card_css,
         link_selector=_learn_link_selector(cards),

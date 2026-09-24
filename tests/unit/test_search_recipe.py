@@ -126,6 +126,65 @@ def test_selectors_are_learned_from_a_results_page() -> None:
     )
 
 
+def test_selectors_are_learned_when_the_card_is_bare_but_a_grandparent_is_distinctive() -> None:
+    """A card and its immediate parent can both be bare tags with no class of their own (e.g.
+    a plain <li> inside a plain <ul>) that also match unrelated <li>s elsewhere on the page (a
+    nav menu here); only a great-grandparent two levels further up is actually distinctive."""
+    # The nav links share the same "/jobs/" prefix as the real cards too, so a content-based
+    # (":has(a[href*=...])") filter alone cannot tell them apart - only being outside <nav>,
+    # inside div.results, does. <nav> is excluded from link *grouping* already, so it never
+    # pollutes which links count as "the" vacancy links, but it still inflates the raw <li>
+    # count that makes the bare "li" selector ambiguous in the first place.
+    nav_items = "".join(f'<li><a href="/jobs/nav-{i}">Nav {i}</a></li>' for i in range(10))
+    html = f"""
+    <html><body>
+      <nav><ul>{nav_items}</ul></nav>
+      <div class="results">
+        <ul>
+          <li><a href="/jobs/1">Python Developer</a></li>
+          <li><a href="/jobs/2">Backend Engineer</a></li>
+          <li><a href="/jobs/3">Data Engineer</a></li>
+        </ul>
+      </div>
+    </body></html>
+    """
+    learned = learn_selectors(html, page_url=PAGE, allowed_hosts=HOSTS)
+
+    assert learned.card_selector == "div.results li"
+    assert learned.card_count == 3
+
+
+def test_selectors_are_learned_when_an_unrelated_widget_shares_the_same_card_markup() -> None:
+    """A different widget on the page (a "related searches" list here) can reuse the exact same
+    bare <li> inside the exact same classed ancestor as the real cards; only the vacancy link
+    itself tells them apart."""
+    # Content-less filler <li>s (a breadcrumb, a feature list - nothing to do with vacancies)
+    # push the plain "li" match count past the ambiguity threshold on their own.
+    filler_items = "".join(f"<li>Step {i}</li>" for i in range(10))
+    html = f"""
+    <html><body>
+      <ul class="steps">{filler_items}</ul>
+      <div class="box-jobs">
+        <ul>
+          <li><a href="/related/react">React</a></li>
+          <li><a href="/related/vue">Vue</a></li>
+        </ul>
+      </div>
+      <div class="box-jobs">
+        <ul>
+          <li><a href="/jobs/1">Python Developer</a></li>
+          <li><a href="/jobs/2">Backend Engineer</a></li>
+          <li><a href="/jobs/3">Data Engineer</a></li>
+        </ul>
+      </div>
+    </body></html>
+    """
+    learned = learn_selectors(html, page_url=PAGE, allowed_hosts=HOSTS)
+
+    assert learned.card_selector == 'li:has(a[href*="/jobs/"])'
+    assert learned.card_count == 3
+
+
 def test_learning_fails_with_a_reason_when_there_are_no_results() -> None:
     with pytest.raises(RecipeLearningError):
         learn_selectors(
