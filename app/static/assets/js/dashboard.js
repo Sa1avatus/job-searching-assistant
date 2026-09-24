@@ -1686,6 +1686,14 @@ function recipeQuery() {
   return {query, location: document.querySelector('#recipe-location').value.trim()};
 }
 
+// Errors here happen far from the global status banner at the top of the page (easy to miss
+// after scrolling down to this panel), so they are always shown next to the recipe list too.
+function recipeError(error) {
+  const state = document.querySelector('#recipe-state');
+  if (state) state.textContent = error.message;
+  showError(error);
+}
+
 function fillManualRecipe(recipe) {
   document.querySelector('#recipe-url-template').value = recipe.url_template || '';
   document.querySelector('#recipe-card').value = recipe.card_selector || '';
@@ -1742,13 +1750,13 @@ function renderRecipeVersion(version) {
       await loadRecipeVersions();
       await loadCustomSources();
       showStatus(message);
-    } catch (error) { showError(error); }
+    } catch (error) { recipeError(error); }
     finally { button.disabled = false; }
   };
   const test = element('button', 'Проверить поиск'); test.type = 'button';
   test.addEventListener('click', () => {
     let query;
-    try { query = recipeQuery(); } catch (error) { showError(error); return; }
+    try { query = recipeQuery(); } catch (error) { recipeError(error); return; }
     run(test, `/${version.version}/test`, query, 'Пробный поиск выполнен.');
   });
   actions.append(test);
@@ -1855,8 +1863,7 @@ document.querySelector('#recipe-learn').addEventListener('click', async (event) 
     await loadRecipeVersions();
     showStatus(`Рецепт определён: найдено вакансий — ${version.preview.length}. Проверьте их и активируйте рецепт.`);
   } catch (error) {
-    document.querySelector('#recipe-state').textContent = '';
-    showError(error);
+    recipeError(error);
   } finally { button.disabled = false; }
 });
 
@@ -1879,7 +1886,7 @@ document.querySelector('#recipe-save-draft').addEventListener('click', async (ev
     document.querySelector('#recipe-record-review').replaceChildren();
     await loadRecipeVersions();
     showStatus('Черновик сохранён. Запустите «Проверить поиск».');
-  } catch (error) { showError(error); }
+  } catch (error) { recipeError(error); }
   finally { button.disabled = false; }
 });
 
@@ -1948,6 +1955,11 @@ function renderRecordReview(result) {
           selector_candidates: action.selector_candidates,
           parameters: {value_key: control.value}
         });
+        // "Проверить поиск" needs #recipe-query/#recipe-location filled in; use exactly what
+        // was typed during recording so a test run works immediately, without retyping it.
+        const target = control.value === 'query' ? '#recipe-query' : '#recipe-location';
+        const field = document.querySelector(target);
+        if (field && !field.value) field.value = action.value_preview;
       } else if (control.checked) {
         steps.push({action_type: 'click', selector_candidates: action.selector_candidates});
       }
