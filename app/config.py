@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # amount of recall (the 3rd-ranked candidate is skipped) for a ~1/3 cut in entailment
     # calls on claims that don't hit a strong entailed on the top candidates.
     matching_entailment_max_candidates: int = Field(default=2, ge=1, le=10)
+    # Skip the entailment LLM call entirely when every retrieved candidate's normalized
+    # reranker score is below this threshold (0-1) - an obvious miss doesn't need an LLM
+    # call to confirm. 0 (default) disables the gate, matching current behavior.
+    matching_min_entailment_score: float = Field(default=0.0, ge=0.0, le=1.0)
     matching_entailment_max_tokens: int = Field(default=512, ge=64, le=8192)
     matching_entailment_context_size: int = Field(default=8192, ge=512, le=32768)
     # Pairs per batched entailment LLM call (1 disables batching). The batch prompt

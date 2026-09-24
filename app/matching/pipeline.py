@@ -104,6 +104,7 @@ class MatchingPipeline:
         fallback_enabled: bool = True,
         llm_concurrency: int = 10,
         entailment_max_candidates: int = 2,
+        min_entailment_score: float = 0.0,
     ) -> None:
         self._session = session
         self._vacancy_extractor = vacancy_extractor
@@ -135,6 +136,7 @@ class MatchingPipeline:
                 fallback_enabled=fallback_enabled,
                 llm_concurrency=llm_concurrency,
                 entailment_max_candidates=entailment_max_candidates,
+                min_entailment_score=min_entailment_score,
             )
 
     async def match(

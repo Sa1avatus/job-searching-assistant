@@ -222,6 +222,118 @@ def test_early_exit_stops_after_strong_entailed():
     asyncio.run(run())
 
 
+def test_min_entailment_score_skips_llm_for_weak_candidates():
+    """A retrieved candidate whose reranker score never clears the configured floor is
+    an obvious miss - the entailment LLM call is skipped entirely rather than spent
+    confirming what the score already indicates."""
+
+    async def run() -> None:
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        sf = sessionmaker(engine, expire_on_commit=False)
+        with sf() as session:
+            user = UserRow(display_name="u")
+            session.add(user)
+            session.flush()
+            cv = CvFileRow(
+                user_id=user.id,
+                original_filename="r.txt",
+                storage_path="r.txt",
+                content_type="text/plain",
+                sha256="a" * 64,
+                size_bytes=10,
+                analyzed_at=datetime.now(UTC),
+            )
+            session.add(cv)
+            session.flush()
+            vacancy = VacancyRow(
+                source_url="https://example.test/v2",
+                title="t",
+                company="c",
+                required_skills=["Python"],
+            )
+            session.add(vacancy)
+            session.flush()
+            app = ApplicationRow(
+                user_id=user.id,
+                vacancy_id=vacancy.id,
+                selected_cv_file_id=cv.id,
+                status="awaiting_review",
+                match_score=0,
+            )
+            session.add(app)
+            session.flush()
+            req = VacancyRequirementRow(
+                vacancy_id=vacancy.id,
+                requirement_text="Python",
+                normalized_text="python",
+                requirement_type="hard_skill",
+                importance="required",
+                weight=1.0,
+                is_blocker=False,
+                alternatives_json=[],
+                source_fragment="Python",
+                extraction_model="f",
+                extraction_model_version="1",
+                extraction_schema_version="1",
+                extraction_run_id="r",
+                confidence=1.0,
+            )
+            session.add(req)
+            session.flush()
+            evidence = CandidateEvidenceRow(
+                user_id=user.id,
+                cv_file_id=cv.id,
+                evidence_text="unrelated evidence",
+                normalized_text="unrelated evidence",
+                evidence_type="skill_statement",
+                skill_name="Excel",
+                experience_level="production",
+                is_verified=True,
+                source_fragment="unrelated evidence",
+                extraction_model="f",
+                extraction_model_version="1",
+                extraction_schema_version="1",
+                extraction_run_id="r",
+                confidence=0.9,
+            )
+            session.add(evidence)
+            session.flush()
+            candidates = (
+                RetrievalCandidate(
+                    evidence_id=evidence.id,
+                    evidence_text="unrelated evidence",
+                    lexical_score=0.1,
+                    dense_score=0.1,
+                    hybrid_score=0.1,
+                ),
+            )
+            evaluator = _CountingEvaluator()
+            pipe = ClaimMatchPipeline(
+                session=session,
+                decomposer=_SingleSkillDecomposer(),
+                evaluator=evaluator,
+                retriever=_ListRetriever(candidates),
+                reranker=_IdentityReranker(),
+                entailment_max_candidates=3,
+                min_entailment_score=0.5,
+            )
+            result = await pipe.match_requirements(app.id, user.id, cv.id, (req,))
+
+            assert evaluator.call_count == 0
+            assert len(result.assessments) == 1
+            assert (
+                result.assessments[0].entailment_relation
+                is EntailmentRelation.INSUFFICIENT_EVIDENCE
+            )
+
+    asyncio.run(run())
+
+
 # ── Deterministic decomposition ──────────────────────────────────
 
 

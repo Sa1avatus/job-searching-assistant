@@ -185,3 +185,61 @@ def test_resolve_preference_matching_falls_back_to_materials() -> None:
         resolved = resolve_preference(session, user.id, key, LlmPreferencePurpose.MATCHING)
         assert resolved is not None
         assert resolved.model == "matching-model"
+
+
+def test_resolve_preference_matching_substages_fall_back_through_matching_to_materials() -> None:
+    """Decomposition/entailment fall back to the general matching model, then to
+    materials, so leaving them unset keeps the pre-existing single-model behavior."""
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        user = UserRow(display_name="Candidate")
+        session.add(user)
+        session.commit()
+        key = Fernet.generate_key().decode("ascii")
+        service = LlmPreferenceService(session, encryption_key=key)
+
+        service.save(
+            user_id=user.id,
+            provider="gemini",
+            model="legacy-model",
+            api_key="k1",
+            purpose="materials",
+        )
+        for purpose in (
+            LlmPreferencePurpose.MATCHING_DECOMPOSITION,
+            LlmPreferencePurpose.MATCHING_ENTAILMENT,
+        ):
+            resolved = resolve_preference(session, user.id, key, purpose)
+            assert resolved is not None and resolved.model == "legacy-model"
+
+        service.save(
+            user_id=user.id,
+            provider="gemini",
+            model="matching-model",
+            api_key="k2",
+            purpose="matching",
+        )
+        for purpose in (
+            LlmPreferencePurpose.MATCHING_DECOMPOSITION,
+            LlmPreferencePurpose.MATCHING_ENTAILMENT,
+        ):
+            resolved = resolve_preference(session, user.id, key, purpose)
+            assert resolved is not None and resolved.model == "matching-model"
+
+        service.save(
+            user_id=user.id,
+            provider="openai_compatible",
+            model="local-decompose-model",
+            api_key="k3",
+            base_url="http://host.docker.internal:11434/v1",
+            purpose="matching_decomposition",
+        )
+        decomposition = resolve_preference(
+            session, user.id, key, LlmPreferencePurpose.MATCHING_DECOMPOSITION
+        )
+        entailment = resolve_preference(
+            session, user.id, key, LlmPreferencePurpose.MATCHING_ENTAILMENT
+        )
+        assert decomposition is not None and decomposition.model == "local-decompose-model"
+        assert entailment is not None and entailment.model == "matching-model"

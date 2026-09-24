@@ -1,8 +1,12 @@
 from datetime import UTC, datetime
 
+import pytest
+from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from app.config import Settings
+from app.llm.preferences import LlmPreferenceService
 from app.matching.jobs import MatchingJobNotReadyError, MatchingJobService
 from app.storage.database import Base
 from app.storage.tables import (
@@ -194,3 +198,61 @@ def test_force_refresh_keeps_previous_explanation_until_replacement() -> None:
         assert aggregate.status == "pending"
         assert aggregate.final_score == 77
         assert aggregate.explanation_json == {"summary": ["previous explanation"]}
+
+
+def test_matching_job_version_changes_with_decomposition_or_entailment_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Decomposition/entailment can be routed to their own model (LlmPreferencePurpose) -
+    picking one must invalidate the idempotency key too, same as the general matching
+    model, so a smart recalculation doesn't reuse work done under the old model."""
+    encryption_key = Fernet.generate_key().decode("ascii")
+    monkeypatch.setattr(
+        "app.matching.jobs.get_settings",
+        lambda: Settings(_env_file=None, browser_state_encryption_key=encryption_key),
+    )
+    with _session() as session:
+        user = UserRow(display_name="Candidate")
+        session.add(user)
+        session.flush()
+        cv_file = CvFileRow(
+            user_id=user.id,
+            original_filename="resume.txt",
+            storage_path="resume.txt",
+            content_type="text/plain",
+            sha256="c" * 64,
+            size_bytes=12,
+            analyzed_at=datetime.now(UTC),
+        )
+        vacancy = VacancyRow(
+            source_url="https://example.test/model-routed-job",
+            title="Engineer",
+            company="Example",
+            description_text="Build services.",
+        )
+        session.add_all((cv_file, vacancy))
+        session.flush()
+        application = ApplicationRow(
+            user_id=user.id,
+            vacancy_id=vacancy.id,
+            selected_cv_file_id=cv_file.id,
+            status="awaiting_review",
+            match_score=50,
+        )
+        session.add(application)
+        session.commit()
+
+        first = MatchingJobService(session).schedule(application.id)
+
+        LlmPreferenceService(session, encryption_key=encryption_key).save(
+            user_id=user.id,
+            provider="openai_compatible",
+            model="qwen3.5:4b",
+            api_key="ollama",
+            base_url="http://host.docker.internal:11434/v1",
+            purpose="matching_decomposition",
+        )
+        second = MatchingJobService(session).schedule(application.id)
+
+        assert first.id != second.id
+        assert first.task_payload["content_version"] != second.task_payload["content_version"]

@@ -2553,6 +2553,8 @@ document.querySelector('#save-application-defaults').addEventListener('click', a
 
 const LLM_PURPOSES = [
   {purpose: 'matching', prefix: 'llm-matching', label: 'Матчинг'},
+  {purpose: 'matching_decomposition', prefix: 'llm-matching_decomposition', label: 'Матчинг: декомпозиция'},
+  {purpose: 'matching_entailment', prefix: 'llm-matching_entailment', label: 'Матчинг: entailment'},
   {purpose: 'materials', prefix: 'llm-materials', label: 'Генерация материалов'},
 ];
 

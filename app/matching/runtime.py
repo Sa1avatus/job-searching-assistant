@@ -79,6 +79,21 @@ class MatchingRuntime:
             model_identity = resolve_model_identity(
                 session, application.user_id, encryption_key, purpose=LlmPreferencePurpose.MATCHING
             )
+            # Decomposition and entailment are high-volume, more templated stages that can
+            # be pointed at a separate (e.g. cheaper, local) model; both fall back to the
+            # general matching preference when unset, so this is a no-op until configured.
+            decomposition_model_identity = resolve_model_identity(
+                session,
+                application.user_id,
+                encryption_key,
+                purpose=LlmPreferencePurpose.MATCHING_DECOMPOSITION,
+            )
+            entailment_model_identity = resolve_model_identity(
+                session,
+                application.user_id,
+                encryption_key,
+                purpose=LlmPreferencePurpose.MATCHING_ENTAILMENT,
+            )
             async with AsyncExitStack() as stack:
                 llm_http = await stack.enter_async_context(
                     httpx.AsyncClient(
@@ -132,6 +147,24 @@ class MatchingRuntime:
                         self._settings,
                     )
                 )
+                decomposition_router = ModelRouter(
+                    _build_user_model_providers(
+                        llm_http,
+                        session,
+                        application.user_id,
+                        self._settings,
+                        purpose=LlmPreferencePurpose.MATCHING_DECOMPOSITION,
+                    )
+                )
+                entailment_router = ModelRouter(
+                    _build_user_model_providers(
+                        llm_http,
+                        session,
+                        application.user_id,
+                        self._settings,
+                        purpose=LlmPreferencePurpose.MATCHING_ENTAILMENT,
+                    )
+                )
                 prompt_registry = PromptRegistry.load(
                     Path(__file__).parents[2] / "prompts" / "registry.json"
                 )
@@ -153,20 +186,20 @@ class MatchingRuntime:
                     ttl_seconds=self._settings.matching_cache_ttl_seconds,
                 )
                 claim_decomposer = RouterRequirementDecomposer(
-                    router,
+                    decomposition_router,
                     prompt_registry,
                     cache=matching_cache,
                     timeout_seconds=self._settings.matching_model_timeout_seconds,
-                    model_identity=model_identity,
+                    model_identity=decomposition_model_identity or model_identity,
                     decompose_max_tokens=self._settings.matching_decompose_max_tokens,
                     decompose_context_size=self._settings.matching_decompose_context_size,
                 )
                 evidence_evaluator = RouterEvidenceEvaluator(
-                    router,
+                    entailment_router,
                     prompt_registry,
                     cache=matching_cache,
                     timeout_seconds=self._settings.matching_model_timeout_seconds,
-                    model_identity=model_identity,
+                    model_identity=entailment_model_identity or model_identity,
                     entailment_max_tokens=self._settings.matching_entailment_max_tokens,
                     entailment_context_size=self._settings.matching_entailment_context_size,
                     entailment_batch_size=self._settings.matching_entailment_batch_size,
@@ -234,6 +267,7 @@ class MatchingRuntime:
                     fallback_enabled=self._settings.matching_v2_fallback_enabled,
                     llm_concurrency=self._settings.matching_llm_concurrency,
                     entailment_max_candidates=self._settings.matching_entailment_max_candidates,
+                    min_entailment_score=self._settings.matching_min_entailment_score,
                 )
                 await pipeline.match(
                     application.id,

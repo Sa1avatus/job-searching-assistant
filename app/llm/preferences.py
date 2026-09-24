@@ -19,23 +19,38 @@ SUPPORTED_LLM_PROVIDERS = frozenset({"anthropic", "gemini", "openai_compatible"}
 class LlmPreferencePurpose(StrEnum):
     """Which LLM consumer a preference belongs to.
 
-    MATCHING powers the matching worker (extraction, decomposition, entailment);
-    MATERIALS powers everything else (cover letters, screening answers, resume and
-    profile extraction, job discovery). MATERIALS is the historical single-model
-    preference, so it is the default and the fallback for MATCHING.
+    MATCHING powers vacancy/candidate extraction (the most variable, free-text-heavy
+    stage) and is the fallback for the two matching sub-stages below when they have no
+    preference of their own. MATCHING_DECOMPOSITION and MATCHING_ENTAILMENT let those
+    high-volume, more templated stages be pointed at a separate (e.g. cheaper, local)
+    model without changing extraction. MATERIALS powers everything else (cover letters,
+    screening answers, resume and profile extraction, job discovery) and is the
+    historical single-model preference, so it is the default and the ultimate fallback.
     """
 
     MATCHING = "matching"
+    MATCHING_DECOMPOSITION = "matching_decomposition"
+    MATCHING_ENTAILMENT = "matching_entailment"
     MATERIALS = "materials"
 
 
 DEFAULT_LLM_PURPOSE = LlmPreferencePurpose.MATERIALS
 
-# Resolution order when a purpose has no explicit row. Matching falls back to the
-# legacy single-model preference so existing users keep working until they save a
-# matching-specific model.
+# Resolution order when a purpose has no explicit row. Each matching sub-stage falls
+# back to the general matching preference, then to the legacy single-model preference,
+# so existing users keep working until they save a stage-specific model.
 _PURPOSE_FALLBACKS: dict[LlmPreferencePurpose, tuple[LlmPreferencePurpose, ...]] = {
     LlmPreferencePurpose.MATCHING: (
+        LlmPreferencePurpose.MATCHING,
+        LlmPreferencePurpose.MATERIALS,
+    ),
+    LlmPreferencePurpose.MATCHING_DECOMPOSITION: (
+        LlmPreferencePurpose.MATCHING_DECOMPOSITION,
+        LlmPreferencePurpose.MATCHING,
+        LlmPreferencePurpose.MATERIALS,
+    ),
+    LlmPreferencePurpose.MATCHING_ENTAILMENT: (
+        LlmPreferencePurpose.MATCHING_ENTAILMENT,
         LlmPreferencePurpose.MATCHING,
         LlmPreferencePurpose.MATERIALS,
     ),

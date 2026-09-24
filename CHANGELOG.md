@@ -7,6 +7,20 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Performance
 
+- **Route matching's decomposition/entailment stages to a separate (e.g. local, cheap) model.**
+  All of matching's LLM work - extraction, requirement decomposition, and evidence entailment -
+  shared one configured model. Decomposition and entailment are the high-volume, templated
+  stages (up to 3 entailment calls per atomic claim), so they can now be pointed at a different
+  model from a new "Матчинг: декомпозиция требований" / "Матчинг: оценка доказательств
+  (entailment)" preference on the "Языковая модель" tab - e.g. a fast local Ollama model - while
+  extraction (the free-text-heavy, most variable stage) keeps whatever model is already
+  configured. Leaving either unset keeps the current single-model behavior unchanged. Switching
+  either invalidates the matching content-version, same as switching the main matching model.
+- **Skip the entailment LLM call for an obviously weak candidate.** Per claim, the top retrieved
+  evidence candidates always went to the LLM for entailment, even when the reranker score already
+  made a genuine match implausible. `APP_MATCHING_MIN_ENTAILMENT_SCORE` (0-1, default 0 = off)
+  now skips the LLM call entirely when every candidate is below the threshold, recording
+  `insufficient_evidence` deterministically instead.
 - **"Сразу в реранкер" and "Переранжировать" no longer discard the matching cache.** Both always
   scheduled a `force=true` recalculation - a full LLM recompute from scratch - even for a vacancy
   already scored with the same resume and model, since the idempotency key already covers exactly

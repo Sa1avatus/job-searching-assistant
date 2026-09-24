@@ -234,6 +234,19 @@ Measures already in place:
   JD (~2.5k input tokens) under a 4096 window truncates the extraction JSON
   (`finish_reason='length'` → `NoModelAvailableError` → `UngroundedExtractionError` → retry);
   8192 leaves ~5k output tokens for a typical long vacancy.
+- **Per-stage model routing**: extraction, decomposition, and entailment each resolve their own
+  `LlmPreferencePurpose` (`matching`, `matching_decomposition`, `matching_entailment`), each
+  falling back to `matching` (then `materials`) when unset. Decomposition/entailment are the
+  high-volume, templated stages, so they can be pointed at a separate model (e.g. a fast local
+  Ollama model) from the dashboard's "Языковая модель" tab without changing extraction, which
+  stays on whatever model handles free-text JD parsing best. The context-size caveat above still
+  applies per model instance: if decomposition and entailment share the same local model, their
+  `num_ctx` settings must still match each other to avoid a reload between calls; they no longer
+  need to match extraction's once extraction is a separate provider connection.
+- **Entailment score gate** (`APP_MATCHING_MIN_ENTAILMENT_SCORE`, default 0 = off): when every
+  retrieved candidate's normalized reranker score is below this threshold, the claim is recorded
+  `insufficient_evidence` without an entailment LLM call - a genuinely irrelevant candidate
+  doesn't need the LLM to confirm what the reranker score already indicates.
 - **Batched entailment** (`APP_MATCHING_ENTAILMENT_BATCH_SIZE`, default 5): concurrent
   (claim, evidence) pairs are collected by a background flusher inside
   `RouterEvidenceEvaluator` and evaluated in one LLM call per batch, cutting the actual

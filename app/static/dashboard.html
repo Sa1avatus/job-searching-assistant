@@ -265,6 +265,34 @@
       </div>
       <div id="llm-matching-state" class="task-state"></div>
 
+      <h3 style="margin-top:20px;">Матчинг: декомпозиция требований</h3>
+      <div class="hint">Высокочастотный, шаблонный этап — необязательно, можно оставить пустым (тогда используется модель «Матчинг» выше). Хороший кандидат на дешёвую/локальную модель.</div>
+      <div class="row">
+        <div><label>Провайдер</label><select id="llm-matching_decomposition-provider"><option value="gemini">Google Gemini</option><option value="anthropic">Anthropic Claude</option><option value="openai_compatible">OpenAI-compatible</option></select></div>
+        <div id="llm-matching_decomposition-base-url-field" hidden><label>Базовый URL API</label><input id="llm-matching_decomposition-base-url" type="url" placeholder="https://example.com/v1"></div>
+        <div><label>API-ключ провайдера</label><input id="llm-matching_decomposition-api-key" type="password" autocomplete="new-password" placeholder="вставьте ключ"></div>
+        <div style="flex:0"><button id="load-matching_decomposition-models" type="button">Получить модели</button></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label>Модель</label><select id="llm-matching_decomposition-model"><option value="">Сначала получите список моделей</option></select></div>
+        <div style="flex:0"><button id="save-matching_decomposition-llm" type="button" class="primary">Сохранить настройку</button></div>
+      </div>
+      <div id="llm-matching_decomposition-state" class="task-state"></div>
+
+      <h3 style="margin-top:20px;">Матчинг: оценка доказательств (entailment)</h3>
+      <div class="hint">Самый частый LLM-вызов в матчинге (до нескольких на каждое требование) — необязательно, можно оставить пустым (тогда используется модель «Матчинг» выше). Хороший кандидат на дешёвую/локальную модель.</div>
+      <div class="row">
+        <div><label>Провайдер</label><select id="llm-matching_entailment-provider"><option value="gemini">Google Gemini</option><option value="anthropic">Anthropic Claude</option><option value="openai_compatible">OpenAI-compatible</option></select></div>
+        <div id="llm-matching_entailment-base-url-field" hidden><label>Базовый URL API</label><input id="llm-matching_entailment-base-url" type="url" placeholder="https://example.com/v1"></div>
+        <div><label>API-ключ провайдера</label><input id="llm-matching_entailment-api-key" type="password" autocomplete="new-password" placeholder="вставьте ключ"></div>
+        <div style="flex:0"><button id="load-matching_entailment-models" type="button">Получить модели</button></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label>Модель</label><select id="llm-matching_entailment-model"><option value="">Сначала получите список моделей</option></select></div>
+        <div style="flex:0"><button id="save-matching_entailment-llm" type="button" class="primary">Сохранить настройку</button></div>
+      </div>
+      <div id="llm-matching_entailment-state" class="task-state"></div>
+
       <h3 style="margin-top:20px;">Генерация материалов</h3>
       <div class="hint">Модель для сопроводительных писем, ответов на скрининг и анализа резюме.</div>
       <div class="row">

@@ -157,6 +157,7 @@ class ClaimMatchPipeline:
         on_progress: Callable[[int, int], None] | None = None,
         llm_concurrency: int = 10,
         entailment_max_candidates: int = 2,
+        min_entailment_score: float = 0.0,
     ) -> None:
         self._session = session
         self._llm_concurrency = llm_concurrency
@@ -167,6 +168,7 @@ class ClaimMatchPipeline:
         self._retrieval_top_k = retrieval_top_k
         self._reranker_top_k = reranker_top_k
         self._entailment_max_candidates = entailment_max_candidates
+        self._min_entailment_score = min_entailment_score
         self._fallback_enabled = fallback_enabled
         self._on_progress = on_progress
         self._llm_call_count = 0
@@ -418,6 +420,23 @@ class ClaimMatchPipeline:
             )
 
         top_candidates = reranked[: min(self._reranker_top_k, self._entailment_max_candidates)]
+        if self._min_entailment_score > 0.0:
+            above_threshold = tuple(
+                candidate
+                for candidate in top_candidates
+                if candidate.normalized_score >= self._min_entailment_score
+            )
+            if not above_threshold:
+                # Every retrieved candidate is too weak to plausibly entail this claim -
+                # skip the LLM call entirely rather than spend it on an obvious miss.
+                metrics.increment("claims_below_entailment_threshold")
+                return ClaimMatchResult(
+                    claim=claim,
+                    relation="insufficient_evidence",
+                    evidence_strength=0.0,
+                    has_evidence=False,
+                )
+            top_candidates = above_threshold
         best_entailment: EntailmentResult | None = None
         all_entailments: list[EntailmentResult] = []
         supporting_evidence_ids: list[str] = []

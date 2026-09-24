@@ -90,6 +90,21 @@ class MatchingJobService:
             encryption_key,
             purpose=LlmPreferencePurpose.MATCHING,
         )
+        # Decomposition/entailment can be routed to their own model (see
+        # LlmPreferencePurpose) - include both so switching either one also
+        # invalidates the idempotency key, same as switching the extraction model.
+        decomposition_model_identity = resolve_model_identity(
+            self._session,
+            application.user_id,
+            encryption_key,
+            purpose=LlmPreferencePurpose.MATCHING_DECOMPOSITION,
+        )
+        entailment_model_identity = resolve_model_identity(
+            self._session,
+            application.user_id,
+            encryption_key,
+            purpose=LlmPreferencePurpose.MATCHING_ENTAILMENT,
+        )
         content_version = hashlib.sha256(
             "\n".join(
                 (
@@ -97,6 +112,8 @@ class MatchingJobService:
                     cv_file.sha256,
                     cv_file.analyzed_at.isoformat() if cv_file.analyzed_at else "not-analyzed",
                     model_identity or "",
+                    decomposition_model_identity or "",
+                    entailment_model_identity or "",
                 )
             ).encode("utf-8")
         ).hexdigest()[:20]
