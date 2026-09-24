@@ -57,7 +57,7 @@ def test_selector_candidates_prefer_stable_identifiers_over_free_text() -> None:
 
     candidates = selector_candidates_for(action)
 
-    assert [candidate.kind for candidate in candidates] == ["test_id", "id", "label", "role"]
+    assert [candidate.kind for candidate in candidates] == ["test_id", "id", "label"]
     assert candidates[0].value == "search-submit"
     assert candidates[2].value == "Search"
 
@@ -66,6 +66,28 @@ def test_selector_candidates_is_empty_when_nothing_identifies_the_element() -> N
     action = RecordedAction.from_payload({"kind": "click", "tag": "div"})
 
     assert selector_candidates_for(action) == []
+
+
+def test_selector_candidates_prefer_the_exact_text_fallback_over_a_bare_role() -> None:
+    """A page can have many elements sharing role="button" (or "link", "option", ...); that
+    role alone is not a usable locator, so an exact-text match on the same tag - captured
+    alongside the click - must be tried first, not the role.
+    """
+    action = RecordedAction.from_payload(
+        {"kind": "click", "tag": "a", "role": "button", "text": "Search Jobs"}
+    )
+
+    candidates = selector_candidates_for(action)
+
+    assert candidates == [WorkflowSelectorCandidate(kind="css", value='a:text-is("Search Jobs")')]
+
+
+def test_selector_candidates_fall_back_to_role_when_there_is_no_text_either() -> None:
+    action = RecordedAction.from_payload({"kind": "click", "tag": "button", "role": "button"})
+
+    candidates = selector_candidates_for(action)
+
+    assert candidates == [WorkflowSelectorCandidate(kind="role", value="button")]
 
 
 def test_selector_candidates_falls_back_to_exact_text_for_a_bare_click() -> None:

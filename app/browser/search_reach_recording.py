@@ -79,11 +79,15 @@ def selector_candidates_for(action: RecordedAction) -> list[WorkflowSelectorCand
     add("placeholder", action.placeholder)
     if action.aria_label and action.aria_label != action.label_text:
         add("label", action.aria_label)
-    add("role", action.role)
     # Buttons, links and autocomplete-suggestion rows are often just visible text with no
     # other identifying attribute at all; an exact-text match on the captured tag is still
-    # far more reliable than dropping the step entirely.
+    # far more reliable than dropping the step entirely, and - crucially - than the element's
+    # bare ARIA role. A role like "button", "link" or "option" is shared by every other button,
+    # link or menu item on the page (the locator becomes ``[role="button"]``, which is never a
+    # unique selector), so it is tried only as the very last resort.
     if not candidates and action.kind == "click" and action.text and action.tag:
         escaped_text = action.text.replace('"', '\\"')
         add("css", f'{action.tag}:text-is("{escaped_text}")')
+    if not candidates:
+        add("role", action.role)
     return candidates
