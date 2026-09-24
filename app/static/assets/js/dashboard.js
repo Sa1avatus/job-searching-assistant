@@ -1975,6 +1975,7 @@ document.querySelector('#recipe-record-start').addEventListener('click', async (
     return; // stays disabled while recording; re-enabled on stop/cancel
   } catch (error) {
     if (recordWindow && !recordWindow.closed) recordWindow.close();
+    document.querySelector('#recipe-record-state').textContent = error.message;
     showError(error);
   }
   button.disabled = false;
