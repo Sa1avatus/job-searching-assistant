@@ -7,6 +7,13 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Periodic session liveness checks, per site.** The background worker now probes every saved
+  browser session on its own schedule instead of only checking hh.ru/LinkedIn every 5 minutes and
+  never checking a user-defined site at all - a stale CareerViet session expiring mid-search
+  previously went unnoticed until a real search silently returned zero hits. Defaults to 60s for a
+  user-defined site and an hour for hh.ru/LinkedIn (a probe is itself automated activity those
+  sites watch for); either is overridable per site from an inline field on its session card.
+  Migration `0049` adds `browser_session_probe_settings`.
 - **Disambiguate a bare learned card selector.** "Определить автоматически" used to give up with
   "Селектор карточки неоднозначен" as soon as the card was a bare tag (e.g. plain `<li>`) that
   also matched unrelated elements elsewhere on the page, and only ever tried the immediate parent
