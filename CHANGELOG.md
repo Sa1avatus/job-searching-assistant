@@ -7,6 +7,10 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Learn SEO-slug search URLs.** Some sites put the query into the results URL as a hyphenated
+  slug (e.g. `.../ML-Engineer-k-en.html`) rather than percent/plus encoding it - "Определить
+  автоматически" now recognises this shape too (`{query-slug}`/`{location-slug}`), so such a site
+  can use a plain URL-template recipe instead of a recorded scenario.
 - **Record a search scenario instead of a URL template.** For sites where the URL-template
   search recipe cannot express the search (a POST form, an in-page click), the "Записать сценарий
   поиска" button opens the same visible, noVNC-streamed browser session already used to sign in
