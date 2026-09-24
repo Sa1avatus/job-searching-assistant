@@ -30,6 +30,13 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Fixed
 
+- **A recorded click on a common ARIA role (button/link/option) failed with a strict-mode
+  violation instead of matching the right element.** The recorder offered a bare `role="button"`
+  as a click candidate, which becomes the locator `[role="button"]` - never unique on a real page
+  (confirmed live: "resolved to 8 elements"). The already-computed exact-text fallback is now
+  tried first; role is only a last resort. Also, a step-executor failure during reach-step replay
+  (a stale selector, an off-host redirect) is no longer an unhandled 500/502: it is translated
+  into the recipe's normal, readable rejection.
 - **Testing a recorded search scenario always failed with 422.** `CustomSearchRequest.recipe` was
   typed `dict[str, str]`, so any recipe carrying `reach_steps` (nested step dicts under a string
   key) failed FastAPI's own request-body validation before `custom_search` ever ran - "Проверить
