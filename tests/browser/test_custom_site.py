@@ -100,6 +100,46 @@ def test_search_reads_cards_and_drops_off_host_links(tmp_path: Path) -> None:
     asyncio.run(run())
 
 
+def test_search_reports_an_expired_session_instead_of_a_silent_empty_result(
+    tmp_path: Path,
+) -> None:
+    """A stale saved session can make the site redirect a results URL to its own sign-in page
+    (still an allowed host, so nothing else catches it) - reading cards there would just quietly
+    return zero hits, indistinguishable from "no matching vacancies"."""
+    recipe = SearchRecipe(
+        url_template="https://jobs.example.com/login?q={query}",
+        card_selector="li.job-card",
+    )
+
+    async def serve_login_page(route: Route) -> None:
+        await route.fulfill(
+            status=200, content_type="text/html", body="<html><body>Sign in</body></html>"
+        )
+
+    async def run() -> None:
+        engine = PlaywrightEngine(artifact_directory=tmp_path)
+        original = engine.new_page
+
+        async def routed() -> Page:
+            page = await original()
+            await page.route("**/*", serve_login_page)
+            return page
+
+        engine.new_page = routed  # type: ignore[method-assign]
+        async with engine:
+            with pytest.raises(CustomSiteError, match="сессия"):
+                await search_custom_site(
+                    engine,
+                    recipe=recipe,
+                    allowed_hosts=HOSTS,
+                    query="python",
+                    limit=10,
+                    login_path_markers=("/login",),
+                )
+
+    asyncio.run(run())
+
+
 def test_recorded_reach_steps_replay_navigate_fill_click_to_reach_results(tmp_path: Path) -> None:
     """A recorded search scenario (no URL template) fills the form and clicks Search."""
     recipe = validate_recipe(

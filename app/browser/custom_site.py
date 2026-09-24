@@ -68,7 +68,25 @@ def _css(selector: str) -> str:
     return f"css={selector}"
 
 
-async def _open(engine: PlaywrightEngine, url: str, allowed_hosts: tuple[str, ...]) -> Page:
+_SESSION_EXPIRED_MESSAGE = (
+    "Сайт перенаправил на страницу входа: сохранённая сессия, похоже, истекла. "
+    "Войдите на сайт заново на вкладке «Сессии сайтов» и повторите поиск."
+)
+
+
+def _looks_like_login_page(url: str, login_path_markers: tuple[str, ...]) -> bool:
+    if not login_path_markers:
+        return False
+    path = urlsplit(url).path.casefold()
+    return any(marker.casefold() in path for marker in login_path_markers)
+
+
+async def _open(
+    engine: PlaywrightEngine,
+    url: str,
+    allowed_hosts: tuple[str, ...],
+    login_path_markers: tuple[str, ...] = (),
+) -> Page:
     if urlsplit(url).scheme != "https" or not is_allowed_host(
         urlsplit(url).hostname, allowed_hosts
     ):
@@ -81,6 +99,11 @@ async def _open(engine: PlaywrightEngine, url: str, allowed_hosts: tuple[str, ..
     if not is_allowed_host(urlsplit(page.url).hostname, allowed_hosts):
         await page.close()
         raise CustomSiteError("Сайт перенаправил на неразрешённый хост")
+    # A stale/expired saved session can silently redirect a "results" URL to sign-in, on the
+    # same allowed host - the search then quietly returns zero hits instead of failing loudly.
+    if _looks_like_login_page(page.url, login_path_markers):
+        await page.close()
+        raise CustomSiteError(_SESSION_EXPIRED_MESSAGE)
     return page
 
 
@@ -143,6 +166,7 @@ async def search_custom_site(
     query: str,
     location: str = "",
     limit: int = 15,
+    login_path_markers: tuple[str, ...] = (),
 ) -> list[CustomSiteHit]:
     recipe = validate_recipe(recipe, allowed_hosts)
     if recipe.reach_steps:
@@ -167,11 +191,16 @@ async def search_custom_site(
                 ) from error
             if not is_allowed_host(urlsplit(page.url).hostname, allowed_hosts):
                 raise CustomSiteError("Сайт перенаправил на неразрешённый хост")
+            if _looks_like_login_page(page.url, login_path_markers):
+                raise CustomSiteError(_SESSION_EXPIRED_MESSAGE)
             return await read_cards(page, recipe, allowed_hosts, limit)
         finally:
             await page.close()
     page = await _open(
-        engine, build_search_url(recipe, query=query, location=location), allowed_hosts
+        engine,
+        build_search_url(recipe, query=query, location=location),
+        allowed_hosts,
+        login_path_markers,
     )
     try:
         return await read_cards(page, recipe, allowed_hosts, limit)
@@ -180,10 +209,13 @@ async def search_custom_site(
 
 
 async def fetch_page_html(
-    engine: PlaywrightEngine, url: str, allowed_hosts: tuple[str, ...]
+    engine: PlaywrightEngine,
+    url: str,
+    allowed_hosts: tuple[str, ...],
+    login_path_markers: tuple[str, ...] = (),
 ) -> tuple[str, str]:
     """(final URL, rendered HTML) of a page on an approved host."""
-    page = await _open(engine, url, allowed_hosts)
+    page = await _open(engine, url, allowed_hosts, login_path_markers)
     try:
         return page.url, await page.content()
     finally:

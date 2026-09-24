@@ -432,6 +432,7 @@ async def login_status(user_id: str, site_key: str) -> dict[str, bool]:
 class CustomSiteConfig(StrictModel):
     site_key: str = Field(min_length=1, max_length=100)
     allowed_hosts: list[str] = Field(min_length=1, max_length=20)
+    login_path_markers: list[str] = Field(default_factory=list, max_length=20)
 
 
 class CustomLearnRequest(StrictModel):
@@ -487,9 +488,12 @@ def _hit_payload(hit: CustomSiteHit) -> dict[str, str]:
 async def custom_learn(request: CustomLearnRequest) -> dict[str, object]:
     """Derive a recipe from a results page the person produced and prove it by running it."""
     hosts = tuple(request.site.allowed_hosts)
+    login_markers = tuple(request.site.login_path_markers)
     try:
         async with _custom_engine(request.user_id, request.site) as engine:
-            final_url, page_html = await fetch_page_html(engine, request.results_url, hosts)
+            final_url, page_html = await fetch_page_html(
+                engine, request.results_url, hosts, login_markers
+            )
             template = infer_url_template(final_url, query=request.query, location=request.location)
             if template is None:
                 raise RecipeLearningError(
@@ -515,6 +519,7 @@ async def custom_learn(request: CustomLearnRequest) -> dict[str, object]:
                 query=request.query,
                 location=request.location,
                 limit=10,
+                login_path_markers=login_markers,
             )
     except (CustomSiteError, RecipeLearningError, InvalidSearchRecipe) as error:
         raise _custom_error(error) from error
@@ -538,6 +543,7 @@ async def custom_search(request: CustomSearchRequest) -> dict[str, object]:
                 query=request.search_text,
                 location=request.locations[0] if request.locations else "",
                 limit=request.limit,
+                login_path_markers=tuple(request.site.login_path_markers),
             )
     except (CustomSiteError, InvalidSearchRecipe) as error:
         raise _custom_error(error) from error

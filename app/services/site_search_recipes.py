@@ -8,6 +8,7 @@ recipe can be rolled back by activating an older version again.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -21,8 +22,27 @@ class RecipeNotVerified(ValueError):
     """Activation was requested for a recipe that has not produced results yet."""
 
 
+def login_path_markers_for(site: SiteDefinitionRow) -> tuple[str, ...]:
+    """Path fragments that mean "this is the sign-in page, not a result" for this site."""
+    raw_markers = site.authorization_rules.get("login_path_markers", [])
+    if not isinstance(raw_markers, list):
+        raw_markers = []
+    markers = tuple(
+        marker
+        for marker in raw_markers
+        if isinstance(marker, str) and marker.startswith("/") and len(marker) <= 500
+    )
+    if markers:
+        return markers
+    return (urlsplit(site.login_url).path or "/",)
+
+
 def site_payload(site: SiteDefinitionRow) -> dict[str, object]:
-    return {"site_key": site.site_key, "allowed_hosts": list(site.allowed_hosts)}
+    return {
+        "site_key": site.site_key,
+        "allowed_hosts": list(site.allowed_hosts),
+        "login_path_markers": list(login_path_markers_for(site)),
+    }
 
 
 def get_site(session: Session, user_id: str, site_definition_id: str) -> SiteDefinitionRow:

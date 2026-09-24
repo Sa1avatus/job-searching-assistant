@@ -282,7 +282,11 @@ def test_record_start_stop_cancel_proxy_to_the_browser_worker(
         "start",
         {
             "user_id": "user-1",
-            "site": {"site_key": "careers", "allowed_hosts": ["careers.example.com"]},
+            "site": {
+                "site_key": "careers",
+                "allowed_hosts": ["careers.example.com"],
+                "login_path_markers": ["/login"],
+            },
             "start_url": "https://careers.example.com/",
         },
     )

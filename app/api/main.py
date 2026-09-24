@@ -9,7 +9,6 @@ from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
-from urllib.parse import urlsplit
 
 # Playwright launches the browser as a subprocess. On Windows, asyncio's default
 # SelectorEventLoop (which uvicorn ends up using in some run configurations, notably
@@ -261,7 +260,7 @@ from app.services.site_fields import (
     upsert_site_field_mapping,
     upsert_site_value_override,
 )
-from app.services.site_search_recipes import active_recipe, site_payload
+from app.services.site_search_recipes import active_recipe, login_path_markers_for, site_payload
 from app.services.user_preferences import UserPreferencesService
 from app.services.vacancy_catalog import VacancyCatalogService
 from app.services.vacancy_metadata import (
@@ -302,6 +301,8 @@ logger = structlog.get_logger(__name__)
 
 class CustomSiteSourceError(RuntimeError):
     """A user-defined site cannot be searched (missing site or no active recipe)."""
+
+
 app = FastAPI(title="Job Searching Assistant", version="2.0.0")
 app.include_router(annotation_router)
 app.include_router(site_recipes_router)
@@ -1791,22 +1792,11 @@ def _site_definition_response(row: SiteDefinitionRow) -> SiteDefinitionResponse:
 
 
 def _custom_authorization_site(row: SiteDefinitionRow) -> BrowserAuthorizationSite:
-    raw_markers = row.authorization_rules.get("login_path_markers", [])
-    if not isinstance(raw_markers, list):
-        raw_markers = []
-    markers = tuple(
-        marker
-        for marker in raw_markers
-        if isinstance(marker, str) and marker.startswith("/") and len(marker) <= 500
-    )
-    if not markers:
-        login_path = urlsplit(row.login_url).path or "/"
-        markers = (login_path,)
     return BrowserAuthorizationSite(
         site_key=row.site_key,
         login_url=row.login_url,
         allowed_hosts=tuple(row.allowed_hosts),
-        login_path_markers=markers,
+        login_path_markers=login_path_markers_for(row),
     )
 
 
@@ -4342,7 +4332,9 @@ def resolve_application_submission(
     try:
         row = ledger.resolve_unknown(application_id, submitted=request.submitted, note=request.note)
         if request.submitted:
-            change_status(session, application, "submitted", actor="human", source="submission_resolved")
+            change_status(
+                session, application, "submitted", actor="human", source="submission_resolved"
+            )
     except SubmissionBlocked as error:
         session.rollback()
         raise HTTPException(
