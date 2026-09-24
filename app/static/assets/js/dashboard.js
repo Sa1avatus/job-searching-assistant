@@ -1787,6 +1787,8 @@ function prefillRecipeUrl() {
   const lastUrl = browserSessionStatuses[site]?.last_url;
   const input = document.querySelector('#recipe-results-url');
   if (lastUrl && !input.value) input.value = lastUrl;
+  const recordStartInput = document.querySelector('#recipe-record-start-url');
+  if (lastUrl && !recordStartInput.value) recordStartInput.value = lastUrl;
 }
 
 async function loadRecipeSites(definitions) {
