@@ -7,6 +7,12 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Disambiguate a bare learned card selector.** "Определить автоматически" used to give up with
+  "Селектор карточки неоднозначен" as soon as the card was a bare tag (e.g. plain `<li>`) that
+  also matched unrelated elements elsewhere on the page, and only ever tried the immediate parent
+  to narrow it down. It now walks up to four ancestor levels for a genuinely distinguishing one,
+  and falls back to requiring the real vacancy link itself (`:has(a[href*="..."])`) when even that
+  ancestor class is shared with an unrelated widget.
 - **Learn SEO-slug search URLs.** Some sites put the query into the results URL as a hyphenated
   slug (e.g. `.../ML-Engineer-k-en.html`) rather than percent/plus encoding it - "Определить
   автоматически" now recognises this shape too (`{query-slug}`/`{location-slug}`), so such a site
