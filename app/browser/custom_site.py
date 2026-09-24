@@ -81,6 +81,19 @@ def looks_like_login_page(url: str, login_path_markers: tuple[str, ...]) -> bool
     return any(marker.casefold() in path for marker in login_path_markers)
 
 
+async def page_shows_password_field(page: Page) -> bool:
+    """Whether the page currently renders a password input.
+
+    Some sites (e.g. Michael Page) render sign-in and the post-login account area at the
+    same URL path, so a marker match alone can't tell them apart - this content check does.
+    Fails closed (True) on error so callers stay conservative about treating a page as login.
+    """
+    try:
+        return await page.locator("input[type='password']").count() > 0
+    except Exception:
+        return True
+
+
 async def _open(
     engine: PlaywrightEngine,
     url: str,

@@ -5,6 +5,15 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ## [Unreleased]
 
+### Fixed
+
+- **Login confirmation stuck forever on a site where sign-in and the account area share a URL.**
+  On sites like Michael Page, the sign-in form and the logged-in "My Page" area render at the
+  same path, so "Я вошёл — сохранить" always saw the sign-in URL marker and rejected a completed
+  login with "Вход ещё не завершён", no matter how long the person waited. The same flaw made the
+  new per-site liveness probe misreport such a session as expired. Both checks now also require
+  an actual password field to still be on the page before treating it as "still signing in".
+
 ### Added
 
 - **Periodic session liveness checks, per site.** The background worker now probes every saved

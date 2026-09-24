@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import structlog
 from playwright.async_api import Page
 
+from app.browser.custom_site import page_shows_password_field
 from app.browser.engine import PlaywrightEngine
 
 logger = structlog.get_logger(__name__)
@@ -120,8 +121,14 @@ class BrowserAuthorizationManager:
             or (authorization.site.allow_subdomains and hostname.endswith(f".{allowed_host}"))
             for allowed_host in authorization.site.allowed_hosts
         )
-        is_login_page = any(
+        marker_matches_path = any(
             marker.casefold() in path for marker in authorization.site.login_path_markers
+        )
+        # A marker match alone can false-positive when sign-in and the post-login account area
+        # share a URL path (e.g. Michael Page's "/mypage/" renders both) - a password field is
+        # only actually present while still on the sign-in form itself.
+        is_login_page = marker_matches_path and (
+            await page_shows_password_field(authorization.page)
         )
         if not is_expected_host or is_login_page:
             raise BrowserAuthorizationError(

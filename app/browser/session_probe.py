@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from app.browser.custom_site import looks_like_login_page
+from app.browser.custom_site import looks_like_login_page, page_shows_password_field
 from app.browser.engine import PlaywrightEngine
 from app.domain.search_recipe import is_allowed_host
 
@@ -65,8 +65,12 @@ async def probe_browser_session(
                 # A site with no session state just shows its own sign-in page for this URL by
                 # definition, so a live/expired verdict here is only meaningful once the person
                 # has actually signed in at least once (login_path_markers is never empty then).
+                # The marker alone can false-positive when sign-in and the post-login account
+                # area share a URL path, so also require an actual password field on the page.
                 trusted_host = is_allowed_host(hostname, custom_site.allowed_hosts)
-                logged_out = looks_like_login_page(page.url, custom_site.login_path_markers)
+                logged_out = looks_like_login_page(
+                    page.url, custom_site.login_path_markers
+                ) and await page_shows_password_field(page)
             elif site_key == "headhunter":
                 trusted_host = hostname == "hh.ru" or hostname.endswith(".hh.ru")
                 logged_out = (
