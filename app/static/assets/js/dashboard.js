@@ -1966,6 +1966,12 @@ document.querySelector('#recipe-record-start').addEventListener('click', async (
       throw new Error('Браузер заблокировал окно записи. Разрешите всплывающие окна для 127.0.0.1');
     }
     button.disabled = true;
+    // A previous attempt (closed popup, page reload, double click) can leave a recording
+    // stuck open on the server with no way for this fresh page load to know about it; clear
+    // it before starting so "Записать сценарий поиска" always works, not just the first time.
+    try {
+      await fetch(recipeUrl('/record/cancel'), {method: 'POST', headers: headers(false)});
+    } catch (_error) { /* best-effort: a failed cleanup must not block starting */ }
     await asJson(await fetch(recipeUrl('/record/start'), {
       method: 'POST', headers: headers(true), body: JSON.stringify({start_url: startUrl})
     }));
