@@ -939,6 +939,23 @@ class BrowserSessionStateRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class BrowserSessionProbeSettingRow(Base):
+    """Per-user, per-site override of how often the background worker re-checks a saved
+    session's liveness (see app.workers.browser_worker). A missing row means the built-in
+    default applies: rarely for hh.ru/LinkedIn (a probe is itself automated activity on an
+    account those sites watch for), often for a user-defined site.
+    """
+
+    __tablename__ = "browser_session_probe_settings"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    site_key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class AnnotationSplitRow(Base):
     """A named train/validation/test split of the human label dataset.
 

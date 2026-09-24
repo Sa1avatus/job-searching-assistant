@@ -1413,7 +1413,25 @@ function ensureBrowserSessionCard(session) {
   cancel.textContent = 'Отмена';
   cancel.hidden = true;
   actions.append(login, confirm, cancel);
-  card.append(title, status, details, actions);
+  const probeRow = document.createElement('div');
+  probeRow.className = 'row';
+  probeRow.style.marginTop = '6px';
+  const probeLabel = document.createElement('label');
+  probeLabel.textContent = 'Проверять живость раз в, сек';
+  const probeInput = document.createElement('input');
+  probeInput.type = 'number';
+  probeInput.min = '30';
+  probeInput.max = '86400';
+  probeInput.step = '1';
+  probeInput.style.width = '90px';
+  probeInput.dataset.field = 'probe-interval';
+  probeLabel.append(probeInput);
+  const probeSave = document.createElement('button');
+  probeSave.type = 'button';
+  probeSave.dataset.action = 'save-probe-interval';
+  probeSave.textContent = 'Сохранить';
+  probeRow.append(probeLabel, probeSave);
+  card.append(title, status, details, actions, probeRow);
   container.append(card);
   return card;
 }
@@ -1474,6 +1492,10 @@ function renderBrowserSessionStatus(session) {
       ? `${session.last_error}. Нажмите кнопку входа и авторизуйтесь заново.`
       : 'Нажмите кнопку входа — откроется отдельное окно сайта.';
     loginButton.textContent = `Войти в ${label}`;
+  }
+  const probeInput = card.querySelector('[data-field="probe-interval"]');
+  if (probeInput && document.activeElement !== probeInput) {
+    probeInput.value = session.probe_interval_seconds || '';
   }
 }
 
@@ -1646,6 +1668,25 @@ document.querySelector('#browser-sessions').addEventListener('click', async (eve
       await loadBrowserSessionStatuses();
       showStatus(`Вход в ${label} отменён.`);
     } catch (error) { showError(error); }
+  } else if (action === 'save-probe-interval') {
+    const details = card.querySelector('.task-state');
+    try {
+      const userId = userIdInput.value.trim();
+      if (!userId) throw new Error('Сначала создайте или укажите User ID');
+      const input = card.querySelector('[data-field="probe-interval"]');
+      const intervalSeconds = Number.parseInt(input.value, 10);
+      if (!Number.isFinite(intervalSeconds)) throw new Error('Укажите интервал в секундах');
+      button.disabled = true;
+      await asJson(await fetch(
+        `/v1/users/${userId}/browser-sessions/${encodeURIComponent(site)}/probe-interval`,
+        {method: 'PUT', headers: headers(true), body: JSON.stringify({interval_seconds: intervalSeconds})}
+      ));
+      showStatus(`${label}: интервал проверки сохранён.`);
+    } catch (error) {
+      showError(error);
+      if (details) details.textContent = error.message;
+    }
+    finally { button.disabled = false; }
   }
 });
 

@@ -74,7 +74,7 @@ _SESSION_EXPIRED_MESSAGE = (
 )
 
 
-def _looks_like_login_page(url: str, login_path_markers: tuple[str, ...]) -> bool:
+def looks_like_login_page(url: str, login_path_markers: tuple[str, ...]) -> bool:
     if not login_path_markers:
         return False
     path = urlsplit(url).path.casefold()
@@ -101,7 +101,7 @@ async def _open(
         raise CustomSiteError("Сайт перенаправил на неразрешённый хост")
     # A stale/expired saved session can silently redirect a "results" URL to sign-in, on the
     # same allowed host - the search then quietly returns zero hits instead of failing loudly.
-    if _looks_like_login_page(page.url, login_path_markers):
+    if looks_like_login_page(page.url, login_path_markers):
         await page.close()
         raise CustomSiteError(_SESSION_EXPIRED_MESSAGE)
     return page
@@ -191,7 +191,7 @@ async def search_custom_site(
                 ) from error
             if not is_allowed_host(urlsplit(page.url).hostname, allowed_hosts):
                 raise CustomSiteError("Сайт перенаправил на неразрешённый хост")
-            if _looks_like_login_page(page.url, login_path_markers):
+            if looks_like_login_page(page.url, login_path_markers):
                 raise CustomSiteError(_SESSION_EXPIRED_MESSAGE)
             return await read_cards(page, recipe, allowed_hosts, limit)
         finally:

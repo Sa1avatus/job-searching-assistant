@@ -13,13 +13,15 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.browser.session_probe import probe_browser_session
+from app.browser.session_probe import BUILTIN_SITE_KEYS, CustomProbeSite, probe_browser_session
 from app.browser.session_service import BrowserSessionNotFound, BrowserSessionService
 from app.browser.session_store import EncryptedBrowserStateStore, InvalidBrowserState
 from app.config import Settings, get_settings
 from app.observability.logging import configure_logging
+from app.services.browser_session_probe_settings import get_interval_seconds
+from app.services.site_search_recipes import login_path_markers_for
 from app.storage.database import SessionFactory
-from app.storage.tables import BrowserSessionRow, WorkerHeartbeatRow
+from app.storage.tables import BrowserSessionRow, SiteDefinitionRow, WorkerHeartbeatRow
 from app.workers.browser_tasks import (
     ApplicationBrowserTaskHandler,
     ControlledBrowserReviewHandler,
@@ -79,29 +81,70 @@ async def probe_active_browser_sessions(
     session_factory: sessionmaker[Session],
     store: EncryptedBrowserStateStore,
     settings: Settings,
+    next_probe_due: dict[tuple[str, str], float],
 ) -> tuple[int, int, int]:
-    """Check live authentication for all usable sessions without performing site actions."""
+    """Check live authentication for whichever usable sessions are due, without performing
+    site actions. Each (user, site) is probed on its own schedule (see
+    app.services.browser_session_probe_settings): rarely by default for hh.ru/LinkedIn - a
+    probe is itself automated activity on an account those sites watch for - often for a
+    user-defined site, either overridable per site. ``next_probe_due`` is mutated in place and
+    must be the same dict passed on every call, so a session's own schedule persists between
+    calls.
+    """
+    now = time.monotonic()
+    due: list[tuple[BrowserSessionRow, bool]] = []
     with session_factory() as session:
         session_rows = session.scalars(
             select(BrowserSessionRow).where(BrowserSessionRow.status.in_(("available", "active")))
         ).all()
+        for browser_session in session_rows:
+            key = (browser_session.user_id, browser_session.site_key)
+            is_builtin = browser_session.site_key in BUILTIN_SITE_KEYS
+            if now >= next_probe_due.get(key, 0.0):
+                interval = get_interval_seconds(
+                    session,
+                    browser_session.user_id,
+                    browser_session.site_key,
+                    is_builtin=is_builtin,
+                )
+                next_probe_due[key] = now + interval
+                due.append((browser_session, is_builtin))
 
     live_count = 0
     expired_count = 0
     unknown_count = 0
-    for browser_session in session_rows:
+    for browser_session, is_builtin in due:
         with session_factory() as session:
             try:
                 _row, state = BrowserSessionService(session, store).restore(browser_session.id)
             except (BrowserSessionNotFound, InvalidBrowserState):
                 unknown_count += 1
                 continue
+        custom_site: CustomProbeSite | None = None
+        if not is_builtin:
+            with session_factory() as session:
+                site_row = session.scalar(
+                    select(SiteDefinitionRow).where(
+                        SiteDefinitionRow.user_id == browser_session.user_id,
+                        SiteDefinitionRow.site_key == browser_session.site_key,
+                        SiteDefinitionRow.archived_at.is_(None),
+                    )
+                )
+            if site_row is None:
+                unknown_count += 1
+                continue
+            custom_site = CustomProbeSite(
+                login_url=site_row.login_url,
+                allowed_hosts=tuple(site_row.allowed_hosts),
+                login_path_markers=login_path_markers_for(site_row),
+            )
         result = await probe_browser_session(
             site_key=browser_session.site_key,
             state=state,
             headless=settings.browser_headless,
             timeout_ms=settings.browser_timeout_ms,
             artifact_directory=settings.artifact_directory,
+            custom_site=custom_site,
         )
         if result.is_live is True:
             live_count += 1
@@ -147,7 +190,8 @@ async def run_worker() -> None:
     logger = structlog.get_logger()
     logger.info("browser_worker_started", worker=WORKER_NAME)
     next_session_audit_at = 0.0
-    next_live_session_probe_at = 0.0
+    next_probe_check_at = 0.0
+    next_probe_due: dict[tuple[str, str], float] = {}
     try:
         while not stopped.is_set():
             if time.monotonic() >= next_session_audit_at:
@@ -158,9 +202,11 @@ async def run_worker() -> None:
                     corrupted_count=corrupted_count,
                 )
                 next_session_audit_at = time.monotonic() + 30
-            if time.monotonic() >= next_live_session_probe_at:
+            # Checked on the same 30s cadence as the audit above; each session's own interval
+            # (minimum 30s, see MIN_INTERVAL_SECONDS) decides whether it is actually due.
+            if time.monotonic() >= next_probe_check_at:
                 live_count, expired_count, unknown_count = await probe_active_browser_sessions(
-                    SessionFactory, store, settings
+                    SessionFactory, store, settings, next_probe_due
                 )
                 logger.info(
                     "browser_session_live_probe_completed",
@@ -168,7 +214,7 @@ async def run_worker() -> None:
                     expired_count=expired_count,
                     unknown_count=unknown_count,
                 )
-                next_live_session_probe_at = time.monotonic() + 300
+                next_probe_check_at = time.monotonic() + 30
             processed = await dispatcher.run_once()
             if not processed:
                 with suppress(TimeoutError):

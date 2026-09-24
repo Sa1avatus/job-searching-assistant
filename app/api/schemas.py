@@ -605,6 +605,11 @@ class BrowserSessionStatusResponse(BaseModel):
     updated_at: str | None = None
     checked_at: str | None = None
     check_error: str | None = None
+    probe_interval_seconds: int = 60
+
+
+class ProbeIntervalRequest(BaseModel):
+    interval_seconds: int = Field(ge=30, le=86_400)
 
 
 class BrowserAuthorizationResponse(BaseModel):

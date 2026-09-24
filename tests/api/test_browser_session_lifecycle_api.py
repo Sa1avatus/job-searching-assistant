@@ -168,6 +168,25 @@ def test_cancel_returns_to_login_required(client: TestClient) -> None:
     assert _status(client)["state"] == "LOGIN_REQUIRED"
 
 
+def test_probe_interval_defaults_to_an_hour_for_a_builtin_site(client: TestClient) -> None:
+    assert _status(client)["probe_interval_seconds"] == 3600
+
+
+def test_probe_interval_can_be_overridden_and_persists(client: TestClient) -> None:
+    response = client.put(f"{URL}/probe-interval", json={"interval_seconds": 120})
+
+    assert response.status_code == 200
+    assert response.json() == 120
+    assert _status(client)["probe_interval_seconds"] == 120
+
+
+def test_probe_interval_rejects_a_value_outside_the_allowed_range(client: TestClient) -> None:
+    assert client.put(f"{URL}/probe-interval", json={"interval_seconds": 5}).status_code == 422
+    assert (
+        client.put(f"{URL}/probe-interval", json={"interval_seconds": 999_999}).status_code == 422
+    )
+
+
 def test_session_state_is_isolated_per_user(client: TestClient) -> None:
     other = client.post("/v1/users", json={"display_name": "Other"}).json()["id"]
     client.post(f"{URL}/start")

@@ -96,6 +96,7 @@ from app.api.schemas import (
     MatchingQueueResponse,
     MatchingQueueTaskResponse,
     PrepareApplicationRequest,
+    ProbeIntervalRequest,
     ProfileFactDetailResponse,
     ProfileFactRequest,
     ProfileFactResponse,
@@ -202,6 +203,11 @@ from app.services.browser_authorization import (
     BrowserAuthorizationSite,
 )
 from app.services.browser_handoff import create_browser_handoff
+from app.services.browser_session_probe_settings import (
+    InvalidProbeInterval,
+    get_interval_seconds,
+    set_interval_seconds,
+)
 from app.services.browser_session_state import BrowserSessionStateService, SessionSnapshot
 from app.services.browser_worker_client import BrowserWorkerClient, BrowserWorkerRejected
 from app.services.company_blacklist import CompanyBlacklistService
@@ -2310,9 +2316,28 @@ async def get_browser_session_statuses(
                     session_probe.checked_at.isoformat() if session_probe is not None else None
                 ),
                 check_error=session_probe.error if session_probe is not None else None,
+                probe_interval_seconds=get_interval_seconds(
+                    session, user_id, site_key, is_builtin=site_key in KNOWN_AUTHORIZATION_SITES
+                ),
             )
         )
     return statuses
+
+
+@app.put("/v1/users/{user_id}/browser-sessions/{site_key}/probe-interval", response_model=int)
+async def set_browser_session_probe_interval(
+    user_id: str,
+    site_key: str,
+    request: ProbeIntervalRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> int:
+    if session.get(UserRow, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        set_interval_seconds(session, user_id, site_key, request.interval_seconds)
+    except InvalidProbeInterval as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return request.interval_seconds
 
 
 @app.post(
