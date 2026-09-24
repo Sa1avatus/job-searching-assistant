@@ -170,3 +170,148 @@ def test_other_users_cannot_reach_a_site(
     response = client.get("/v1/users/user-2/site-definitions/site-1/search-recipe")
 
     assert response.status_code == 404
+
+
+RECORDED_RECIPE = {
+    "url_template": "",
+    "card_selector": "li.job-card",
+    "reach_steps": [
+        {
+            "action_type": "navigate",
+            "parameters": {"url": "https://careers.example.com/"},
+        },
+        {
+            "action_type": "fill",
+            "selector_candidates": [{"kind": "id", "value": "q"}],
+            "parameters": {"value_key": "query"},
+        },
+        {
+            "action_type": "click",
+            "selector_candidates": [{"kind": "id", "value": "go"}],
+        },
+    ],
+}
+
+
+def test_draft_accepts_a_recorded_scenario_instead_of_a_url_template(
+    client_and_factory: tuple[TestClient, sessionmaker],
+) -> None:
+    client, _factory = client_and_factory
+
+    draft = client.put(f"{BASE}/draft", json=RECORDED_RECIPE)
+
+    assert draft.status_code == 200
+    assert draft.json()["recipe"]["url_template"] == ""
+    assert [step["action_type"] for step in draft.json()["recipe"]["reach_steps"]] == [
+        "navigate",
+        "fill",
+        "click",
+    ]
+
+
+def test_draft_rejects_a_recorded_scenario_with_no_query_field(
+    client_and_factory: tuple[TestClient, sessionmaker],
+) -> None:
+    client, _factory = client_and_factory
+
+    response = client.put(
+        f"{BASE}/draft",
+        json={
+            "url_template": "",
+            "card_selector": "li.job-card",
+            "reach_steps": [RECORDED_RECIPE["reach_steps"][0]],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_record_start_stop_cancel_proxy_to_the_browser_worker(
+    client_and_factory: tuple[TestClient, sessionmaker], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _factory = client_and_factory
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def start(self: BrowserWorkerClient, **kwargs: object) -> None:
+        calls.append(("start", kwargs))
+
+    async def stop(self: BrowserWorkerClient, **kwargs: object) -> dict[str, object]:
+        calls.append(("stop", kwargs))
+        return {
+            "start_url": "https://careers.example.com/",
+            "final_url": "https://careers.example.com/search?q=python",
+            "actions": [
+                {
+                    "kind": "fill",
+                    "tag": "input",
+                    "element_type": "text",
+                    "element_id": "q",
+                    "name": "",
+                    "role": "",
+                    "aria_label": "",
+                    "test_id": "",
+                    "placeholder": "",
+                    "label_text": "",
+                    "text": "input#q",
+                    "value_preview": "python",
+                    "value_length": 6,
+                    "selector_candidates": [{"kind": "id", "value": "q"}],
+                }
+            ],
+            "learned_recipe": {
+                "card_selector": "li.job-card",
+                "link_selector": "",
+                "title_selector": "",
+                "company_selector": "",
+                "card_count": 4,
+            },
+        }
+
+    async def cancel(self: BrowserWorkerClient, **kwargs: object) -> None:
+        calls.append(("cancel", kwargs))
+
+    monkeypatch.setattr(BrowserWorkerClient, "custom_record_start", start)
+    monkeypatch.setattr(BrowserWorkerClient, "custom_record_stop", stop)
+    monkeypatch.setattr(BrowserWorkerClient, "custom_record_cancel", cancel)
+
+    started = client.post(
+        f"{BASE}/record/start", json={"start_url": "https://careers.example.com/"}
+    )
+    assert started.status_code == 202
+    assert calls[0] == (
+        "start",
+        {
+            "user_id": "user-1",
+            "site": {"site_key": "careers", "allowed_hosts": ["careers.example.com"]},
+            "start_url": "https://careers.example.com/",
+        },
+    )
+
+    stopped = client.post(f"{BASE}/record/stop")
+    assert stopped.status_code == 200
+    body = stopped.json()
+    assert body["final_url"] == "https://careers.example.com/search?q=python"
+    assert body["actions"][0]["value_preview"] == "python"
+    assert body["learned_recipe"]["card_count"] == 4
+
+    cancelled = client.post(f"{BASE}/record/cancel")
+    assert cancelled.status_code == 200
+    assert calls[-1][0] == "cancel"
+
+
+def test_record_start_surfaces_a_worker_refusal(
+    client_and_factory: tuple[TestClient, sessionmaker], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _factory = client_and_factory
+
+    async def refused(self: BrowserWorkerClient, **_kwargs: object) -> None:
+        raise BrowserWorkerRejected("Запись уже идёт")
+
+    monkeypatch.setattr(BrowserWorkerClient, "custom_record_start", refused)
+
+    response = client.post(
+        f"{BASE}/record/start", json={"start_url": "https://careers.example.com/"}
+    )
+
+    assert response.status_code == 422
+    assert "идёт" in response.json()["detail"]

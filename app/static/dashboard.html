@@ -353,6 +353,15 @@
           <div><label for="recipe-location">Город (если искали)</label><input id="recipe-location" maxlength="200"></div>
           <div style="flex:0"><label>&nbsp;</label><button id="recipe-learn" type="button" class="primary">Определить автоматически</button></div>
         </div>
+        <div class="hint">Если поиск на сайте не открывается по обычной ссылке (нужно печатать в поле и нажимать кнопку), запишите его: откроется видимое окно, где вы сами выполните поиск, а JSA запомнит, что вы нажимали.</div>
+        <div class="row">
+          <div><label for="recipe-record-start-url">Страница, с которой начать запись</label><input id="recipe-record-start-url" type="url" placeholder="https://careers.example.com/"></div>
+          <div style="flex:0"><label>&nbsp;</label><button id="recipe-record-start" type="button">Записать сценарий поиска</button></div>
+          <div style="flex:0"><label>&nbsp;</label><button id="recipe-record-stop" type="button" disabled>Остановить и разобрать</button></div>
+          <div style="flex:0"><label>&nbsp;</label><button id="recipe-record-cancel" type="button" disabled>Отменить запись</button></div>
+        </div>
+        <div id="recipe-record-state" class="task-state"></div>
+        <div id="recipe-record-review"></div>
         <details id="recipe-manual" style="margin-top:8px;">
           <summary>Задать рецепт вручную</summary>
           <div class="row" style="margin-top:8px;">

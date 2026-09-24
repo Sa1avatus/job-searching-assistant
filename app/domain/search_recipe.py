@@ -8,8 +8,16 @@ approved (ADR 0003: fail closed on cross-host navigation, no arbitrary JavaScrip
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass
 from urllib.parse import quote_plus, urljoin, urlsplit
+
+from pydantic import ValidationError
+
+from app.domain.workflow_click import ClickWorkflowStep
+from app.domain.workflow_fill import FillWorkflowStep
+from app.domain.workflow_schemas import NavigateWorkflowStep
+from app.domain.workflow_step_parser import parse_workflow_step
 
 QUERY_PLACEHOLDER = "{query}"
 LOCATION_PLACEHOLDER = "{location}"
@@ -19,6 +27,14 @@ _MAX_URL_LENGTH = 2000
 # Plain CSS only: no engine prefixes (`xpath=`, `text=`, `js=`), no chaining (`>>`), no markup.
 _SELECTOR_PATTERN = re.compile(r"^[A-Za-z0-9_\-\s.#\[\]=\"'*:>+~,()^$|/%]+$")
 _FORBIDDEN_SELECTOR_FRAGMENTS = (">>", "xpath", "js=", "javascript", "text=", "internal:")
+
+# A recorded "reach the results page" scenario is a short, closed sequence: open a page, type
+# into fields, click things. No submit, upload, file access or arbitrary step type - it only
+# gets the browser to a results page, which is then read the same way as with a URL template.
+ReachStep = NavigateWorkflowStep | FillWorkflowStep | ClickWorkflowStep
+_ALLOWED_REACH_STEP_TYPES = (NavigateWorkflowStep, FillWorkflowStep, ClickWorkflowStep)
+_ALLOWED_REACH_VALUE_KEYS = frozenset({"query", "location"})
+_MAX_REACH_STEPS = 30
 
 
 class InvalidSearchRecipe(ValueError):
@@ -59,6 +75,12 @@ class SearchRecipe:
 
     ``link_selector`` and ``title_selector`` are relative to a card; an empty link selector means
     the card itself is the link, an empty title selector means the link text is the title.
+
+    ``reach_steps`` is an alternative to ``url_template`` for sites where search cannot be
+    expressed as a URL (a POST form, an in-page click): a short recorded sequence of
+    navigate/fill/click steps that gets the browser to the results page, which is then read with
+    the same card/link/title/company selectors either way. When both are set, ``reach_steps``
+    takes priority at search time.
     """
 
     url_template: str
@@ -66,9 +88,17 @@ class SearchRecipe:
     link_selector: str = ""
     title_selector: str = ""
     company_selector: str = ""
+    reach_steps: tuple[ReachStep, ...] = ()
 
-    def to_dict(self) -> dict[str, str]:
-        return asdict(self)
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "url_template": self.url_template,
+            "card_selector": self.card_selector,
+            "link_selector": self.link_selector,
+            "title_selector": self.title_selector,
+            "company_selector": self.company_selector,
+            "reach_steps": [step.model_dump(mode="json") for step in self.reach_steps],
+        }
 
     @classmethod
     def from_dict(cls, data: object) -> SearchRecipe:
@@ -80,14 +110,31 @@ class SearchRecipe:
             link_selector=str(data.get("link_selector", "")),
             title_selector=str(data.get("title_selector", "")),
             company_selector=str(data.get("company_selector", "")),
+            reach_steps=_parse_reach_steps(data.get("reach_steps") or []),
         )
 
 
-def validate_recipe(
-    recipe: SearchRecipe, allowed_hosts: tuple[str, ...] | list[str]
-) -> SearchRecipe:
-    """Return the normalized recipe or raise :class:`InvalidSearchRecipe`."""
-    template = recipe.url_template.strip()
+def _parse_reach_steps(raw: object) -> tuple[ReachStep, ...]:
+    if not isinstance(raw, list):
+        raise InvalidSearchRecipe("Сценарий поиска должен быть списком шагов")
+    parsed: list[ReachStep] = []
+    for index, item in enumerate(raw):
+        if isinstance(item, _ALLOWED_REACH_STEP_TYPES):
+            parsed.append(item)
+            continue
+        try:
+            step = parse_workflow_step(item)
+        except ValidationError as error:
+            raise InvalidSearchRecipe(f"Шаг сценария {index + 1}: некорректные данные") from error
+        if not isinstance(step, _ALLOWED_REACH_STEP_TYPES):
+            raise InvalidSearchRecipe(
+                f"Шаг сценария {index + 1}: сценарий поиска допускает только navigate, fill и click"
+            )
+        parsed.append(step)
+    return tuple(parsed)
+
+
+def _validate_url_template(template: str, allowed_hosts: tuple[str, ...] | list[str]) -> str:
     if len(template) > _MAX_URL_LENGTH:
         raise InvalidSearchRecipe("Шаблон URL слишком длинный")
     if QUERY_PLACEHOLDER not in template:
@@ -102,6 +149,50 @@ def validate_recipe(
     leftover = re.sub(r"\{(query|location)\}", "", template)
     if "{" in leftover or "}" in leftover:
         raise InvalidSearchRecipe("Допустимы только подстановки {query} и {location}")
+    return template
+
+
+def validate_reach_steps(
+    steps: Sequence[ReachStep], allowed_hosts: tuple[str, ...] | list[str]
+) -> tuple[ReachStep, ...]:
+    """Return the normalized reach-steps or raise :class:`InvalidSearchRecipe`."""
+    if not steps:
+        return ()
+    if len(steps) > _MAX_REACH_STEPS:
+        raise InvalidSearchRecipe(f"Сценарий поиска длиннее {_MAX_REACH_STEPS} шагов")
+    if not isinstance(steps[0], NavigateWorkflowStep):
+        raise InvalidSearchRecipe("Сценарий поиска должен начинаться с открытия страницы")
+    has_query_fill = False
+    for index, step in enumerate(steps):
+        if isinstance(step, NavigateWorkflowStep):
+            hostname = urlsplit(step.parameters.url).hostname
+            if not is_allowed_host(hostname, allowed_hosts):
+                raise InvalidSearchRecipe(
+                    f"Шаг {index + 1}: хост {hostname} не входит в разрешённые хосты сайта"
+                )
+        elif isinstance(step, FillWorkflowStep):
+            if step.parameters.value_key not in _ALLOWED_REACH_VALUE_KEYS:
+                raise InvalidSearchRecipe(
+                    f"Шаг {index + 1}: поле сценария поиска может быть только query или location"
+                )
+            has_query_fill = has_query_fill or step.parameters.value_key == "query"
+    if not has_query_fill:
+        raise InvalidSearchRecipe("Сценарий поиска должен хотя бы раз вводить запрос (query)")
+    return tuple(steps)
+
+
+def validate_recipe(
+    recipe: SearchRecipe, allowed_hosts: tuple[str, ...] | list[str]
+) -> SearchRecipe:
+    """Return the normalized recipe or raise :class:`InvalidSearchRecipe`."""
+    reach_steps = validate_reach_steps(recipe.reach_steps, allowed_hosts)
+    template = recipe.url_template.strip()
+    if not template and not reach_steps:
+        raise InvalidSearchRecipe(
+            f"Нужен шаблон URL с {QUERY_PLACEHOLDER} или записанный сценарий поиска"
+        )
+    if template:
+        template = _validate_url_template(template, allowed_hosts)
     return SearchRecipe(
         url_template=template,
         card_selector=validate_selector(recipe.card_selector, field="Карточка", required=True),
@@ -110,6 +201,7 @@ def validate_recipe(
         company_selector=validate_selector(
             recipe.company_selector, field="Компания", required=False
         ),
+        reach_steps=reach_steps,
     )
 
 

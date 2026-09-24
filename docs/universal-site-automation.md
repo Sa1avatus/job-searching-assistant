@@ -12,14 +12,19 @@ fields, mappings, overrides, or declarative browser workflows.
 - Discovered site fields, canonical mappings, encrypted site/field overrides, and deterministic
   effective-value resolution.
 - Multiple semantic locator candidates from form discovery.
-- A closed `WorkflowStepType` enum and an ORM `WorkflowDefinitionRow` foundation.
+- A closed `WorkflowStepType` enum, a typed schema for every step
+  (`app/domain/workflow_*.py`), and a per-step Playwright executor for each one
+  (`app/browser/workflow_*_executor.py`, dispatched by `app/workflows/`). `WorkflowDefinitionRow`/
+  `WorkflowStepRow` persistence exists (migration `0024`).
+- Search recipes for user-defined sites (migration `0048`): see the next section. Its recorded
+  `reach_steps` (below) are the first real caller of the step executor above.
 
-- Search recipes for user-defined sites (migration `0048`): see the next section.
-
-The current Alembic head for the autofill foundation is `0023`, which covers site fields, mappings, and overrides. Workflow
-definition persistence has no migration, and step schemas, execution, activation, rollback,
-recording, visual editing, and dry-run evidence are not complete. Do not document arbitrary-site
-execution as operational yet.
+The current Alembic head for the autofill foundation is `0023`, which covers site fields, mappings,
+and overrides. `workflow_definitions`/`workflow_steps` have a migration and a working per-step
+executor, but nothing outside `app/workflows/workflow_runner.py` itself calls it yet: there is no
+CRUD service, no API, no recorder, and no activation/rollback/dry-run lifecycle for a full
+job-application-form workflow (fill + select + check + upload + the privileged submit step with
+human confirmation). Do not document arbitrary-site application-form execution as operational yet.
 
 ## Search recipes for user-defined sites
 
@@ -44,9 +49,30 @@ result card, the link inside it, the title and the company. It is data, never co
   `og:site_name` meta tag and the main text.
 - **Discovery.** An active recipe makes the site a `custom:<site_key>` source in the discovery
   stream. Vacancies are stored with adapter `custom` and are review-only: no automatic submission.
+- **Recording a scenario instead of a URL template.** When search needs a POST form or an
+  in-page click, `recipe.reach_steps` (`app/domain/search_recipe.py`) holds a short recorded
+  sequence of `navigate`/`fill`/`click` steps - a restricted subset of ADR 0003's closed
+  `WorkflowStep` schema; no `select`/`check`/`upload`/`submit`/`human_review` allowed here. It is
+  validated the same way as a URL template: every `navigate` host must be on the site's allowlist,
+  every `fill` step's `value_key` must be `query` or `location`, and at least one `query` fill is
+  required. At search time (`app/browser/custom_site.py::search_custom_site`) `reach_steps` take
+  priority over `url_template` when both are present; they are replayed with the existing
+  typed-step executor (`app/workflows/workflow_runner.py`) and the resulting page is checked
+  against the host allowlist before cards are read the normal way.
+  - **Recording UI.** "Записать сценарий поиска" opens the same visible, noVNC-streamed session
+    already used for site login (`app/services/browser_authorization.py`'s pattern, mirrored by
+    `app/services/search_recipe_recording.py`). A fixed script
+    (`app/browser/assets/search_recorder.js`) observes clicks and completed field edits and
+    reports them through an exposed binding - it never acts on the page, and password fields are
+    never observed. `POST .../search-recipe/record/{start,stop,cancel}` proxy to the browser
+    worker. Stopping returns each action's locator candidates (`app/browser/search_reach_recording.py`,
+    same priority as form discovery: id/name/test-id/label/placeholder/role) and, for `fill`
+    actions only, the typed text - safe here because it is the person's own search text, not
+    personal data. The person tags each field as query/location/ignore and can drop clicks before
+    saving; nothing is persisted until `PUT .../search-recipe/draft`.
 
-Known limits: results that need a POST, an infinite scroll or an in-page click are not covered, and
-the query must appear in the results URL for automatic learning (otherwise write the recipe by hand).
+Known limits: an infinite scroll is not covered by either path, and the query must appear in the
+results URL for automatic learning (otherwise write the recipe by hand or record it).
 
 ## Value precedence
 
@@ -79,10 +105,17 @@ preserve these invariants:
 
 ## Remaining implementation order
 
-1. Add the migration and typed persistence for workflow definitions and individual steps.
-2. Add one validated step schema and deterministic executor at a time.
-3. Add outcome rules, dry-run evidence, activation, and rollback.
-4. Add recorder and editor behavior without storing literal secrets.
+For a full job-application-form workflow (`workflow_definitions`/`workflow_steps`, all ten step
+types including `submit`):
+
+1. ~~Add the migration and typed persistence for workflow definitions and individual steps~~ (done:
+   migration `0024`).
+2. ~~Add one validated step schema and deterministic executor at a time~~ (done: every
+   `WorkflowStepType` has a schema and an executor).
+3. Add a CRUD service and API, outcome rules, dry-run evidence, activation, and rollback.
+4. Add recorder and editor behavior without storing literal secrets. The search-recipe recorder
+   (above) is the model to follow: observe-only script, candidates over recorded values, tag
+   before persisting.
 5. Introduce explicit submit approval and compatibility adapters only after fixture and restart tests
    pass.
 

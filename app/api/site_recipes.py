@@ -35,11 +35,14 @@ router = APIRouter(
 
 
 class RecipeBody(BaseModel):
-    url_template: str = Field(max_length=2000)
+    url_template: str = Field(default="", max_length=2000)
     card_selector: str = Field(max_length=300)
     link_selector: str = Field(default="", max_length=300)
     title_selector: str = Field(default="", max_length=300)
     company_selector: str = Field(default="", max_length=300)
+    # A recorded alternative to url_template: navigate/fill/click steps that reach the results
+    # page. Validated into typed steps by SearchRecipe.from_dict/validate_recipe, not here.
+    reach_steps: list[dict[str, object]] = Field(default_factory=list, max_length=30)
 
 
 class LearnRequest(BaseModel):
@@ -53,6 +56,42 @@ class TestRequest(BaseModel):
 
     query: str = Field(min_length=1, max_length=200)
     location: str = Field(default="", max_length=200)
+
+
+class RecordStartRequest(BaseModel):
+    start_url: str = Field(min_length=8, max_length=2000)
+
+
+class RecordedActionResponse(BaseModel):
+    kind: str
+    tag: str
+    element_type: str
+    element_id: str
+    name: str
+    role: str
+    aria_label: str
+    test_id: str
+    placeholder: str
+    label_text: str
+    text: str
+    value_preview: str
+    value_length: int
+    selector_candidates: list[dict[str, str]]
+
+
+class LearnedCardSelectors(BaseModel):
+    card_selector: str
+    link_selector: str
+    title_selector: str
+    company_selector: str
+    card_count: int
+
+
+class RecordStopResponse(BaseModel):
+    start_url: str
+    final_url: str
+    actions: list[RecordedActionResponse]
+    learned_recipe: LearnedCardSelectors | None
 
 
 class RecipeVersion(BaseModel):
@@ -69,7 +108,7 @@ def _version(row: SiteSearchRecipeRow) -> RecipeVersion:
     return RecipeVersion(
         version=row.version,
         status=row.status,
-        recipe=RecipeBody(**row.recipe),
+        recipe=RecipeBody.model_validate(row.recipe),
         learned_from_url=row.learned_from_url,
         preview=list(row.preview),
         verified_at=row.verified_at,
@@ -117,10 +156,10 @@ def put_draft(
     request: RecipeBody,
     session: Annotated[Session, Depends(session_scope)],
 ) -> RecipeVersion:
-    """Save a hand-written recipe as an unverified draft."""
+    """Save a hand-written or recorded recipe as an unverified draft."""
     try:
         site = get_site(session, user_id, site_definition_id)
-        row = save_draft(session, site, SearchRecipe(**request.model_dump()))
+        row = save_draft(session, site, SearchRecipe.from_dict(request.model_dump()))
     except EntityNotFoundError as error:
         raise _not_found(error) from error
     except InvalidSearchRecipe as error:
@@ -161,6 +200,70 @@ async def learn_recipe(
     except InvalidSearchRecipe as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return _version(row)
+
+
+@router.post("/record/start", status_code=202)
+async def start_recording(
+    user_id: str,
+    site_definition_id: str,
+    request: RecordStartRequest,
+    session: Annotated[Session, Depends(session_scope)],
+) -> dict[str, str]:
+    """Open a visible session the person searches in themselves; nothing is saved yet."""
+    try:
+        site = get_site(session, user_id, site_definition_id)
+    except EntityNotFoundError as error:
+        raise _not_found(error) from error
+    try:
+        await _client().custom_record_start(
+            user_id=user_id, site=site_payload(site), start_url=request.start_url
+        )
+    except (BrowserWorkerRejected, httpx.HTTPError) as error:
+        raise _worker_error(error) from error
+    return {"state": "recording"}
+
+
+@router.post("/record/stop", response_model=RecordStopResponse)
+async def stop_recording(
+    user_id: str,
+    site_definition_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> RecordStopResponse:
+    """End the recording and return what was observed, for the person to tag before saving."""
+    try:
+        site = get_site(session, user_id, site_definition_id)
+    except EntityNotFoundError as error:
+        raise _not_found(error) from error
+    try:
+        result = await _client().custom_record_stop(user_id=user_id, site=site_payload(site))
+    except (BrowserWorkerRejected, httpx.HTTPError) as error:
+        raise _worker_error(error) from error
+    learned = result.get("learned_recipe")
+    raw_actions = result.get("actions")
+    return RecordStopResponse(
+        start_url=str(result.get("start_url", "")),
+        final_url=str(result.get("final_url", "")),
+        actions=[
+            RecordedActionResponse(**action)
+            for action in (raw_actions if isinstance(raw_actions, list) else [])
+            if isinstance(action, dict)
+        ],
+        learned_recipe=LearnedCardSelectors(**learned) if isinstance(learned, dict) else None,
+    )
+
+
+@router.post("/record/cancel")
+async def cancel_recording(
+    user_id: str,
+    site_definition_id: str,
+    session: Annotated[Session, Depends(session_scope)],
+) -> dict[str, str]:
+    try:
+        site = get_site(session, user_id, site_definition_id)
+    except EntityNotFoundError as error:
+        raise _not_found(error) from error
+    await _client().custom_record_cancel(user_id=user_id, site_key=site.site_key)
+    return {"state": "cancelled"}
 
 
 @router.post("/{version}/test", response_model=RecipeVersion)

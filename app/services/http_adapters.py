@@ -68,7 +68,7 @@ class HttpCustomSiteAdapter:
         client: BrowserWorkerClient,
         user_id: str,
         site: dict[str, object],
-        recipe: dict[str, str],
+        recipe: dict[str, object],
     ) -> None:
         self._client = client
         self._user_id = user_id

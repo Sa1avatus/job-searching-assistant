@@ -185,7 +185,7 @@ class BrowserWorkerClient:
             timeout=self._timeout, follow_redirects=False, trust_env=False
         ) as client:
             response = await client.post(f"{self._base_url}/v1/browser/custom/{path}", json=payload)
-        if response.status_code == 422:
+        if response.status_code in (409, 422):
             detail = response.json().get("detail")
             raise BrowserWorkerRejected(detail if isinstance(detail, str) else "Запрос отклонён")
         response.raise_for_status()
@@ -216,7 +216,7 @@ class BrowserWorkerClient:
         *,
         user_id: str,
         site: dict[str, object],
-        recipe: dict[str, str],
+        recipe: dict[str, object],
         search_text: str,
         locations: list[str] | None = None,
         limit: int = 15,
@@ -248,3 +248,19 @@ class BrowserWorkerClient:
         self, *, user_id: str, site: dict[str, object], url: str
     ) -> dict[str, object]:
         return await self._custom_post("extract", {"user_id": user_id, "site": site, "url": url})
+
+    async def custom_record_start(
+        self, *, user_id: str, site: dict[str, object], start_url: str
+    ) -> None:
+        await self._custom_post(
+            "record/start",
+            {"user_id": user_id, "site": site, "start_url": start_url},
+        )
+
+    async def custom_record_stop(
+        self, *, user_id: str, site: dict[str, object]
+    ) -> dict[str, object]:
+        return await self._custom_post("record/stop", {"user_id": user_id, "site": site})
+
+    async def custom_record_cancel(self, *, user_id: str, site_key: str) -> None:
+        await self._custom_post("record/cancel", {"user_id": user_id, "site_key": site_key})

@@ -221,7 +221,7 @@ class SiteSearchRecipeRow(Base):
     )
     version: Mapped[int]
     status: Mapped[str] = mapped_column(String(20), default="draft")
-    recipe: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    recipe: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     learned_from_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     preview: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

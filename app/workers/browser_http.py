@@ -23,6 +23,7 @@ from app.browser.custom_site import (
 )
 from app.browser.engine import PlaywrightEngine
 from app.browser.recipe_learning import RecipeLearningError, infer_url_template, learn_selectors
+from app.browser.search_reach_recording import selector_candidates_for
 from app.browser.selector_library import SelectorLibrary
 from app.browser.session_probe import probe_browser_session
 from app.browser.session_service import BrowserSessionService
@@ -34,6 +35,10 @@ from app.services.browser_authorization import (
     BrowserAuthorizationError,
     BrowserAuthorizationManager,
     BrowserAuthorizationSite,
+)
+from app.services.search_recipe_recording import (
+    SearchRecipeRecordingManager,
+    SearchRecordingError,
 )
 from app.storage.database import SessionFactory
 from app.storage.tables import BrowserSessionRow
@@ -548,3 +553,132 @@ async def custom_extract(request: CustomExtractRequest) -> dict[str, object]:
             )
     except CustomSiteError as error:
         raise _custom_error(error) from error
+
+
+# --- recording a search scenario on a user-defined site -----------------------------------
+
+
+_recording_manager = SearchRecipeRecordingManager()
+
+
+class CustomRecordStartRequest(StrictModel):
+    user_id: str
+    site: CustomSiteConfig
+    start_url: str = Field(max_length=2000)
+
+
+class CustomRecordStopRequest(StrictModel):
+    user_id: str
+    site: CustomSiteConfig
+
+
+class CustomRecordCancelRequest(StrictModel):
+    user_id: str
+    site_key: str = Field(min_length=1, max_length=100)
+
+
+class RecordedActionPayload(StrictModel):
+    kind: str
+    tag: str
+    element_type: str
+    element_id: str
+    name: str
+    role: str
+    aria_label: str
+    test_id: str
+    placeholder: str
+    label_text: str
+    text: str
+    value_preview: str
+    value_length: int
+    selector_candidates: list[dict[str, str]]
+
+
+def _recording_error(error: Exception) -> HTTPException:
+    return HTTPException(status_code=409, detail=str(error))
+
+
+@app.post("/v1/browser/custom/record/start")
+async def custom_record_start(request: CustomRecordStartRequest) -> dict[str, str]:
+    """Open a visible session the person searches in themselves; every click and completed
+    field edit is reported by a fixed, observational script - nothing on the page is acted on
+    until the person tags the results and saves a draft."""
+    settings = _get_settings()
+    try:
+        await _recording_manager.start(
+            user_id=request.user_id,
+            site_key=request.site.site_key,
+            start_url=request.start_url,
+            allowed_hosts=tuple(request.site.allowed_hosts),
+            timeout_ms=settings.browser_timeout_ms,
+            artifact_directory=settings.artifact_directory,
+            storage_state=_restore_session(request.user_id, request.site.site_key),
+        )
+    except SearchRecordingError as error:
+        raise _recording_error(error) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail="Не удалось открыть окно записи. Проверьте установку Chromium",
+        ) from error
+    return {"state": "recording"}
+
+
+@app.post("/v1/browser/custom/record/stop")
+async def custom_record_stop(request: CustomRecordStopRequest) -> dict[str, object]:
+    try:
+        result = await _recording_manager.stop(
+            user_id=request.user_id, site_key=request.site.site_key
+        )
+    except SearchRecordingError as error:
+        raise _recording_error(error) from error
+    actions = [
+        RecordedActionPayload(
+            kind=action.kind,
+            tag=action.tag,
+            element_type=action.element_type,
+            element_id=action.element_id,
+            name=action.name,
+            role=action.role,
+            aria_label=action.aria_label,
+            test_id=action.test_id,
+            placeholder=action.placeholder,
+            label_text=action.label_text,
+            text=action.description(),
+            value_preview=action.value_preview if action.kind == "fill" else "",
+            value_length=action.value_length,
+            selector_candidates=[
+                {"kind": candidate.kind, "value": candidate.value}
+                for candidate in selector_candidates_for(action)
+            ],
+        ).model_dump()
+        for action in result.actions
+    ]
+    learned_recipe: dict[str, object] | None = None
+    try:
+        learned = learn_selectors(
+            result.final_html,
+            page_url=result.final_url,
+            allowed_hosts=tuple(request.site.allowed_hosts),
+        )
+        learned_recipe = {
+            "card_selector": learned.card_selector,
+            "link_selector": learned.link_selector,
+            "title_selector": learned.title_selector,
+            "company_selector": learned.company_selector,
+            "card_count": learned.card_count,
+        }
+    except RecipeLearningError:
+        learned_recipe = None
+    return {
+        "start_url": result.start_url,
+        "final_url": result.final_url,
+        "actions": actions,
+        "learned_recipe": learned_recipe,
+    }
+
+
+@app.post("/v1/browser/custom/record/cancel")
+async def custom_record_cancel(request: CustomRecordCancelRequest) -> dict[str, str]:
+    await _recording_manager.cancel(user_id=request.user_id, site_key=request.site_key)
+    return {"state": "cancelled"}

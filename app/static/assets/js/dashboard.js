@@ -1669,6 +1669,8 @@ document.querySelector('#add-site-definition').addEventListener('click', async (
 // --- search recipes for user-defined sites -------------------------------------------------
 const RECIPE_STATUS_LABELS = {draft: 'Черновик', active: 'Активен', archived: 'В архиве'};
 let customSourceNames = {};
+let pendingReachSteps = [];
+let recordedStartUrl = '';
 
 function recipeUrl(suffix = '') {
   const userId = userIdInput.value.trim();
@@ -1690,6 +1692,7 @@ function fillManualRecipe(recipe) {
   document.querySelector('#recipe-link').value = recipe.link_selector || '';
   document.querySelector('#recipe-title').value = recipe.title_selector || '';
   document.querySelector('#recipe-company').value = recipe.company_selector || '';
+  pendingReachSteps = recipe.reach_steps || [];
   document.querySelector('#recipe-manual').open = true;
 }
 
@@ -1697,7 +1700,13 @@ function renderRecipeVersion(version) {
   const card = element('article', undefined, 'session-card');
   card.append(element('h3', `Версия ${version.version}: ${RECIPE_STATUS_LABELS[version.status] || version.status}`));
   const recipe = version.recipe;
-  card.append(element('div', `Шаблон: ${recipe.url_template}`, 'task-state'));
+  card.append(element(
+    'div',
+    recipe.reach_steps && recipe.reach_steps.length
+      ? `Записанный сценарий поиска: ${recipe.reach_steps.length} шагов`
+      : `Шаблон: ${recipe.url_template}`,
+    'task-state'
+  ));
   card.append(element(
     'div',
     `Карточка: ${recipe.card_selector} · ссылка: ${recipe.link_selector || 'сама карточка'} · `
@@ -1822,6 +1831,9 @@ async function loadCustomSources() {
 
 document.querySelector('#recipe-site').addEventListener('change', () => {
   prefillRecipeUrl();
+  pendingReachSteps = [];
+  document.querySelector('#recipe-record-review').replaceChildren();
+  document.querySelector('#recipe-record-state').textContent = '';
   loadRecipeVersions().catch(showError);
 });
 
@@ -1857,13 +1869,150 @@ document.querySelector('#recipe-save-draft').addEventListener('click', async (ev
         card_selector: document.querySelector('#recipe-card').value.trim(),
         link_selector: document.querySelector('#recipe-link').value.trim(),
         title_selector: document.querySelector('#recipe-title').value.trim(),
-        company_selector: document.querySelector('#recipe-company').value.trim()
+        company_selector: document.querySelector('#recipe-company').value.trim(),
+        reach_steps: pendingReachSteps
       })
     }));
+    pendingReachSteps = [];
+    document.querySelector('#recipe-record-review').replaceChildren();
     await loadRecipeVersions();
     showStatus('Черновик сохранён. Запустите «Проверить поиск».');
   } catch (error) { showError(error); }
   finally { button.disabled = false; }
+});
+
+function renderRecordReview(result) {
+  recordedStartUrl = result.start_url;
+  const container = document.querySelector('#recipe-record-review');
+  container.replaceChildren();
+  if (!result.actions.length) {
+    container.append(element('div', 'Не удалось распознать ни одного действия. Попробуйте ещё раз или задайте рецепт вручную.', 'task-state'));
+    return;
+  }
+  const rows = result.actions.map((action, index) => {
+    const row = element('div', undefined, 'row');
+    const missingSelector = !action.selector_candidates.length;
+    if (action.kind === 'fill') {
+      row.append(element(
+        'div',
+        `Поле: ${action.text}${action.value_preview ? ` — «${action.value_preview}»` : ''}`
+          + (missingSelector ? ' (не удалось определить, шаг будет пропущен)' : '')
+      ));
+      const select = document.createElement('select');
+      select.disabled = missingSelector;
+      [['ignore', 'Игнорировать'], ['query', 'Это запрос'], ['location', 'Это локация']].forEach(
+        ([value, label]) => select.append(new Option(label, value))
+      );
+      row.append(select);
+      container.append(row);
+      return {action, control: select, kind: 'fill'};
+    }
+    row.append(element('div', `Клик: ${action.text}${missingSelector ? ' (не удалось определить, шаг будет пропущен)' : ''}`));
+    const label = element('label');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = !missingSelector;
+    checkbox.disabled = missingSelector;
+    label.append(checkbox, ' включить в сценарий');
+    row.append(label);
+    container.append(row);
+    return {action, control: checkbox, kind: 'click'};
+  });
+  if (result.learned_recipe) {
+    document.querySelector('#recipe-card').value = result.learned_recipe.card_selector || '';
+    document.querySelector('#recipe-link').value = result.learned_recipe.link_selector || '';
+    document.querySelector('#recipe-title').value = result.learned_recipe.title_selector || '';
+    document.querySelector('#recipe-company').value = result.learned_recipe.company_selector || '';
+  }
+  document.querySelector('#recipe-url-template').value = '';
+  document.querySelector('#recipe-manual').open = true;
+  const apply = element('button', 'Добавить сценарий к рецепту', 'primary');
+  apply.type = 'button';
+  apply.addEventListener('click', () => {
+    const steps = [{action_type: 'navigate', parameters: {url: recordedStartUrl}}];
+    rows.forEach(({action, control, kind}) => {
+      if (!action.selector_candidates.length) return;
+      if (kind === 'fill') {
+        if (control.value === 'ignore') return;
+        steps.push({
+          action_type: 'fill',
+          selector_candidates: action.selector_candidates,
+          parameters: {value_key: control.value}
+        });
+      } else if (control.checked) {
+        steps.push({action_type: 'click', selector_candidates: action.selector_candidates});
+      }
+    });
+    pendingReachSteps = steps;
+    showStatus(`Сценарий из ${steps.length} шагов добавлен к рецепту. Проверьте селекторы карточек и нажмите «Сохранить черновик».`);
+  });
+  container.append(apply);
+}
+
+document.querySelector('#recipe-record-start').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  const recordWindow = window.open('about:blank', 'job-assistant-search-recording');
+  try {
+    const startUrl = document.querySelector('#recipe-record-start-url').value.trim();
+    if (!startUrl) throw new Error('Укажите адрес страницы, с которой начать запись');
+    if (!recordWindow) {
+      throw new Error('Браузер заблокировал окно записи. Разрешите всплывающие окна для 127.0.0.1');
+    }
+    button.disabled = true;
+    await asJson(await fetch(recipeUrl('/record/start'), {
+      method: 'POST', headers: headers(true), body: JSON.stringify({start_url: startUrl})
+    }));
+    const viewerUrl = new URL(`http://${window.location.hostname}:7900/vnc.html`);
+    viewerUrl.searchParams.set('autoconnect', 'true');
+    viewerUrl.searchParams.set('resize', 'scale');
+    viewerUrl.searchParams.set('path', 'websockify');
+    recordWindow.location.replace(viewerUrl.toString());
+    document.querySelector('#recipe-record-stop').disabled = false;
+    document.querySelector('#recipe-record-cancel').disabled = false;
+    document.querySelector('#recipe-record-review').replaceChildren();
+    document.querySelector('#recipe-record-state').textContent =
+      'Идёт запись: выполните поиск в открывшемся окне, затем нажмите «Остановить и разобрать».';
+    return; // stays disabled while recording; re-enabled on stop/cancel
+  } catch (error) {
+    if (recordWindow && !recordWindow.closed) recordWindow.close();
+    showError(error);
+  }
+  button.disabled = false;
+});
+
+document.querySelector('#recipe-record-stop').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  try {
+    button.disabled = true;
+    document.querySelector('#recipe-record-state').textContent = 'Разбираем запись…';
+    const result = await asJson(await fetch(recipeUrl('/record/stop'), {
+      method: 'POST', headers: headers(false)
+    }));
+    renderRecordReview(result);
+    document.querySelector('#recipe-record-state').textContent =
+      `Готово: ${result.actions.length} действий. Отметьте поле запроса и локации, уберите лишние клики, затем сохраните.`;
+  } catch (error) {
+    document.querySelector('#recipe-record-state').textContent = '';
+    showError(error);
+  } finally {
+    document.querySelector('#recipe-record-start').disabled = false;
+    document.querySelector('#recipe-record-cancel').disabled = true;
+  }
+});
+
+document.querySelector('#recipe-record-cancel').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  try {
+    button.disabled = true;
+    await asJson(await fetch(recipeUrl('/record/cancel'), {method: 'POST', headers: headers(false)}));
+    showStatus('Запись отменена.');
+  } catch (error) { showError(error); }
+  finally {
+    document.querySelector('#recipe-record-stop').disabled = true;
+    document.querySelector('#recipe-record-cancel').disabled = true;
+    document.querySelector('#recipe-record-start').disabled = false;
+    document.querySelector('#recipe-record-state').textContent = '';
+  }
 });
 
 const effectiveValueSourceLabels = {

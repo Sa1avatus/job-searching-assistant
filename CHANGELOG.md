@@ -7,6 +7,16 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Added
 
+- **Record a search scenario instead of a URL template.** For sites where the URL-template
+  search recipe cannot express the search (a POST form, an in-page click), the "Записать сценарий
+  поиска" button opens the same visible, noVNC-streamed browser session already used to sign in
+  to a site. A fixed, reviewed script observes clicks and completed field edits - it never acts on
+  the page itself - and the person tags which typed field was the query and which was the
+  location. The result is a short `navigate`/`fill`/`click` reach-scenario (ADR 0003's closed
+  workflow-step schema, reused as-is) stored alongside the recipe's card/link/title/company
+  selectors; at search time it is replayed with the same host allowlist and fail-closed
+  cross-host check as everything else in `app/browser/custom_site.py`. No migration was needed:
+  the recipe was already a single JSON column.
 - **Search on user-defined sites.** A site added on the "Сессии сайтов" tab can now be searched.
   A versioned, declarative search recipe (HTTPS URL template with `{query}`/`{location}` plus plain
   CSS selectors for the result card, link, title and company) is learned from a results page the

@@ -11,6 +11,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from playwright.async_api import Page
@@ -25,6 +26,8 @@ from app.domain.search_recipe import (
     resolve_hit_url,
     validate_recipe,
 )
+from app.workflows.workflow_input_resolver import WorkflowExecutionInputResolver
+from app.workflows.workflow_runner import execute_workflow_steps
 
 _CARD_WAIT_MS = 15_000
 _MAX_DESCRIPTION = 20_000
@@ -33,6 +36,24 @@ _MAX_CARDS_SCANNED = 100
 
 class CustomSiteError(RuntimeError):
     """A custom-site page could not be read; the message is safe to show to the user."""
+
+
+class _ReachStepInputResolver(WorkflowExecutionInputResolver):
+    """Resolves the two placeholders a recorded search scenario may use. Nothing else."""
+
+    def __init__(self, *, query: str, location: str) -> None:
+        self._values = {"query": query, "location": location}
+
+    def resolve_text(self, key: str) -> str:
+        if key not in self._values:
+            raise CustomSiteError("Сценарий поиска ссылается на недопустимое поле")
+        return self._values[key]
+
+    def resolve_boolean(self, key: str) -> bool:
+        raise CustomSiteError("Сценарий поиска не может использовать это поле")
+
+    def resolve_file(self, key: str) -> Path:
+        raise CustomSiteError("Сценарий поиска не может использовать это поле")
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +145,21 @@ async def search_custom_site(
     limit: int = 15,
 ) -> list[CustomSiteHit]:
     recipe = validate_recipe(recipe, allowed_hosts)
+    if recipe.reach_steps:
+        page = await engine.new_page()
+        try:
+            await execute_workflow_steps(
+                page,
+                list(recipe.reach_steps),
+                _ReachStepInputResolver(query=query, location=location),
+                allowed_hosts=allowed_hosts,
+                is_submit_confirmed=False,
+            )
+            if not is_allowed_host(urlsplit(page.url).hostname, allowed_hosts):
+                raise CustomSiteError("Сайт перенаправил на неразрешённый хост")
+            return await read_cards(page, recipe, allowed_hosts, limit)
+        finally:
+            await page.close()
     page = await _open(
         engine, build_search_url(recipe, query=query, location=location), allowed_hosts
     )
