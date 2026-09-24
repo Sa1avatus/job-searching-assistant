@@ -1889,6 +1889,7 @@ function renderRecordReview(result) {
     container.append(element('div', 'Не удалось распознать ни одного действия. Попробуйте ещё раз или задайте рецепт вручную.', 'task-state'));
     return;
   }
+  let fillCount = 0;
   const rows = result.actions.map((action, index) => {
     const row = element('div', undefined, 'row');
     const missingSelector = !action.selector_candidates.length;
@@ -1903,6 +1904,12 @@ function renderRecordReview(result) {
       [['ignore', 'Игнорировать'], ['query', 'Это запрос'], ['location', 'Это локация']].forEach(
         ([value, label]) => select.append(new Option(label, value))
       );
+      // Most sites have one search box (the query) and sometimes a second one (the location);
+      // guess that order so the common case needs no manual tagging, but it stays editable.
+      if (!missingSelector) {
+        select.value = fillCount === 0 ? 'query' : fillCount === 1 ? 'location' : 'ignore';
+      }
+      fillCount += 1;
       row.append(select);
       container.append(row);
       return {action, control: select, kind: 'fill'};

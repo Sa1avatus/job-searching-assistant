@@ -5,7 +5,14 @@
 // fields are never observed, not even their length.
 (function () {
   function closestInteractive(el) {
-    return el.closest('button, a, [role="button"], input, textarea, summary') || el;
+    // A click often lands on a small highlighted span inside a bigger clickable row (e.g. an
+    // autocomplete suggestion bolding the matched prefix) - climb to the row, not the span.
+    return (
+      el.closest(
+        'button, a, [role="button"], [role="option"], [role="menuitem"], [tabindex], ' +
+          'li, input, textarea, summary'
+      ) || el
+    );
   }
 
   function labelText(el) {

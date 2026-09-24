@@ -1,4 +1,5 @@
 from app.browser.search_reach_recording import RecordedAction, selector_candidates_for
+from app.domain.workflow_selectors import WorkflowSelectorCandidate
 
 
 def test_from_payload_reads_known_fields_and_ignores_extra_ones() -> None:
@@ -63,5 +64,31 @@ def test_selector_candidates_prefer_stable_identifiers_over_free_text() -> None:
 
 def test_selector_candidates_is_empty_when_nothing_identifies_the_element() -> None:
     action = RecordedAction.from_payload({"kind": "click", "tag": "div"})
+
+    assert selector_candidates_for(action) == []
+
+
+def test_selector_candidates_falls_back_to_exact_text_for_a_bare_click() -> None:
+    action = RecordedAction.from_payload({"kind": "click", "tag": "button", "text": "SEARCH JOBS"})
+
+    candidates = selector_candidates_for(action)
+
+    assert [(candidate.kind, candidate.value) for candidate in candidates] == [
+        ("css", 'button:text-is("SEARCH JOBS")')
+    ]
+
+
+def test_selector_candidates_text_fallback_escapes_quotes() -> None:
+    action = RecordedAction.from_payload({"kind": "click", "tag": "li", "text": 'Say "hi"'})
+
+    candidates = selector_candidates_for(action)
+
+    assert candidates == [WorkflowSelectorCandidate(kind="css", value='li:text-is("Say \\"hi\\"")')]
+
+
+def test_selector_candidates_never_uses_the_text_fallback_for_a_fill_action() -> None:
+    action = RecordedAction.from_payload(
+        {"kind": "fill", "tag": "input", "text": "python developer"}
+    )
 
     assert selector_candidates_for(action) == []

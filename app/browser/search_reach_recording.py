@@ -80,4 +80,10 @@ def selector_candidates_for(action: RecordedAction) -> list[WorkflowSelectorCand
     if action.aria_label and action.aria_label != action.label_text:
         add("label", action.aria_label)
     add("role", action.role)
+    # Buttons, links and autocomplete-suggestion rows are often just visible text with no
+    # other identifying attribute at all; an exact-text match on the captured tag is still
+    # far more reliable than dropping the step entirely.
+    if not candidates and action.kind == "click" and action.text and action.tag:
+        escaped_text = action.text.replace('"', '\\"')
+        add("css", f'{action.tag}:text-is("{escaped_text}")')
     return candidates
