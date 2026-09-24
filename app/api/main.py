@@ -3240,6 +3240,37 @@ async def discover_vacancies_stream(
     discovery_limit = min(50, request.limit * 3) if request.direct_rerank else request.limit
     queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
     enrichment_semaphore = asyncio.Semaphore(3 if request.direct_rerank else 1)
+    # Profile/CV content is identical for every vacancy in one search; ingest it into RAG
+    # at most once per selected CV instead of once per vacancy (avoids repeated RAG calls
+    # and repeated LLM-adjacent load for a single search).
+    profile_rag_tasks: dict[str | None, asyncio.Task[None]] = {}
+    profile_rag_lock = asyncio.Lock()
+
+    async def ensure_profile_ingested(cv_file_id: str | None) -> None:
+        async def _ingest() -> None:
+            from app.matching.rag_client import create_rag_client
+            from app.services.profile_rag_ingestion import ProfileRagIngestionService
+
+            rag = create_rag_client(
+                service_url=settings.rag_service_url,
+                api_key=(settings.rag_api_key.get_secret_value() if settings.rag_api_key else None),
+                project_id=settings.rag_project_id,
+                collection="vacancies",
+                timeout_seconds=settings.rag_timeout_seconds,
+                enabled=True,
+            )
+            with SessionFactory() as rag_session:
+                profile_ingestion = ProfileRagIngestionService(rag_session, rag)
+                await profile_ingestion.ingest_profile(user_id)
+                if cv_file_id is not None:
+                    await profile_ingestion.ingest_cv(cv_file_id)
+
+        async with profile_rag_lock:
+            task = profile_rag_tasks.get(cv_file_id)
+            if task is None:
+                task = asyncio.create_task(_ingest())
+                profile_rag_tasks[cv_file_id] = task
+        await task
 
     async def publish_outcome(
         source: str,
@@ -3315,7 +3346,6 @@ async def discover_vacancies_stream(
             if settings.rag_enabled:
                 try:
                     from app.matching.rag_client import create_rag_client
-                    from app.services.profile_rag_ingestion import ProfileRagIngestionService
                     from app.services.vacancy_rag_ingestion import VacancyRagIngestionService
 
                     rag = create_rag_client(
@@ -3334,10 +3364,7 @@ async def discover_vacancies_stream(
                         app_row = rag_session.get(ApplicationRow, application_id)
                         if app_row is not None:
                             if request.direct_rerank:
-                                profile_ingestion = ProfileRagIngestionService(rag_session, rag)
-                                await profile_ingestion.ingest_profile(app_row.user_id)
-                                if app_row.selected_cv_file_id is not None:
-                                    await profile_ingestion.ingest_cv(app_row.selected_cv_file_id)
+                                await ensure_profile_ingested(app_row.selected_cv_file_id)
                             result = await VacancyRagIngestionService(
                                 rag_session, rag
                             ).ingest_vacancy(

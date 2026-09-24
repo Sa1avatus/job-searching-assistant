@@ -356,11 +356,12 @@ def test_direct_rerank_stream_enriches_before_emitting_sorted_vacancies(monkeypa
     assert all(event["item"]["matching_status"] == "scored" for event in vacancy_events)
     assert "enrichment_started" not in [event["event"] for event in events]
     assert direct_limits == [45]
+    # The profile/CV is identical for every vacancy in one search, so it is only
+    # ingested into RAG once per search, not once per vacancy.
     assert operation_order == [
         "profile",
         "vacancy",
         "matching",
-        "profile",
         "vacancy",
         "matching",
     ]

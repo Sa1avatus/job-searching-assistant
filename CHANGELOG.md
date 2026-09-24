@@ -28,6 +28,11 @@ semantic versioning for new releases; older historical version numbers are prese
   types, so form fields arrived as dicts and `published_at` as a string. `_ExtractedVacancy` now
   rebuilds `FormField`, enums, tuples and datetimes. Failed sources are logged with a traceback and
   the discovery stream reports a readable message for custom-site failures.
+- **Redundant RAG ingestion in direct-rerank search.** `discover-vacancies-stream` with
+  `direct_rerank` re-ingested the user's profile and selected CV into RAG once per vacancy found,
+  instead of once per search - amplifying load on the RAG service and on the external LLM used for
+  matching/materials generation when many vacancies were found at once. The profile/CV is now
+  ingested at most once per search (memoized per selected CV).
 
 ## [2.0.0] - 2026-09-19
 
