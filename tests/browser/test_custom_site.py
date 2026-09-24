@@ -207,6 +207,42 @@ def test_reach_steps_refuse_a_click_that_navigates_off_host(tmp_path: Path) -> N
     asyncio.run(run())
 
 
+def test_reach_steps_surface_a_stale_selector_as_a_readable_rejection(tmp_path: Path) -> None:
+    """A recorded selector that no longer matches (e.g. a page redesign) must fail as a
+    CustomSiteError the caller can show, not as a bare, unhandled TimeoutError.
+    """
+    recipe = validate_recipe(
+        SearchRecipe(
+            url_template="",
+            card_selector="li.job-card",
+            reach_steps=(
+                NavigateWorkflowStep(
+                    parameters=NavigateStepParameters(url="https://jobs.example.com/")
+                ),
+                FillWorkflowStep(
+                    selector_candidates=[WorkflowSelectorCandidate(kind="id", value="query-input")],
+                    parameters=FillStepParameters(value_key="query"),
+                ),
+                ClickWorkflowStep(
+                    selector_candidates=[
+                        WorkflowSelectorCandidate(kind="id", value="no-such-button")
+                    ],
+                ),
+            ),
+        ),
+        HOSTS,
+    )
+
+    async def run() -> None:
+        async with _offline(PlaywrightEngine(artifact_directory=tmp_path)) as engine:
+            with pytest.raises(CustomSiteError):
+                await search_custom_site(
+                    engine, recipe=recipe, allowed_hosts=HOSTS, query="python", limit=10
+                )
+
+    asyncio.run(run())
+
+
 def test_learned_selectors_reproduce_the_same_hits_in_a_real_browser(tmp_path: Path) -> None:
     learned = learn_selectors(
         RESULTS, page_url="https://jobs.example.com/search?q=python", allowed_hosts=HOSTS

@@ -148,13 +148,23 @@ async def search_custom_site(
     if recipe.reach_steps:
         page = await engine.new_page()
         try:
-            await execute_workflow_steps(
-                page,
-                list(recipe.reach_steps),
-                _ReachStepInputResolver(query=query, location=location),
-                allowed_hosts=allowed_hosts,
-                is_submit_confirmed=False,
-            )
+            try:
+                await execute_workflow_steps(
+                    page,
+                    list(recipe.reach_steps),
+                    _ReachStepInputResolver(query=query, location=location),
+                    allowed_hosts=allowed_hosts,
+                    is_submit_confirmed=False,
+                )
+            except CustomSiteError:
+                raise
+            except Exception as error:
+                # A step executor raises a bare TimeoutError/AssertionError/Playwright error on
+                # failure (e.g. a recorded selector no longer matches). Left uncaught, that is an
+                # unhandled 500 instead of a readable, review-facing rejection.
+                raise CustomSiteError(
+                    f"Не удалось воспроизвести записанный сценарий поиска: {error}"
+                ) from error
             if not is_allowed_host(urlsplit(page.url).hostname, allowed_hosts):
                 raise CustomSiteError("Сайт перенаправил на неразрешённый хост")
             return await read_cards(page, recipe, allowed_hosts, limit)
