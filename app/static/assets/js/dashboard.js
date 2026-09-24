@@ -2100,6 +2100,21 @@ document.querySelector('#manual-skill').addEventListener('keydown', event => {
   }
 });
 
+const RAG_STATUS_LABELS = {
+  en: {
+    not_configured: 'not configured', not_scheduled: 'not scheduled',
+    scheduled: 'scheduled', running: 'in progress', retry_scheduled: 'retry scheduled',
+    completed: 'synchronized', failed: 'failed'
+  },
+  ru: {
+    not_configured: 'не настроен', not_scheduled: 'не запланировано',
+    scheduled: 'запланировано', running: 'выполняется',
+    retry_scheduled: 'назначен повтор', completed: 'синхронизировано', failed: 'ошибка'
+  }
+};
+// The dispatcher usually finishes a sync within seconds; these are the only states left to wait on.
+const RAG_STATUS_PENDING = new Set(['scheduled', 'running', 'retry_scheduled']);
+
 function renderResumeProfile(cvFile) {
   const draftBlock = document.querySelector('#draft-block');
   const ragButton = document.querySelector('#send-resume-to-rag');
@@ -2120,17 +2135,7 @@ function renderResumeProfile(cvFile) {
   document.querySelector('#resume-state').textContent = cvFile.analyzed_at
     ? `Активно: ${cvFile.original_filename}. Анализ сохранён, навыков: ${cvFile.skills.length}.`
     : `${cvFile.original_filename}: анализ ещё не сохранён.`;
-  const ragLabels = currentLanguage === 'en'
-    ? {
-        not_configured: 'not configured', not_scheduled: 'not scheduled',
-        scheduled: 'scheduled', running: 'in progress', retry_scheduled: 'retry scheduled',
-        completed: 'synchronized', failed: 'failed'
-      }
-    : {
-        not_configured: 'не настроен', not_scheduled: 'не запланировано',
-        scheduled: 'запланировано', running: 'выполняется',
-        retry_scheduled: 'назначен повтор', completed: 'синхронизировано', failed: 'ошибка'
-      };
+  const ragLabels = RAG_STATUS_LABELS[currentLanguage] || RAG_STATUS_LABELS.ru;
   const ragState = ragLabels[cvFile.rag_sync_status] || cvFile.rag_sync_status;
   const ragFailure = cvFile.rag_sync_failure_code
     ? ` (${currentLanguage === 'en' ? 'code' : 'код'}: ${cvFile.rag_sync_failure_code})`
@@ -2415,6 +2420,32 @@ document.querySelector('#delete-resume').addEventListener('click', async () => {
   } catch (error) { showError(error); }
 });
 
+async function waitForResumeRagSync(userId, cvFileId) {
+  // The POST response only ever reports "scheduled" (the state right after the task is created);
+  // showing that text and stopping there looks stuck even when the dispatcher finishes it in
+  // seconds, so poll the actual status instead of displaying that one-time snapshot.
+  const deadline = Date.now() + 60000;
+  const ragLabels = RAG_STATUS_LABELS[currentLanguage] || RAG_STATUS_LABELS.ru;
+  while (Date.now() < deadline) {
+    const files = await loadCvFiles(cvFileId);
+    const cvFile = files.find(item => item.id === cvFileId);
+    if (!cvFile || !RAG_STATUS_PENDING.has(cvFile.rag_sync_status)) {
+      const label = cvFile ? (ragLabels[cvFile.rag_sync_status] || cvFile.rag_sync_status) : '';
+      showStatus(currentLanguage === 'en'
+        ? `RAG synchronization: ${label}.`
+        : `Синхронизация с RAG: ${label}.`);
+      return;
+    }
+    showStatus(currentLanguage === 'en'
+      ? `RAG synchronization: ${ragLabels[cvFile.rag_sync_status]}…`
+      : `Синхронизация с RAG: ${ragLabels[cvFile.rag_sync_status]}…`);
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  showStatus(currentLanguage === 'en'
+    ? 'RAG synchronization is still running; status will update the next time this list loads.'
+    : 'Синхронизация с RAG всё ещё выполняется; статус обновится при следующей загрузке списка.');
+}
+
 document.querySelector('#send-resume-to-rag').addEventListener('click', async () => {
   try {
     const userId = userIdInput.value.trim();
@@ -2423,14 +2454,11 @@ document.querySelector('#send-resume-to-rag').addEventListener('click', async ()
     if (!userId || !cvFile) throw new Error('Выберите загруженное резюме');
     if (!cvFile.analyzed_at) throw new Error('Сначала проанализируйте и подтвердите резюме');
     showStatus(`Отправляем «${cvFile.original_filename}» в RAG…`);
-    const result = await asJson(await fetch(
+    await asJson(await fetch(
       `/v1/users/${userId}/cv-files/${cvFileId}/rag-sync`,
       {method: 'POST', headers: headers(false)}
     ));
-    showStatus(currentLanguage === 'en'
-      ? `RAG synchronization scheduled. Status: ${result.status}.`
-      : `Синхронизация с RAG запланирована. Статус: ${result.status}.`);
-    await loadCvFiles(cvFileId);
+    await waitForResumeRagSync(userId, cvFileId);
   } catch (error) { showError(error); }
 });
 
