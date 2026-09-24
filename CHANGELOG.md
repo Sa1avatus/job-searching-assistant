@@ -14,6 +14,15 @@ semantic versioning for new releases; older historical version numbers are prese
   new per-site liveness probe misreport such a session as expired. Both checks now also require
   an actual password field to still be on the page before treating it as "still signing in".
 
+### Changed
+
+- **Search sources as a list instead of pill chips.** hh.ru/LinkedIn/Greenhouse and every
+  user-defined site now share one vertical row list with a count footer, instead of the old
+  pill-shaped chips - a long site name (e.g. "Michael Page - Jobs and recruitment agency in
+  Singapore") used to blow out the chip's rounded-pill shape; it now truncates with an ellipsis
+  and shows the full name on hover. The list paginates itself (8 per page) once there are enough
+  sources to need it.
+
 ### Added
 
 - **Periodic session liveness checks, per site.** The background worker now probes every saved

@@ -1876,7 +1876,7 @@ async function loadRecipeSites(definitions) {
 async function loadCustomSources() {
   const userId = userIdInput.value.trim();
   const holder = document.querySelector('#custom-source-chips');
-  if (!userId) { holder.replaceChildren(); return; }
+  if (!userId) { holder.replaceChildren(); renderSearchSourcesPagination(); return; }
   const checked = new Set(Array.from(holder.querySelectorAll('input:checked')).map(node => node.dataset.customSource));
   const known = holder.dataset.loaded === 'true';
   const definitions = await asJson(await fetch(`/v1/users/${userId}/site-definitions`, {headers: headers(false)}));
@@ -1888,17 +1888,55 @@ async function loadCustomSources() {
     ));
     if (!versions.some(version => version.status === 'active')) continue;
     customSourceNames[`custom:${definition.site_key}`] = definition.name;
-    const label = element('label', undefined, 'chip');
+    const label = element('label', undefined, 'source-row');
     const input = document.createElement('input');
     input.type = 'checkbox';
     input.dataset.customSource = definition.site_key;
     input.checked = known ? checked.has(definition.site_key) : true;
-    label.append(input, ` ${definition.name}`);
+    const name = element('span', definition.name, 'source-row__name');
+    name.title = definition.name;
+    label.append(input, name);
     chips.push(label);
   }
   holder.replaceChildren(...chips);
   holder.dataset.loaded = 'true';
+  renderSearchSourcesPagination();
 }
+
+const SEARCH_SOURCES_PAGE_SIZE = 8;
+let searchSourcesPage = 1;
+
+function renderSearchSourcesPagination() {
+  const rows = Array.from(document.querySelectorAll('#search-sources-list .source-row'));
+  const pageIndicator = document.querySelector('#search-sources-page');
+  const previousButton = document.querySelector('#search-sources-previous');
+  const nextButton = document.querySelector('#search-sources-next');
+  const pagination = document.querySelector('.sources-pagination');
+  const count = document.querySelector('#search-sources-count');
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / SEARCH_SOURCES_PAGE_SIZE));
+  searchSourcesPage = Math.max(1, Math.min(searchSourcesPage, totalPages));
+  const startIndex = (searchSourcesPage - 1) * SEARCH_SOURCES_PAGE_SIZE;
+  const endIndex = startIndex + SEARCH_SOURCES_PAGE_SIZE;
+
+  rows.forEach((row, index) => { row.hidden = index < startIndex || index >= endIndex; });
+
+  pageIndicator.textContent = `${searchSourcesPage} / ${totalPages}`;
+  previousButton.disabled = searchSourcesPage <= 1;
+  nextButton.disabled = searchSourcesPage >= totalPages;
+  pagination.hidden = totalPages <= 1;
+  count.textContent = rows.length ? `Источников: ${rows.length}` : '';
+}
+
+document.querySelector('#search-sources-previous').addEventListener('click', () => {
+  searchSourcesPage -= 1;
+  renderSearchSourcesPagination();
+});
+document.querySelector('#search-sources-next').addEventListener('click', () => {
+  searchSourcesPage += 1;
+  renderSearchSourcesPagination();
+});
+renderSearchSourcesPagination();
 
 document.querySelector('#recipe-site').addEventListener('change', () => {
   prefillRecipeUrl();

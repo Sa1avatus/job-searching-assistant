@@ -95,6 +95,18 @@ label { display: block; font-weight: 700; color: #c5cdef; margin-bottom: 6px; fo
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .chip { display: flex; align-items: center; gap: 6px; background: #17224a; border: 1px solid #35437a; border-radius: 999px; padding: 6px 12px; font-size: 13px; }
 .chip input[type=checkbox] { width: auto; }
+.sources-panel { margin-bottom: 14px; }
+.sources-list { display: flex; flex-direction: column; gap: 8px; }
+.sources-list__custom { display: contents; }
+.source-row { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 10px 14px; background: #17224a; border: 1px solid #35437a; border-radius: 10px; font-size: 14px; font-weight: 400; cursor: pointer; margin: 0; transition: border-color .15s ease; }
+.source-row:hover { border-color: #6ee7b7; }
+.source-row input[type=checkbox] { width: 16px; height: 16px; flex: 0 0 auto; margin: 0; accent-color: #6ee7b7; }
+.source-row__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-row[hidden] { display: none; }
+.sources-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 10px; }
+.sources-count { color: #7f8db4; font-size: 12px; }
+.sources-pagination { display: flex; align-items: center; gap: 8px; }
+.sources-pagination[hidden] { display: none; }
 #results.active { display: grid; gap: 16px; }
 article { background: linear-gradient(145deg, #111a34, #0e162b); border: 1px solid #263154; border-radius: 18px; padding: 20px; }
 .topline { display: flex; gap: 16px; justify-content: space-between; align-items: start; }

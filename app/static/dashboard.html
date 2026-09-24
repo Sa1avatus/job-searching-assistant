@@ -427,11 +427,21 @@
     <section class="step" data-panel="search">
       <h2>Поиск</h2>
       <div class="hint">hh.ru и LinkedIn ищутся через управляемый браузер с вашими сессиями. Greenhouse использует официальный публичный read-only интерфейс досок компаний и не требует входа.</div>
-      <div class="chips" style="margin-bottom:14px;">
-        <label class="chip"><input id="source-headhunter" type="checkbox" checked> hh.ru</label>
-        <label class="chip"><input id="source-linkedin" type="checkbox" checked> LinkedIn</label>
-        <label class="chip"><input id="source-greenhouse" type="checkbox" checked> Greenhouse</label>
-        <span id="custom-source-chips" class="chips"></span>
+      <div class="sources-panel">
+        <div id="search-sources-list" class="sources-list">
+          <label class="source-row"><input id="source-headhunter" type="checkbox" checked><span class="source-row__name">hh.ru</span></label>
+          <label class="source-row"><input id="source-linkedin" type="checkbox" checked><span class="source-row__name">LinkedIn</span></label>
+          <label class="source-row"><input id="source-greenhouse" type="checkbox" checked><span class="source-row__name">Greenhouse</span></label>
+          <span id="custom-source-chips" class="sources-list__custom"></span>
+        </div>
+        <div class="sources-footer">
+          <div id="search-sources-count" class="sources-count"></div>
+          <div class="sources-pagination">
+            <button id="search-sources-previous" class="facts-page-button" type="button" aria-label="Предыдущая страница">←</button>
+            <span id="search-sources-page" class="facts-page-indicator">1 / 1</span>
+            <button id="search-sources-next" class="facts-page-button" type="button" aria-label="Следующая страница">→</button>
+          </div>
+        </div>
       </div>
       <label for="greenhouse-boards">Доски Greenhouse</label>
       <textarea id="greenhouse-boards" placeholder="По одной ссылке на строку, например https://boards.greenhouse.io/company. Если оставить пустым, используются Greenhouse-доски из уже сохранённых вакансий."></textarea>
