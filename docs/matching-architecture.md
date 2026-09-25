@@ -231,9 +231,11 @@ Measures already in place:
   All three context sizes must match (default 8192) — Ollama reloads the model on every
   `num_ctx` change, and reloading a multi-GB model between stages dominated local latency.
   Extraction is the largest consumer: `num_ctx` is the shared input+output window, so a dense
-  JD (~2.5k input tokens) under a 4096 window truncates the extraction JSON
-  (`finish_reason='length'` → `NoModelAvailableError` → `UngroundedExtractionError` → retry);
-  8192 leaves ~5k output tokens for a typical long vacancy.
+  JD (~2.5k input tokens) under a 4096 window truncates the extraction JSON. A truncated call
+  raises `LLMTruncatedOutputError`, which propagates as-is (it is not retried as "model
+  unavailable" — see `app/llm/router.py`'s `_is_retryable_provider_error` comment); 8192 leaves
+  ~5k output tokens for a typical long vacancy. See "Reasoning-model truncation" below for a
+  distinct cause of the same symptom.
 - **Per-stage model routing**: extraction, decomposition, and entailment each resolve their own
   `LlmPreferencePurpose` (`matching`, `matching_decomposition`, `matching_entailment`), each
   falling back to `matching` (then `materials`) when unset. Decomposition/entailment are the
@@ -268,6 +270,55 @@ Measures already in place:
 - **Extraction grounding tolerance**: a `source_fragment` is accepted when every content
   word (function words excluded) appears in the source text, so weaker local models that
   slightly paraphrase fragments still pass while invented content is still rejected.
+
+### Reasoning-model truncation (`APP_MATCHING_LLM_REASONING_MITIGATION_ENABLED`, default off)
+
+A reasoning-capable model (e.g. Qwen3) behind the `openai_compatible` provider can spend its
+entire `max_output_tokens` budget "thinking" in plain prose before ever writing the JSON answer,
+producing `finish_reason='length'` with content that is a cut-off chain-of-thought, not truncated
+JSON (e.g. `"The user wants me to evaluate whether the evidence establishes..."`). Diagnosed
+2026-09-25 against a user newly pointed at OpenRouter's free-tier `qwen/qwen3.8-27b:free`
+(~93% matching-run failure rate that day — see the CHANGELOG entry for the full failure
+breakdown). Direct requests to the same endpoint with the same payload established:
+
+- The existing `"think": false` field sent unconditionally by `OpenAICompatibleProvider` is
+  **not a standard field** and has no measurable effect here — `reasoning_tokens` usage was
+  identical (398) whether it was present or not, and identical again with OpenRouter's own
+  `reasoning.exclude`/`chat_template_kwargs.enable_thinking`. None of these stop the model from
+  reasoning; `reasoning.exclude` only stops the reasoning text from being *returned* (in a
+  separate `message.reasoning` field), it does not free up token budget.
+- OpenRouter's free tier routes each call to whichever upstream has capacity. Some routes
+  correctly return reasoning separated into `message.reasoning` (harmless — this code has
+  never read that field); others inline it directly into `message.content` with **no
+  delimiter at all** (no `<think>` tags, just prose), so a `<think>...</think>` strip only
+  helps a minority of backends, not the one actually observed failing.
+- The one change that reliably recovered a truncated call in testing was a larger
+  `max_tokens` budget: reasoning cost ~400 tokens fairly consistently, so a budget with
+  headroom above the "clean JSON only" size (512 for entailment, 2048 for decomposition)
+  lets the model finish reasoning *and* answer.
+- A separate, independent failure mode on the same free-tier model: upstream overload is
+  returned as HTTP 200 with an embedded `{"error": {...}}` body (not a real 5xx), which
+  `OpenAICompatibleProvider` currently reports as a generic "invalid shape" error not
+  classified as retryable by `ModelRouter._is_retryable_provider_error` — this affects
+  `extract_vacancy_requirements` specifically and is not addressed by this flag (extraction
+  failures fall back to the legacy keyword `match_score` via `matching_v2_fallback_enabled`,
+  they do not corrupt scores).
+
+When `APP_MATCHING_LLM_REASONING_MITIGATION_ENABLED=true`, `OpenAICompatibleProvider` (for
+matching's extraction/decomposition/entailment calls only — not materials/cover letters, which
+use a separate provider-construction path in `app/api/main.py`):
+
+1. Sends `reasoning: {"exclude": true}` alongside the existing `think: false`.
+2. Strips a leading `<think>...</think>` block before parsing, if present.
+3. Retries once with `max_tokens` doubled (capped at 8192) when a call truncates with
+   `finish_reason='length'`; if the retry also fails, the original `LLMTruncatedOutputError`
+   is raised — never a second, different error.
+
+`openai_compatible_completion` is logged (debug level) with `finish_reason` and `usage`
+(including `reasoning_tokens` when the server reports it, e.g. OpenRouter's
+`usage.completion_tokens_details.reasoning_tokens`) on every completion, unconditionally —
+this is pure observability and is not gated by the flag. With the flag off, the request
+payload and every code path are byte-for-byte identical to before this section was added.
 
 ## Discovery-time keyword score and the shadow e5 scorer
 

@@ -106,6 +106,12 @@ class Settings(BaseSettings):
     # num_ctx changes, and reloading a 3GB model between every decompose/entailment
     # group dominated local-model matching latency.
     matching_decompose_context_size: int = Field(default=8192, ge=512, le=32768)
+    # Off by default (current behavior unchanged). When on, the openai_compatible
+    # provider used for matching's structural tasks (extraction/decompose/entailment)
+    # also sends the OpenRouter-native reasoning.exclude flag, strips a leading
+    # <think>...</think> block before parsing, and retries once with a larger token
+    # budget on finish_reason=length. See docs/matching-architecture.md.
+    matching_llm_reasoning_mitigation_enabled: bool = False
     max_document_bytes: int = Field(default=5_242_880, ge=1_024, le=20_971_520)
     max_evidence_bytes: int = Field(default=10_485_760, ge=1_024, le=52_428_800)
     retention_days: int = Field(default=30, ge=1, le=3650)

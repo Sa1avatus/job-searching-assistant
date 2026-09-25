@@ -358,6 +358,296 @@ async def test_openai_provider_does_not_fallback_on_unrelated_400() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reasoning_mitigation_off_matches_current_behavior_bit_for_bit() -> None:
+    """Default (flag off) payload is byte-identical to the pre-mitigation behavior."""
+
+    captured: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"result": "ok"}'}}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="key",
+            model="model",
+            base_url="https://models.example.test/v1/",
+            reasoning_mitigation_enabled=False,
+        )
+        request = ModelRequest(
+            task_name="evaluate_evidence_entailment",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="Evaluate",
+            max_cost_usd=0.03,
+            max_output_tokens=512,
+            response_schema={"type": "object"},
+        )
+        assert await provider.complete(request) == {"result": "ok"}
+
+    payload = captured["payload"]
+    assert payload["think"] is False
+    assert "reasoning" not in payload
+
+
+@pytest.mark.asyncio
+async def test_reasoning_mitigation_adds_openrouter_reasoning_exclude() -> None:
+    captured: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"result": "ok"}'}}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="key",
+            model="model",
+            base_url="https://models.example.test/v1/",
+            reasoning_mitigation_enabled=True,
+        )
+        request = ModelRequest(
+            task_name="evaluate_evidence_entailment",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="Evaluate",
+            max_cost_usd=0.03,
+            response_schema={"type": "object"},
+        )
+        assert await provider.complete(request) == {"result": "ok"}
+
+    payload = captured["payload"]
+    # think=False is kept too (harmless on servers that don't understand it, and a
+    # real Ollama-style option on ones that do).
+    assert payload["think"] is False
+    assert payload["reasoning"] == {"exclude": True}
+
+
+@pytest.mark.asyncio
+async def test_reasoning_mitigation_strips_leading_think_block() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '<think>reasoning text here</think>\n{"result": "ok"}'
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="key",
+            model="model",
+            base_url="https://models.example.test/v1/",
+            reasoning_mitigation_enabled=True,
+        )
+        request = ModelRequest(
+            task_name="evaluate_evidence_entailment",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="Evaluate",
+            max_cost_usd=0.03,
+            response_schema={"type": "object"},
+        )
+        assert await provider.complete(request) == {"result": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_reasoning_mitigation_off_does_not_strip_think_block() -> None:
+    """Without the flag, a <think> block ahead of the JSON is NOT stripped — this is
+    the exact current (unmitigated) behavior: it fails as a JSON parse error."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '<think>reasoning text here</think>\n{"result": "ok"}'
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="key",
+            model="model",
+            base_url="https://models.example.test/v1/",
+            reasoning_mitigation_enabled=False,
+        )
+        request = ModelRequest(
+            task_name="evaluate_evidence_entailment",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="Evaluate",
+            max_cost_usd=0.03,
+            response_schema={"type": "object"},
+        )
+        from app.llm.router import LLMInvalidJSONError
+
+        with pytest.raises((OpenAICompatibleResponseError, LLMInvalidJSONError)):
+            await provider.complete(request)
+
+
+@pytest.mark.asyncio
+async def test_reasoning_mitigation_retries_once_with_larger_budget_on_truncation() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        calls.append(payload)
+        if len(calls) == 1:
+            # First attempt: truncated mid-reasoning, no valid JSON at all.
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {"content": "The model reasons here and cuts off"},
+                            "finish_reason": "length",
+                        }
+                    ]
+                },
+            )
+        # Retry with a larger budget succeeds.
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": '{"result": "ok"}'},
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="key",
+            model="model",
+            base_url="https://models.example.test/v1/",
+            reasoning_mitigation_enabled=True,
+        )
+        request = ModelRequest(
+            task_name="evaluate_evidence_entailment",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="Evaluate",
+            max_cost_usd=0.03,
+            max_output_tokens=512,
+            response_schema={"type": "object"},
+        )
+        assert await provider.complete(request) == {"result": "ok"}
+
+    assert len(calls) == 2
+    assert calls[0]["max_tokens"] == 512
+    assert calls[1]["max_tokens"] == 1024
+
+
+@pytest.mark.asyncio
+async def test_reasoning_mitigation_off_does_not_retry_on_truncation() -> None:
+    """Without the flag, a finish_reason=length failure raises immediately — the
+    exact current (unmitigated) behavior, single request only."""
+
+    calls: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": "The model reasons here and cuts off"},
+                        "finish_reason": "length",
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="key",
+            model="model",
+            base_url="https://models.example.test/v1/",
+            reasoning_mitigation_enabled=False,
+        )
+        request = ModelRequest(
+            task_name="evaluate_evidence_entailment",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="Evaluate",
+            max_cost_usd=0.03,
+            max_output_tokens=512,
+            response_schema={"type": "object"},
+        )
+        from app.llm.router import LLMTruncatedOutputError
+
+        with pytest.raises(LLMTruncatedOutputError):
+            await provider.complete(request)
+
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_reasoning_mitigation_retry_still_truncated_raises_original_error() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": "Still reasoning, still cut off"},
+                        "finish_reason": "length",
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="key",
+            model="model",
+            base_url="https://models.example.test/v1/",
+            reasoning_mitigation_enabled=True,
+        )
+        request = ModelRequest(
+            task_name="evaluate_evidence_entailment",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="Evaluate",
+            max_cost_usd=0.03,
+            max_output_tokens=512,
+            response_schema={"type": "object"},
+        )
+        from app.llm.router import LLMTruncatedOutputError
+
+        with pytest.raises(LLMTruncatedOutputError):
+            await provider.complete(request)
+
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_openai_provider_sends_think_false_and_context_length() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -9,6 +10,12 @@ import structlog
 from app.llm.router import ModelProvider, ModelRequest, ModelTaskClass
 
 logger = structlog.get_logger(__name__)
+
+# A retry-with-larger-budget ceiling shared by every matching task (entailment/decompose/
+# extraction all cap max_output_tokens at or below this today, see app/config.py).
+_TRUNCATION_RETRY_MAX_TOKENS_CEILING = 8192
+
+_LEADING_THINK_BLOCK = re.compile(r"\A\s*<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
 
 
 class OpenAICompatibleResponseError(RuntimeError):
@@ -148,6 +155,7 @@ class OpenAICompatibleProvider(ModelProvider):
         api_key: str,
         model: str,
         base_url: str,
+        reasoning_mitigation_enabled: bool = False,
     ) -> None:
         normalized_api_key = api_key.strip()
         normalized_model = model.strip()
@@ -166,6 +174,7 @@ class OpenAICompatibleProvider(ModelProvider):
         self._http_client = http_client
         self._api_key = normalized_api_key
         self._model = normalized_model
+        self._reasoning_mitigation_enabled = reasoning_mitigation_enabled
         # Set to False after a 400 that rejects json_schema response_format; the
         # provider then uses json_object for every subsequent request of this
         # provider instance (schema stays in the system prompt).
@@ -273,6 +282,20 @@ class OpenAICompatibleProvider(ModelProvider):
                 f"Ollama native API returned empty content; done_reason={done_reason!r}"
             )
 
+        logger.debug(
+            "openai_compatible_completion",
+            task_name=request.task_name,
+            finish_reason=done_reason,
+            usage={
+                "prompt_tokens": data.get("prompt_eval_count"),
+                "completion_tokens": data.get("eval_count"),
+            },
+            has_separate_reasoning_field=False,
+            reasoning_field_len=None,
+            content_len=len(content),
+            retry=False,
+        )
+
         try:
             return parse_model_json(content)
         except OpenAICompatibleResponseError as error:
@@ -290,53 +313,8 @@ class OpenAICompatibleProvider(ModelProvider):
                 f"Ollama returned invalid JSON (done_reason={done_reason!r}): {error}"
             ) from error
 
-    async def complete(
-        self,
-        request: ModelRequest,
-    ) -> dict[str, object]:
-        response_schema = request.response_schema
-        schema_instruction = (
-            "\nFollow this JSON Schema exactly: "
-            + json.dumps(response_schema, ensure_ascii=False, separators=(",", ":"))
-            if response_schema is not None
-            else ""
-        )
-        system_prompt = (
-            "Return exactly one valid JSON object. "
-            "Do not use Markdown code fences. "
-            "Do not include explanations, comments, "
-            "headings, or text before or after the JSON." + schema_instruction
-        )
-
-        # For Ollama: use native API with think=false to prevent reasoning token drain
-        if self._is_ollama:
-            return await self._complete_ollama_native(request, system_prompt)
-
-        request_payload: dict[str, object] = {
-            "model": request.model_override or self._model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": request.prompt,
-                },
-            ],
-            "temperature": 0,
-            "stream": False,
-            "max_tokens": request.max_output_tokens or 16384,
-            "response_format": self._response_format_for(request),
-        }
-        # Reasoning models (qwen3.x) drain the token budget on thinking; all
-        # structured outputs here need none, so disable it explicitly.
-        request_payload["think"] = False
-        if request.context_size is not None:
-            # Matching passes its tuned per-sequence context; the local-code-worker
-            # gateway honors it per request (winning over the routed tier default).
-            request_payload["context_length"] = request.context_size
-        response = await self._http_client.post(
+    async def _post_chat_completion(self, request_payload: dict[str, object]) -> httpx.Response:
+        return await self._http_client.post(
             self._completion_url,
             headers={
                 "Authorization": f"Bearer {self._api_key}",
@@ -346,29 +324,26 @@ class OpenAICompatibleProvider(ModelProvider):
             json=request_payload,
         )
 
-        if self._retry_with_json_object_if_unsupported(request, request_payload, response):
-            response = await self._http_client.post(
-                self._completion_url,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
-                json=request_payload,
-            )
+    async def _send_and_parse_choice(
+        self,
+        request: ModelRequest,
+        request_payload: dict[str, object],
+    ) -> tuple[str, str | None, dict[str, object], object]:
+        """POST the payload and return (content, finish_reason, message, usage).
 
-        response_content_type = response.headers.get(
-            "content-type",
-            "",
-        )
+        Handles the json_schema→json_object fallback retry and every HTTP/shape
+        validation that used to live inline in ``complete()``.
+        """
+        response = await self._post_chat_completion(request_payload)
+
+        if self._retry_with_json_object_if_unsupported(request, request_payload, response):
+            response = await self._post_chat_completion(request_payload)
+
+        response_content_type = response.headers.get("content-type", "")
         response_text = response.text
 
         if response.status_code >= 400:
-            excerpt = response_text[:1000].replace(
-                self._api_key,
-                "[redacted]",
-            )
-
+            excerpt = response_text[:1000].replace(self._api_key, "[redacted]")
             raise OpenAICompatibleResponseError(
                 "OpenAI-compatible API returned "
                 f"HTTP {response.status_code}; "
@@ -424,20 +399,174 @@ class OpenAICompatibleProvider(ModelProvider):
                 f"payload={str(payload)[:2000]}"
             )
 
+        return content, finish_reason, message, payload.get("usage")
+
+    def _log_completion(
+        self,
+        request: ModelRequest,
+        *,
+        finish_reason: str | None,
+        message: dict[str, object],
+        usage: object,
+        content: str,
+        retry: bool = False,
+    ) -> None:
+        # Pure observability: never affects control flow. usage/finish_reason let us
+        # tell "the model reasoned and ran out of budget" apart from "genuinely
+        # verbose JSON" without re-running the request by hand.
+        reasoning = message.get("reasoning") or message.get("reasoning_content")
+        logger.debug(
+            "openai_compatible_completion",
+            task_name=request.task_name,
+            finish_reason=finish_reason,
+            usage=usage,
+            has_separate_reasoning_field=reasoning is not None,
+            reasoning_field_len=len(reasoning) if isinstance(reasoning, str) else None,
+            content_len=len(content),
+            retry=retry,
+        )
+
+    async def complete(
+        self,
+        request: ModelRequest,
+    ) -> dict[str, object]:
+        response_schema = request.response_schema
+        schema_instruction = (
+            "\nFollow this JSON Schema exactly: "
+            + json.dumps(response_schema, ensure_ascii=False, separators=(",", ":"))
+            if response_schema is not None
+            else ""
+        )
+        system_prompt = (
+            "Return exactly one valid JSON object. "
+            "Do not use Markdown code fences. "
+            "Do not include explanations, comments, "
+            "headings, or text before or after the JSON." + schema_instruction
+        )
+
+        # For Ollama: use native API with think=false to prevent reasoning token drain
+        if self._is_ollama:
+            return await self._complete_ollama_native(request, system_prompt)
+
+        request_payload: dict[str, object] = {
+            "model": request.model_override or self._model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt,
+                },
+                {
+                    "role": "user",
+                    "content": request.prompt,
+                },
+            ],
+            "temperature": 0,
+            "stream": False,
+            "max_tokens": request.max_output_tokens or 16384,
+            "response_format": self._response_format_for(request),
+        }
+        # Reasoning models (qwen3.x) drain the token budget on thinking; all
+        # structured outputs here need none, so disable it explicitly. This is not
+        # a documented OpenAI Chat Completions field — it is a no-op on servers
+        # (e.g. OpenRouter) that don't recognize it, confirmed by direct testing
+        # (2026-09-25): reasoning_tokens usage was identical with and without it.
+        request_payload["think"] = False
+        if self._reasoning_mitigation_enabled:
+            # OpenRouter's own unified reasoning control. Verified (2026-09-25) to
+            # correctly suppress the separate `message.reasoning` field, but it does
+            # NOT reduce reasoning token usage — the model still "thinks" internally
+            # on routes that support it, so this alone does not prevent truncation.
+            request_payload["reasoning"] = {"exclude": True}
+        if request.context_size is not None:
+            # Matching passes its tuned per-sequence context; the local-code-worker
+            # gateway honors it per request (winning over the routed tier default).
+            request_payload["context_length"] = request.context_size
+
+        content, finish_reason, message, usage = await self._send_and_parse_choice(
+            request, request_payload
+        )
+        self._log_completion(
+            request, finish_reason=finish_reason, message=message, usage=usage, content=content
+        )
+
+        parse_target = content
+        if self._reasoning_mitigation_enabled:
+            # Some OpenRouter-routed backends emit chain-of-thought as plain prose
+            # ahead of the JSON with no <think> delimiter at all (observed directly
+            # in production logs) — this strip only helps the minority of backends
+            # that do wrap it in <think>...</think>; it is not a general fix.
+            parse_target = _LEADING_THINK_BLOCK.sub("", content, count=1)
+
         try:
-            return parse_model_json(content)
+            return parse_model_json(parse_target)
         except OpenAICompatibleResponseError as error:
             # Distinguish truncated/aborted output from genuine JSON parse errors
-            if finish_reason in ("length", "abort"):
-                from app.llm.router import LLMTruncatedOutputError
+            if finish_reason not in ("length", "abort"):
+                from app.llm.router import LLMInvalidJSONError
 
-                raise LLMTruncatedOutputError(
-                    f"LLM output truncated (finish_reason={finish_reason!r}): "
-                    f"{error}; content_len={len(content)}",
-                    finish_reason=str(finish_reason),
+                raise LLMInvalidJSONError(
+                    f"LLM returned invalid JSON (finish_reason={finish_reason!r}): {error}"
                 ) from error
-            from app.llm.router import LLMInvalidJSONError
 
-            raise LLMInvalidJSONError(
-                f"LLM returned invalid JSON (finish_reason={finish_reason!r}): {error}"
+            if self._reasoning_mitigation_enabled and finish_reason == "length":
+                retried = await self._retry_truncated_with_larger_budget(request, request_payload)
+                if retried is not None:
+                    return retried
+
+            from app.llm.router import LLMTruncatedOutputError
+
+            raise LLMTruncatedOutputError(
+                f"LLM output truncated (finish_reason={finish_reason!r}): "
+                f"{error}; content_len={len(content)}",
+                finish_reason=str(finish_reason),
             ) from error
+
+    async def _retry_truncated_with_larger_budget(
+        self,
+        request: ModelRequest,
+        request_payload: dict[str, object],
+    ) -> dict[str, object] | None:
+        """One retry with a larger max_tokens after a finish_reason=length truncation.
+
+        Returns the parsed JSON on success, or None if the retry also failed (the
+        caller then raises the original truncation error — never a second, different
+        one, so this stays a single well-defined failure mode from the caller's view).
+        """
+        raw_max_tokens = request_payload.get("max_tokens")
+        original_max_tokens = raw_max_tokens if isinstance(raw_max_tokens, int) else 0
+        retry_max_tokens = min(
+            max(original_max_tokens * 2, original_max_tokens + 1),
+            _TRUNCATION_RETRY_MAX_TOKENS_CEILING,
+        )
+        if retry_max_tokens <= original_max_tokens:
+            return None
+        retry_payload = dict(request_payload)
+        retry_payload["max_tokens"] = retry_max_tokens
+        logger.info(
+            "openai_compatible_truncation_retry",
+            task_name=request.task_name,
+            original_max_tokens=original_max_tokens,
+            retry_max_tokens=retry_max_tokens,
+        )
+        try:
+            (
+                retry_content,
+                retry_finish_reason,
+                retry_message,
+                retry_usage,
+            ) = await self._send_and_parse_choice(request, retry_payload)
+        except OpenAICompatibleResponseError:
+            return None
+        self._log_completion(
+            request,
+            finish_reason=retry_finish_reason,
+            message=retry_message,
+            usage=retry_usage,
+            content=retry_content,
+            retry=True,
+        )
+        retry_parse_target = _LEADING_THINK_BLOCK.sub("", retry_content, count=1)
+        try:
+            return parse_model_json(retry_parse_target)
+        except OpenAICompatibleResponseError:
+            return None

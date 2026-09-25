@@ -7,6 +7,31 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Performance
 
+- **Optional mitigation for matching LLM calls truncated by unsuppressible reasoning
+  (`APP_MATCHING_LLM_REASONING_MITIGATION_ENABLED`, default off).** Diagnosed a ~93% matching-run
+  failure rate for a user newly configured against a free-tier OpenRouter model
+  (`qwen/qwen3.8-27b:free`): `evaluate_evidence_entailment(_batch)` and `decompose_requirement`
+  calls came back with `finish_reason=length` and content that was chain-of-thought prose cut off
+  before any JSON ("The user wants me to evaluate..."), and `extract_vacancy_requirements` calls
+  failed on `Upstream error from Nvidia: Service temporarily overloaded` / HTTP 429 returned as a
+  200-OK body with an embedded `error` object. Direct requests to the same endpoint with the same
+  payload confirmed the existing non-standard `"think": false` field (and, when tested,
+  OpenRouter's own `reasoning.exclude`/`chat_template_kwargs.enable_thinking`) has **no effect** on
+  this model/route - `usage.completion_tokens_details.reasoning_tokens` was identical (398) in
+  every variant tried; only `reasoning.exclude` reliably kept it out of the returned payload, not
+  out of the token budget. Because OpenRouter's free tier routes each call to whichever upstream
+  happens to have capacity, some routes correctly return reasoning in a separate `message.reasoning`
+  field (harmless) and others - the ones causing the failures above - inline it directly into
+  `content` with no delimiter, consuming the full `max_output_tokens` budget before ever reaching
+  the JSON answer. When enabled, the `openai_compatible` provider used for matching's structural
+  tasks (extraction/decomposition/entailment only, not materials/cover letters) additionally sends
+  `reasoning: {"exclude": true}`, strips a leading `<think>...</think>` block before parsing (helps
+  only the minority of backends that use that delimiter - most don't), and retries once with a
+  doubled `max_tokens` on `finish_reason=length` before raising. `llm_request`-adjacent calls now
+  also log `finish_reason` and `usage` (including `reasoning_tokens` when the provider reports it)
+  unconditionally, regardless of the flag. Off by default: with the flag unset, the request payload,
+  retry behavior, and error handling are byte-for-byte the same as before this change. See
+  `docs/matching-architecture.md` for the full diagnosis and before/after numbers.
 - **Shadow-mode e5-small scorer alongside `_rescore_from_text`'s keyword score.**
   `APP_MATCHING_SCORER` (`keyword` default/unchanged, `shadow`, `e5`) lets discovery-time scoring
   additionally compute a multilingual-e5-small cosine score next to the existing keyword-coverage

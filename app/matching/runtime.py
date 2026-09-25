@@ -315,6 +315,7 @@ def _build_user_model_providers(
                     api_key=preference.api_key,
                     model=preference.model,
                     base_url=preference.base_url,
+                    reasoning_mitigation_enabled=settings.matching_llm_reasoning_mitigation_enabled,
                 ),
             )
     providers: list[ModelProvider] = []
