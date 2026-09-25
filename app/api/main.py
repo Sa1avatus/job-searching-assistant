@@ -2926,7 +2926,7 @@ async def extract_profile_from_cv(
     user_id: str,
     cv_file_id: str,
     session: Annotated[Session, Depends(session_scope)],
-    http_client: Annotated[httpx.AsyncClient, Depends(headhunter_http_client)],
+    http_client: Annotated[httpx.AsyncClient, Depends(llm_http_client)],
     storage: Annotated[DocumentStorage, Depends(document_storage)],
 ) -> ExtractedProfileResponse:
     """Draft skills/summary/search keywords from an uploaded resume. Writes nothing yet.

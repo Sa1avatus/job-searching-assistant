@@ -35,6 +35,11 @@ class ResumeIntakeService:
             prompt=build_resume_profile_prompt(resume_text),
             max_cost_usd=0.05,
             timeout_seconds=180,
+            # ExtractedProfileDraft is bounded (<=160 skills, 2000-char summary/keywords), so
+            # this comfortably covers the schema-constrained path; it also caps the worst case
+            # for the json_object fallback (no grammar to keep the model concise) - was
+            # unset/16384, which needed >180s to finish even once the timeout itself was fixed.
+            max_output_tokens=4096,
         )
         draft = await self._router.route(request, ExtractedProfileDraft)
         # Defense in depth against a model that ignores instructions: cap list size and dedupe,

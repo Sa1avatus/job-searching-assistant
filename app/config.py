@@ -142,7 +142,9 @@ class Settings(BaseSettings):
     # by Google; this project performs no proxying or markup.
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-2.5-flash"
-    materials_generation_timeout_seconds: float = Field(default=120, ge=10, le=600)
+    # 170 (+10 for the http client's own margin, see llm_http_client) so a cold local-model
+    # load (~91s measured against a llama.cpp gateway) has comfortable headroom.
+    materials_generation_timeout_seconds: float = Field(default=170, ge=10, le=600)
 
     @field_validator(
         "api_key",
