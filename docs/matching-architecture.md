@@ -269,6 +269,72 @@ Measures already in place:
   word (function words excluded) appears in the source text, so weaker local models that
   slightly paraphrase fragments still pass while invented content is still rejected.
 
+## Discovery-time keyword score and the shadow e5 scorer
+
+This section is about a different, earlier score than the matching-v2 pipeline above:
+`app/services/job_discovery.py::JobDiscoveryService._rescore_from_text`, which every hh.ru/
+LinkedIn/Greenhouse discovery call runs synchronously per vacancy, writing a 0-100
+keyword-coverage score to `ApplicationRow.match_score` (`required_coverage*70 +
+preferred_coverage*15 + title_match*15`, capped at 35 when required-skill coverage is
+below 0.4). Matching-v2's `final_score` lives separately on `ApplicationMatchResultRow`
+and is exposed by `/v1/applications/{id}/match-details`; it overwrites `match_score` only
+when `APP_MATCHING_V2_SHADOW_MODE=false` (default `true`, i.e. it doesn't by default).
+
+`match_score` has several consumers, and none of them treat it as validated against a
+different score distribution - anything scored on a different scale (e.g. a cosine
+similarity mapped 0-100) needs calibration before it can replace it:
+
+- **Sorting**: catalog default order, all three discovery methods' in-process sort,
+  the live-discovery SSE stream, and the dashboard's progressive-result and
+  post-rerank resort.
+- **Filter/threshold**: `min_match_score` (`GET /v1/users/{user_id}/vacancies`,
+  dashboard "Соответствие от" field) - a user-set 0-100 cutoff whose meaning depends on
+  the keyword score's actual distribution.
+- **Display**: the dashboard's unlabeled "N% match" meter (`createMatchMeter`) and its CSS
+  hue mapping (`hsl(score * 1.2, ...)`, linear red-to-green over 0-100), and review.js's
+  bare percentage - both assume roughly the keyword score's spread, and both silently show
+  the matching-v2 score instead once it's ready (same slot, no visual distinction).
+- **API**: `ApplicationResponse`/`DiscoveryOutcomeResponse`/`SavedVacancyResponse.match_score`,
+  and `ApplicationMatchDetailsResponse.legacy_match_score` alongside `final_score` - the one
+  place the two scores are already named and returned side by side.
+- **CRM bucketing**: `app/domain/crm_stats.py::score_band` buckets in fixed 20-point bands
+  (0-19, ..., 80-100), which assumes a roughly uniform 0-100 spread; a score that clusters in
+  a narrow band (e.g. cosine similarity normalized into 0-100 typically clusters ~60-90)
+  would make this bucketing nearly useless.
+
+`app/matching/shadow_scorer.py` adds a second score - multilingual-e5-small cosine
+similarity - alongside the keyword one, gated by `APP_MATCHING_SCORER`:
+
+- `keyword` (default): unchanged; the shadow scorer is never invoked.
+- `shadow`: both scores are computed; every consumer above still sees only the keyword
+  score (`application.match_score` is untouched). The e5 score, both rankings, latency,
+  and cache-hit/fallback flags are logged as one `matching_shadow_score` structured JSON
+  event per vacancy after a discovery batch is sorted - for offline comparison, not
+  consumed by any of the paths above.
+- `e5`: ranks by the e5 score instead (cosine mapped linearly to 0-100). Implemented for
+  end-to-end testability; not enabled by this change, and none of the consumers above have
+  been recalibrated for it - `min_match_score`, the CRM score bands, and the meter's hue
+  mapping would all need re-tuning against e5's actual score distribution first.
+
+Vacancy and resume embeddings are cached in `matching_embedding_cache` (migration `0050`)
+by `(entity_type, entity_id, model_name, model_revision, content_hash)`; a cache write only
+happens when the live embedding service's response confirms the pinned
+`matching_scorer_embedding_model_name`, so a silent model swap behind the same URL can't
+poison the cache under the old key. No prior cache existed for vacancies to reuse - only
+candidate evidence is embedded for matching v2's dense retrieval (`EmbeddingRecordRow`,
+`entity_type="candidate_evidence"`), and that table only registers what got indexed into
+OpenSearch, it doesn't store the vector itself.
+
+A timeout (`APP_MATCHING_SCORER_EMBEDDING_TIMEOUT_SECONDS`, default 2s) and a plain
+try/except around the embedding call mean a slow or unreachable embedding service falls
+back to the keyword score without failing the request; `used_fallback` in the shadow log
+records when this happened. `compute_shadow_score` takes a caller-owned, reused
+`httpx.AsyncClient` rather than opening one per call - on this deployment, a fresh client's
+connection setup alone measured ~500-1000ms (Docker Desktop on Windows port forwarding),
+which is what made a naive per-call implementation look like a ~250ms-per-text model
+problem; the actual e5-small encode is ~20ms in-process, and CPU thread count
+(`torch.get_num_threads`, 4-6 measured optimal on this host) was not the bottleneck.
+
 ## Scoring v3.0 — Coverage-Based Matching
 
 Scoring v3.0 shifts from semantic-similarity-based scoring to coverage-based scoring where the

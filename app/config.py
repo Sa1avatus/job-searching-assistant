@@ -1,6 +1,7 @@
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -50,6 +51,15 @@ class Settings(BaseSettings):
     vacancy_search_top_k: int = Field(default=100, ge=1, le=500)
     vacancy_search_rrf_k: int = Field(default=60, ge=1, le=500)
     embedding_service_url: str | None = None
+    # Discovery-time keyword scoring (_rescore_from_text): "keyword" (default, unchanged) keeps
+    # today's behavior; "shadow" additionally computes an e5-small cosine score and logs it
+    # (structlog JSON) without letting it affect ranking or application.match_score; "e5" would
+    # rank by it instead - implemented for testability but never enabled by this change.
+    matching_scorer: Literal["keyword", "shadow", "e5"] = "keyword"
+    matching_scorer_embedding_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    # Cache reuse is gated on the live embedding service reporting this exact model name -
+    # a silent model swap behind the same URL must not poison the cache under the old key.
+    matching_scorer_embedding_model_name: str = "intfloat/multilingual-e5-small"
     matching_model_timeout_seconds: float = Field(default=120, ge=1, le=600)
     reranker_service_url: str | None = None
     reranker_api_key: SecretStr | None = None

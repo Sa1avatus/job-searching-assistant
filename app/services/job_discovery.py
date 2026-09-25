@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+import httpx
 import structlog
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -35,6 +36,7 @@ from adapters.job_boards.linkedin_browser import ExtractedLinkedInVacancy, Linke
 from app.config import get_settings
 from app.domain.vacancy_attributes import detect_employment_types
 from app.matching.jobs import MatchingJobService
+from app.matching.shadow_scorer import ShadowScoreResult, compute_shadow_score
 from app.services.application_lifecycle import mark_submitted_from_site
 from app.services.company_blacklist import CompanyBlacklistService
 from app.services.recruitment import DuplicateEntityError, EntityNotFoundError, RecruitmentService
@@ -183,6 +185,16 @@ def build_search_queries(search_text: str) -> list[str]:
 class JobDiscoveryService:
     def __init__(self, session: Session) -> None:
         self._session = session
+        # application_id -> ShadowScoreResult, populated by _rescore_from_text in shadow/e5 mode
+        # and consumed by _log_shadow_batch after a discovery call's outcomes are sorted. One
+        # instance per discovery call (constructed fresh per request, like the other services
+        # here), so this never leaks across requests.
+        self._shadow_results: dict[str, ShadowScoreResult] = {}
+        # Lazily created on first shadow/e5 score of a discovery call and reused for the rest
+        # of it - a fresh httpx.AsyncClient per vacancy costs ~500-1000ms in connection setup
+        # alone on this deployment (see app.matching.shadow_scorer). Closed in _close_shadow_
+        # http_client, which every discover_* method calls in a finally block.
+        self._shadow_http_client: httpx.AsyncClient | None = None
 
     async def discover_headhunter_vacancies(
         self,
@@ -244,7 +256,10 @@ class JobDiscoveryService:
                     await on_outcome(outcome)
                 if len(outcomes) == limit:
                     break
-        return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
+        ranked = sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
+        self._log_shadow_batch(cv_file.id if cv_file else None, ranked)
+        await self._close_shadow_http_client()
+        return ranked
 
     async def discover_custom_site_vacancies(
         self,
@@ -369,7 +384,7 @@ class JobDiscoveryService:
             if existing_application.status in _TERMINAL_DISCOVERY_STATUSES:
                 return None
             existing_application.selected_cv_file_id = cv_file_id
-            self._rescore_from_text(existing_application, vacancy, cv_file_id)
+            await self._rescore_from_text(existing_application, vacancy, cv_file_id)
             return DiscoveryOutcome(
                 application_id=existing_application.id,
                 vacancy_id=vacancy.id,
@@ -393,7 +408,7 @@ class JobDiscoveryService:
             application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
         except (EntityNotFoundError, DuplicateEntityError):
             return None
-        self._rescore_from_text(application, vacancy, cv_file_id)
+        await self._rescore_from_text(application, vacancy, cv_file_id)
         return DiscoveryOutcome(
             application_id=application.id,
             vacancy_id=vacancy.id,
@@ -472,7 +487,10 @@ class JobDiscoveryService:
                     await on_outcome(outcome)
                 if len(outcomes) == limit:
                     break
-        return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
+        ranked = sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
+        self._log_shadow_batch(cv_file.id if cv_file else None, ranked)
+        await self._close_shadow_http_client()
+        return ranked
 
     async def _stage_linkedin(
         self,
@@ -571,7 +589,7 @@ class JobDiscoveryService:
                 self._mark_linkedin_duplicates_submitted(user_id, vacancy)
                 return None
             existing_application.selected_cv_file_id = cv_file_id
-            self._rescore_from_text(existing_application, vacancy, cv_file_id)
+            await self._rescore_from_text(existing_application, vacancy, cv_file_id)
             return DiscoveryOutcome(
                 application_id=existing_application.id,
                 vacancy_id=vacancy.id,
@@ -594,7 +612,7 @@ class JobDiscoveryService:
             application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
         except (EntityNotFoundError, DuplicateEntityError):
             return None
-        self._rescore_from_text(application, vacancy, cv_file_id)
+        await self._rescore_from_text(application, vacancy, cv_file_id)
         if application_submitted:
             mark_submitted_from_site(
                 self._session, application, vacancy.adapter_name, source="discovery"
@@ -728,7 +746,10 @@ class JobDiscoveryService:
                     await on_outcome(outcome)
                 if len(outcomes) == limit:
                     break
-        return sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
+        ranked = sorted(outcomes, key=lambda outcome: outcome.match_score, reverse=True)
+        self._log_shadow_batch(cv_file.id if cv_file else None, ranked)
+        await self._close_shadow_http_client()
+        return ranked
 
     async def _stage_greenhouse(
         self,
@@ -800,7 +821,7 @@ class JobDiscoveryService:
             if existing_application.status in _TERMINAL_DISCOVERY_STATUSES:
                 return None
             existing_application.selected_cv_file_id = cv_file_id
-            self._rescore_from_text(existing_application, vacancy, cv_file_id)
+            await self._rescore_from_text(existing_application, vacancy, cv_file_id)
             return DiscoveryOutcome(
                 application_id=existing_application.id,
                 vacancy_id=vacancy.id,
@@ -823,7 +844,7 @@ class JobDiscoveryService:
             application = recruitment.prepare_application(user_id, vacancy.id, cv_file_id)
         except (EntityNotFoundError, DuplicateEntityError):
             return None
-        self._rescore_from_text(application, vacancy, cv_file_id)
+        await self._rescore_from_text(application, vacancy, cv_file_id)
         return DiscoveryOutcome(
             application_id=application.id,
             vacancy_id=vacancy.id,
@@ -870,7 +891,7 @@ class JobDiscoveryService:
             )
         )
 
-    def _rescore_from_text(
+    async def _rescore_from_text(
         self,
         application: ApplicationRow,
         vacancy: VacancyRow,
@@ -931,10 +952,86 @@ class JobDiscoveryService:
         if required_skills and required_coverage < 0.4:
             score = min(score, 35)
 
-        application.match_score = min(100, round(score))
+        keyword_score = min(100, round(score))
+        settings = get_settings()
+        if settings.matching_scorer != "keyword" and cv_file is not None:
+            resume_text = f"{', '.join(cv_file.skills)}\n{cv_file.experience_summary or ''}"
+            vacancy_full_text = f"{vacancy.title}\n{vacancy.description_text or ''}"
+            if self._shadow_http_client is None:
+                self._shadow_http_client = httpx.AsyncClient()
+            shadow_result = await compute_shadow_score(
+                self._session,
+                settings,
+                self._shadow_http_client,
+                vacancy_id=vacancy.id,
+                vacancy_text=vacancy_full_text,
+                resume_id=cv_file.id,
+                resume_text=resume_text,
+            )
+            self._shadow_results[application.id] = shadow_result
+            if settings.matching_scorer == "e5" and shadow_result.e5_score is not None:
+                application.match_score = min(100, max(0, round((shadow_result.e5_score + 1) * 50)))
+            else:
+                application.match_score = keyword_score
+        else:
+            application.match_score = keyword_score
         self._session.commit()
-        if get_settings().matching_v2_enabled and application.selected_cv_file_id is not None:
+        if settings.matching_v2_enabled and application.selected_cv_file_id is not None:
             MatchingJobService(self._session).schedule(application.id)
+
+    async def _close_shadow_http_client(self) -> None:
+        if self._shadow_http_client is not None:
+            await self._shadow_http_client.aclose()
+            self._shadow_http_client = None
+
+    def _log_shadow_batch(self, resume_id: str | None, outcomes: list[DiscoveryOutcome]) -> None:
+        """Logs one structured event per outcome with both rankings, then clears pending
+        results. A no-op outside shadow mode, so it costs nothing when disabled."""
+        settings = get_settings()
+        if settings.matching_scorer != "shadow" or resume_id is None:
+            self._shadow_results.clear()
+            return
+        scored = [
+            (outcome, self._shadow_results[outcome.application_id])
+            for outcome in outcomes
+            if outcome.application_id in self._shadow_results
+        ]
+        if not scored:
+            self._shadow_results.clear()
+            return
+        keyword_rank = {
+            pair[0].application_id: rank
+            for rank, pair in enumerate(
+                sorted(scored, key=lambda pair: pair[0].match_score, reverse=True), start=1
+            )
+        }
+        # Fallback entries (e5_score is None) sort last, after every real score.
+        e5_rank = {
+            pair[0].application_id: rank
+            for rank, pair in enumerate(
+                sorted(
+                    scored,
+                    key=lambda pair: (pair[1].e5_score is None, -(pair[1].e5_score or 0.0)),
+                ),
+                start=1,
+            )
+        }
+        for outcome, result in scored:
+            logger.info(
+                "matching_shadow_score",
+                resume_id=resume_id,
+                vacancy_id=outcome.vacancy_id,
+                application_id=outcome.application_id,
+                keyword_score=outcome.match_score,
+                e5_score=round(result.e5_score, 4) if result.e5_score is not None else None,
+                keyword_rank=keyword_rank[outcome.application_id],
+                e5_rank=e5_rank[outcome.application_id],
+                e5_latency_ms=result.latency_ms,
+                used_fallback=result.used_fallback,
+                vacancy_cache_hit=result.vacancy_cache_hit,
+                resume_cache_hit=result.resume_cache_hit,
+            )
+        self._shadow_results.clear()
 
     def _resolve_search_text(
         self, user: UserRow, cv_file: CvFileRow | None, search_text: str | None

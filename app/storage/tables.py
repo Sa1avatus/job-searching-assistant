@@ -539,6 +539,42 @@ class EmbeddingRecordRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class MatchingEmbeddingCacheRow(Base):
+    """Vector cache for the shadow scorer (app.matching.shadow_scorer), keyed by exact content.
+
+    Distinct from EmbeddingRecordRow, which only registers what got indexed into OpenSearch for
+    candidate evidence and never stores the vector itself. Vacancies have no existing dense-
+    retrieval cache to reuse (only candidate evidence is indexed), so this stores vectors
+    directly rather than pointing at an index.
+    """
+
+    __tablename__ = "matching_embedding_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "entity_type",
+            "entity_id",
+            "model_name",
+            "model_revision",
+            "content_hash",
+            name="uq_matching_embedding_cache_entity_model_content",
+        ),
+        Index("ix_matching_embedding_cache_entity", "entity_type", "entity_id"),
+        CheckConstraint(
+            "entity_type IN ('vacancy', 'resume')", name="ck_matching_embedding_cache_entity_type"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    entity_type: Mapped[str] = mapped_column(String(20))
+    entity_id: Mapped[str] = mapped_column(String(36))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    model_name: Mapped[str] = mapped_column(String(200))
+    model_revision: Mapped[str] = mapped_column(String(200))
+    dimensions: Mapped[int] = mapped_column(Integer)
+    vector: Mapped[list[float]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class ApplicationRow(Base):
     __tablename__ = "applications"
     __table_args__ = (UniqueConstraint("user_id", "vacancy_id"),)

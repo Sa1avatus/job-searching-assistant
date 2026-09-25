@@ -7,6 +7,21 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Performance
 
+- **Shadow-mode e5-small scorer alongside `_rescore_from_text`'s keyword score.**
+  `APP_MATCHING_SCORER` (`keyword` default/unchanged, `shadow`, `e5`) lets discovery-time scoring
+  additionally compute a multilingual-e5-small cosine score next to the existing keyword-coverage
+  one. In `keyword` mode nothing changes - the new code path isn't reached at all. In `shadow`
+  mode both scores are computed; ranking, `application.match_score`, and every threshold/filter/
+  badge built on it still use only the keyword score, while the e5 score, both rankings, latency
+  and cache-hit/fallback flags are logged as structured JSON (`event="matching_shadow_score"`) for
+  offline comparison - never persisted to `ApplicationRow.match_score`. `e5` mode ranks by the e5
+  score instead; implemented for end-to-end testability but not enabled by this change. Vacancy
+  and resume embeddings are cached by content hash + model identity (new `matching_embedding_cache`
+  table, migration `0050`) since no dense-retrieval cache already covers vacancies (only candidate
+  evidence is indexed for matching v2). A timeout + fallback to the keyword score protects every
+  request if the embedding service is slow or unreachable. See `docs/matching-architecture.md` for
+  where `match_score` is read (sorting, the `min_match_score` filter, the dashboard meter, CRM
+  score bands) and why none of those can take an e5 score as-is without recalibration.
 - **`matching-models` can score with multilingual-e5-small cosine similarity instead of the
   English-only MiniLM cross-encoder.** A prior benchmark found the built-in CPU reranker
   (`cross-encoder/ms-marco-MiniLM-L-2-v2`) underperforming the keyword heuristic on this

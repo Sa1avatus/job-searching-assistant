@@ -8,7 +8,9 @@ from adapters.job_boards.browser_apply_common import CaptchaChallenge
 from adapters.job_boards.greenhouse_api import ExtractedGreenhouseJob, GreenhouseSearchHit
 from adapters.job_boards.headhunter_browser import ExtractedHeadHunterVacancy, HeadHunterSearchHit
 from adapters.job_boards.linkedin_browser import ExtractedLinkedInVacancy, LinkedInSearchHit
+from app.config import Settings
 from app.domain.forms import FormField, FormFieldType
+from app.matching.shadow_scorer import ShadowScoreResult
 from app.services.job_discovery import (
     JobDiscoveryService,
     NoSearchKeywordsError,
@@ -738,3 +740,168 @@ def test_greenhouse_backfills_limit_after_rejected_candidate() -> None:
         assert [outcome.source_url for outcome in outcomes] == [new_url]
 
     asyncio.run(run())
+
+
+async def _setup_user_with_resume(session):
+    recruitment = RecruitmentService(session)
+    user = recruitment.create_user("Shadow scorer candidate")
+    cv_file = CvFileRow(
+        user_id=user.id,
+        original_filename="python.txt",
+        storage_path="python.txt",
+        content_type="text/plain",
+        sha256="b" * 64,
+        size_bytes=10,
+    )
+    session.add(cv_file)
+    session.commit()
+    recruitment.save_cv_profile(
+        user.id,
+        cv_file.id,
+        skills=["Python", "FastAPI"],
+        experience_summary="Python developer",
+        search_keywords="Python FastAPI",
+        years_of_experience=5,
+    )
+    return user, cv_file
+
+
+def test_keyword_mode_never_calls_the_shadow_scorer(monkeypatch) -> None:
+    async def _explode(*args, **kwargs):
+        raise AssertionError("compute_shadow_score must not run in keyword mode")
+
+    monkeypatch.setattr("app.services.job_discovery.compute_shadow_score", _explode)
+
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            user, cv_file = await _setup_user_with_resume(session)
+            adapter = _FakeAdapter(
+                [
+                    HeadHunterSearchHit(
+                        "1", "https://hh.ru/vacancy/1", "Backend Engineer", "Example Co"
+                    )
+                ]
+            )
+            outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
+                user.id, headhunter_adapter=adapter, locations=[], limit=1, cv_file_id=cv_file.id
+            )
+            assert outcomes[0].match_score == 70
+
+    asyncio.run(run())
+
+
+def test_shadow_mode_keeps_keyword_score_and_logs_both_ranks(monkeypatch) -> None:
+    logged: list[dict] = []
+
+    monkeypatch.setattr(
+        "app.services.job_discovery.get_settings", lambda: Settings(matching_scorer="shadow")
+    )
+
+    async def _fake_shadow_score(*args, **kwargs):
+        return ShadowScoreResult(e5_score=0.8, latency_ms=12.5, used_fallback=False)
+
+    monkeypatch.setattr("app.services.job_discovery.compute_shadow_score", _fake_shadow_score)
+    monkeypatch.setattr(
+        "app.services.job_discovery.logger.info",
+        lambda event, **kwargs: logged.append({"event": event, **kwargs}),
+    )
+
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            user, cv_file = await _setup_user_with_resume(session)
+            adapter = _FakeAdapter(
+                [
+                    HeadHunterSearchHit(
+                        "1", "https://hh.ru/vacancy/1", "Backend Engineer", "Example Co"
+                    )
+                ]
+            )
+            outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
+                user.id, headhunter_adapter=adapter, locations=[], limit=1, cv_file_id=cv_file.id
+            )
+            application = session.get(ApplicationRow, outcomes[0].application_id)
+            # Shadow mode must not change ranking/persisted score - keyword coverage (Python
+            # matches the sole required skill, no title match) always gives exactly 70 here.
+            assert application.match_score == 70
+            assert outcomes[0].match_score == 70
+
+    asyncio.run(run())
+
+    assert len(logged) == 1
+    entry = logged[0]
+    assert entry["event"] == "matching_shadow_score"
+    assert entry["keyword_score"] == 70
+    assert entry["e5_score"] == 0.8
+    assert entry["keyword_rank"] == 1
+    assert entry["e5_rank"] == 1
+    assert entry["used_fallback"] is False
+
+
+def test_e5_mode_uses_the_e5_score_instead_of_keyword(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.job_discovery.get_settings", lambda: Settings(matching_scorer="e5")
+    )
+
+    async def _fake_shadow_score(*args, **kwargs):
+        return ShadowScoreResult(e5_score=0.8, latency_ms=12.5, used_fallback=False)
+
+    monkeypatch.setattr("app.services.job_discovery.compute_shadow_score", _fake_shadow_score)
+
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            user, cv_file = await _setup_user_with_resume(session)
+            adapter = _FakeAdapter(
+                [
+                    HeadHunterSearchHit(
+                        "1", "https://hh.ru/vacancy/1", "Backend Engineer", "Example Co"
+                    )
+                ]
+            )
+            outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
+                user.id, headhunter_adapter=adapter, locations=[], limit=1, cv_file_id=cv_file.id
+            )
+            # (0.8 + 1) * 50 == 90, not the keyword score of 70.
+            assert outcomes[0].match_score == 90
+
+    asyncio.run(run())
+
+
+def test_shadow_mode_fallback_keeps_keyword_score_and_flags_fallback(monkeypatch) -> None:
+    logged: list[dict] = []
+
+    monkeypatch.setattr(
+        "app.services.job_discovery.get_settings", lambda: Settings(matching_scorer="shadow")
+    )
+
+    async def _fake_shadow_score(*args, **kwargs):
+        return ShadowScoreResult(e5_score=None, latency_ms=2000.0, used_fallback=True)
+
+    monkeypatch.setattr("app.services.job_discovery.compute_shadow_score", _fake_shadow_score)
+    monkeypatch.setattr(
+        "app.services.job_discovery.logger.info",
+        lambda event, **kwargs: logged.append({"event": event, **kwargs}),
+    )
+
+    async def run() -> None:
+        session_factory = _session_factory()
+        with session_factory() as session:
+            user, cv_file = await _setup_user_with_resume(session)
+            adapter = _FakeAdapter(
+                [
+                    HeadHunterSearchHit(
+                        "1", "https://hh.ru/vacancy/1", "Backend Engineer", "Example Co"
+                    )
+                ]
+            )
+            outcomes = await JobDiscoveryService(session).discover_headhunter_vacancies(
+                user.id, headhunter_adapter=adapter, locations=[], limit=1, cv_file_id=cv_file.id
+            )
+            assert outcomes[0].match_score == 70
+
+    asyncio.run(run())
+
+    assert logged[0]["used_fallback"] is True
+    assert logged[0]["e5_score"] is None
