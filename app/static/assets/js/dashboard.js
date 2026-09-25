@@ -2665,7 +2665,7 @@ document.querySelector('#analyze-resume').addEventListener('click', async () => 
     const cvFileId = document.querySelector('#resume-selector').value;
     if (!cvFileId) throw new Error('Выберите загруженное резюме');
     await selectCvFile(cvFileId);
-    showStatus('Анализируем резюме (это может занять до минуты)…');
+    showStatus('Анализируем резюме (это может занять до 3 минут)…');
     const draft = await asJson(await fetch(`/v1/users/${userId}/cv-files/${cvFileId}/extract-profile`, {
       method: 'POST', headers: headers(false)
     }));

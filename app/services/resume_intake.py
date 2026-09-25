@@ -34,7 +34,7 @@ class ResumeIntakeService:
             task_class=ModelTaskClass.LOW_COST,
             prompt=build_resume_profile_prompt(resume_text),
             max_cost_usd=0.05,
-            timeout_seconds=45,
+            timeout_seconds=180,
         )
         draft = await self._router.route(request, ExtractedProfileDraft)
         # Defense in depth against a model that ignores instructions: cap list size and dedupe,
