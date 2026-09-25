@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import os
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 _MAX_TEXTS = 128
 _MAX_TEXT_CHARACTERS = 8_000
 _MAX_PAIRS = 128
+
+RerankScoringMode = Literal["cross_encoder", "e5_cosine"]
 
 
 class StrictModel(BaseModel):
@@ -36,6 +38,9 @@ class RerankPair(StrictModel):
 
 class RerankRequest(StrictModel):
     pairs: list[RerankPair] = Field(min_length=1, max_length=_MAX_PAIRS)
+    # Per-request override of RERANK_SCORING_MODE, for A/B comparisons against the
+    # running container without a restart. Omitted, it falls back to the env default.
+    scoring_mode: RerankScoringMode | None = None
 
 
 class RerankScore(StrictModel):
@@ -69,6 +74,12 @@ class ModelRuntime:
             "0",
             "no",
         )
+        default_mode = os.getenv("RERANK_SCORING_MODE", "cross_encoder")
+        if default_mode not in ("cross_encoder", "e5_cosine"):
+            raise ValueError(
+                f"RERANK_SCORING_MODE must be cross_encoder or e5_cosine, got {default_mode!r}"
+            )
+        self.default_scoring_mode: RerankScoringMode = default_mode  # type: ignore[assignment]
         self.embedding_model: Any = None
         self.reranker_model: Any = None
 
@@ -119,6 +130,7 @@ def health() -> dict[str, object]:
         "embedding_revision": runtime.embedding_model_revision,
         "reranker_model": runtime.reranker_model_name,
         "reranker_revision": runtime.reranker_model_revision,
+        "default_scoring_mode": runtime.default_scoring_mode,
     }
 
 
@@ -148,29 +160,68 @@ def embeddings(request: EmbeddingRequest) -> EmbeddingResponse:
 
 @app.post("/v1/rerank", response_model=RerankResponse)
 def rerank(request: RerankRequest) -> RerankResponse:
+    mode = request.scoring_mode or runtime.default_scoring_mode
+    if mode == "e5_cosine":
+        return _rerank_e5_cosine(request.pairs)
+    return _rerank_cross_encoder(request.pairs)
+
+
+def _rerank_cross_encoder(pairs: list[RerankPair]) -> RerankResponse:
     if runtime.reranker_model is None:
         raise HTTPException(status_code=503, detail="Reranker model is not loaded")
-    pairs = [
-        [_bounded_text(pair.requirement), _bounded_text(pair.evidence)]
-        for pair in request.pairs
-    ]
+    text_pairs = [[_bounded_text(pair.requirement), _bounded_text(pair.evidence)] for pair in pairs]
     raw_scores = runtime.reranker_model.predict(
-        pairs,
+        text_pairs,
         batch_size=runtime.batch_size,
         show_progress_bar=False,
     )
-    raw_scores = [float(s) for s in raw_scores]
     scores = [
-        RerankScore(
-            raw_score=float(raw_score),
-            normalized_score=_sigmoid(float(raw_score)),
-        )
+        RerankScore(raw_score=float(raw_score), normalized_score=_sigmoid(float(raw_score)))
         for raw_score in raw_scores
     ]
     return RerankResponse(
         scores=scores,
         model_name=runtime.reranker_model_name,
         model_revision=runtime.reranker_model_revision,
+    )
+
+
+def _rerank_e5_cosine(pairs: list[RerankPair]) -> RerankResponse:
+    if runtime.embedding_model is None:
+        raise HTTPException(
+            status_code=503,
+            detail="e5_cosine scoring requires the embedding model, which is not loaded "
+            "(LOAD_EMBEDDING_MODEL=false)",
+        )
+    # requirement=vacancy text gets the "passage: " prefix, evidence=resume text gets
+    # "query: " -- matching the exact convention this deployment was asked to test, not the
+    # usual E5 role assignment. Texts are deduped so a request scoring one resume against many
+    # vacancies (or vice versa) embeds each unique string once, not once per pair.
+    unique_texts: dict[str, str] = {}
+    for pair in pairs:
+        requirement = _bounded_text(pair.requirement)
+        evidence = _bounded_text(pair.evidence)
+        unique_texts.setdefault(requirement, f"passage: {requirement}")
+        unique_texts.setdefault(evidence, f"query: {evidence}")
+    keys = list(unique_texts)
+    vectors = runtime.embedding_model.encode(
+        [unique_texts[key] for key in keys],
+        batch_size=runtime.batch_size,
+        show_progress_bar=False,
+        normalize_embeddings=True,
+    )
+    vector_by_text = dict(zip(keys, vectors, strict=True))
+    scores = []
+    for pair in pairs:
+        requirement = _bounded_text(pair.requirement)
+        evidence = _bounded_text(pair.evidence)
+        cosine = float(vector_by_text[requirement] @ vector_by_text[evidence])
+        cosine = max(-1.0, min(1.0, cosine))
+        scores.append(RerankScore(raw_score=cosine, normalized_score=(cosine + 1.0) / 2.0))
+    return RerankResponse(
+        scores=scores,
+        model_name=runtime.embedding_model_name,
+        model_revision=runtime.embedding_model_revision,
     )
 
 

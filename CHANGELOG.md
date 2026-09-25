@@ -7,6 +7,20 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Performance
 
+- **`matching-models` can score with multilingual-e5-small cosine similarity instead of the
+  English-only MiniLM cross-encoder.** A prior benchmark found the built-in CPU reranker
+  (`cross-encoder/ms-marco-MiniLM-L-2-v2`) underperforming the keyword heuristic on this
+  deployment's mixed Russian/English vacancy text. `RERANK_SCORING_MODE=e5_cosine` (env, default
+  stays `cross_encoder`) switches `/v1/rerank` to cosine similarity over the embedding model the
+  service already loads, reusing it rather than loading a second copy; a per-request
+  `scoring_mode` field overrides the default for A/B testing without a restart. A follow-up
+  benchmark (`scripts/bench/bench_abc.py`, one resume, 103 pointwise + 114 decisive pairwise human
+  labels) found e5-small cosine significantly ahead of the keyword heuristic on separation (ROC-
+  AUC-style, relevant vs. not_relevant: 0.822 vs. 0.653, 95% CI of the difference excludes zero)
+  and on the empty-`required_skills` subset (0.833 vs. 0.772), with Qwen3-Reranker-0.6B (an
+  external, GPU-backed service) close behind the heuristic but not significantly ahead of it. Not
+  wired into the live discovery-time scoring path (`_rescore_from_text`) or any cascade yet - this
+  is the model swap and its measurement, not a production change.
 - **Route matching's decomposition/entailment stages to a separate (e.g. local, cheap) model.**
   All of matching's LLM work - extraction, requirement decomposition, and evidence entailment -
   shared one configured model. Decomposition and entailment are the high-volume, templated
