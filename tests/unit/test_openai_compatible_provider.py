@@ -8,6 +8,7 @@ import pytest
 from app.llm.providers.openai_compatible import (
     OpenAICompatibleProvider,
     OpenAICompatibleResponseError,
+    _is_grammar_parse_error,
     _is_response_format_error,
     simplify_json_schema_for_ollama,
 )
@@ -357,6 +358,65 @@ async def test_openai_provider_does_not_fallback_on_unrelated_400() -> None:
             await provider.complete(request)
 
 
+def test_is_grammar_parse_error_detection() -> None:
+    assert _is_grammar_parse_error(
+        '{"error":{"code":400,"message":"Failed to initialize samplers: failed to '
+        'parse grammar","type":"invalid_request_error"}}'
+    )
+    assert _is_grammar_parse_error('{"error":{"message":"failed to parse grammar"}}')
+    assert not _is_grammar_parse_error('{"error":{"message":"invalid api key"}}')
+    assert not _is_grammar_parse_error("")
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_falls_back_to_json_object_on_grammar_parse_error() -> None:
+    """llama.cpp-family 400 ('Failed to initialize samplers: failed to parse grammar')
+    triggers the same json_object fallback as a rejected response_format - this is
+    the exact error text observed from a local llama.cpp gateway (2026-09-25)."""
+    calls: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        calls.append(payload)
+        if payload["response_format"]["type"] == "json_schema":
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "code": 400,
+                        "message": "Failed to initialize samplers: failed to parse grammar",
+                        "type": "invalid_request_error",
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"result": "ok"}'}}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            client,
+            api_key="key",
+            model="gemma4-12b",
+            base_url="http://host.docker.internal:8033/v1",
+        )
+        request = ModelRequest(
+            task_name="extract_vacancy_requirements",
+            task_class=ModelTaskClass.LOW_COST,
+            prompt="Extract",
+            max_cost_usd=0.05,
+            response_schema={"type": "object"},
+        )
+        assert await provider.complete(request) == {"result": "ok"}
+        assert [c["response_format"]["type"] for c in calls] == ["json_schema", "json_object"]
+        # Downgrade persists for this provider instance, same as the response-format-
+        # rejected case: subsequent calls skip straight to json_object.
+        assert await provider.complete(request) == {"result": "ok"}
+        assert calls[-1]["response_format"]["type"] == "json_object"
+        assert len(calls) == 3
+
+
 @pytest.mark.asyncio
 async def test_reasoning_mitigation_off_matches_current_behavior_bit_for_bit() -> None:
     """Default (flag off) payload is byte-identical to the pre-mitigation behavior."""
@@ -391,6 +451,7 @@ async def test_reasoning_mitigation_off_matches_current_behavior_bit_for_bit() -
     payload = captured["payload"]
     assert payload["think"] is False
     assert "reasoning" not in payload
+    assert "chat_template_kwargs" not in payload
 
 
 @pytest.mark.asyncio
@@ -426,6 +487,8 @@ async def test_reasoning_mitigation_adds_openrouter_reasoning_exclude() -> None:
     # real Ollama-style option on ones that do).
     assert payload["think"] is False
     assert payload["reasoning"] == {"exclude": True}
+    # vLLM/llama.cpp's Qwen3 convention, gated behind the same flag.
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
 
 
 @pytest.mark.asyncio

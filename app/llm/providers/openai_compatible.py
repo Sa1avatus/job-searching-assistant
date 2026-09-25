@@ -145,6 +145,24 @@ def _is_response_format_error(body: str) -> bool:
     return "response_format" in lowered or "response format" in lowered
 
 
+def _is_grammar_parse_error(body: str) -> bool:
+    """Detect a llama.cpp-family 400 where the json_schema→GBNF grammar failed to parse.
+
+    Message observed verbatim (2026-09-25) from a llama.cpp-based local gateway:
+    ``{"error":{"code":400,"message":"Failed to initialize samplers: failed to parse
+    grammar","type":"invalid_request_error"}}``. This exact wording is llama.cpp-
+    specific (traced to ``common/sampling.cpp``'s ``llama_sampler_init_grammar``
+    failure path) and never appears in OpenRouter or other cloud providers' error
+    bodies, so matching on it is inherently provider-scoped without needing a
+    separate config flag. It was NOT reproducible on demand with the identical
+    schema/payload on retry - falling back to json_object (still Pydantic-validated
+    client-side) is a robust response regardless of whether the underlying cause is
+    a genuine schema incompatibility or transient server-side state.
+    """
+    lowered = body.casefold()
+    return "failed to parse grammar" in lowered or "failed to initialize samplers" in lowered
+
+
 class OpenAICompatibleProvider(ModelProvider):
     name = "openai_compatible"
 
@@ -215,7 +233,15 @@ class OpenAICompatibleProvider(ModelProvider):
         payload: dict[str, object],
         response: httpx.Response,
     ) -> bool:
-        """Fall back to json_object once when the server rejects json_schema.
+        """Fall back to json_object once when the server rejects/can't apply json_schema.
+
+        Two distinct triggers, both scoped by matching the server's own error text
+        (never a generic "any 400 retries" rule, so unrelated 400s like a bad API key
+        still raise): the server rejecting ``response_format`` outright, or a
+        llama.cpp-family grammar-parse failure while trying to apply the schema as a
+        GBNF grammar. Either way, the schema stays embedded in the system prompt and
+        the response is still Pydantic-validated client-side, so this trades strict
+        server-side enforcement for a working call - not a silent correctness gap.
 
         Mutates ``payload`` in place and remembers the capability for subsequent
         requests, so only the first call pays the 400 round-trip. Returns True
@@ -227,13 +253,16 @@ class OpenAICompatibleProvider(ModelProvider):
             or request.response_schema is None
         ):
             return False
-        if not _is_response_format_error(response.text):
+        if not (_is_response_format_error(response.text) or _is_grammar_parse_error(response.text)):
             return False
         self._supports_json_schema = False
         logger.info(
             "openai_compatible_json_schema_unsupported_fallback",
             task_name=request.task_name,
             status_code=response.status_code,
+            reason="grammar_parse_error"
+            if _is_grammar_parse_error(response.text)
+            else "response_format_rejected",
         )
         payload["response_format"] = {"type": "json_object"}
         return True
@@ -477,6 +506,12 @@ class OpenAICompatibleProvider(ModelProvider):
             # NOT reduce reasoning token usage — the model still "thinks" internally
             # on routes that support it, so this alone does not prevent truncation.
             request_payload["reasoning"] = {"exclude": True}
+            # vLLM/llama.cpp convention for Qwen3-family models specifically. Gated
+            # behind the same flag as the OpenRouter reasoning control above (both are
+            # "reasoning mitigation", just different mechanisms per provider) so this
+            # never changes the request sent to OpenRouter or any other provider
+            # unless the flag is explicitly turned on.
+            request_payload["chat_template_kwargs"] = {"enable_thinking": False}
         if request.context_size is not None:
             # Matching passes its tuned per-sequence context; the local-code-worker
             # gateway honors it per request (winning over the routed tier default).

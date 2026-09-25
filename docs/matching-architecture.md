@@ -320,6 +320,71 @@ use a separate provider-construction path in `app/api/main.py`):
 this is pure observability and is not gated by the flag. With the flag off, the request
 payload and every code path are byte-for-byte identical to before this section was added.
 
+### llama.cpp grammar-parse failures (`Failed to initialize samplers: failed to parse grammar`)
+
+Diagnosed 2026-09-25 against a local llama.cpp-based gateway (a router serving several models,
+including a Gemma preset actually loaded and several Qwen3 presets available but not loaded) —
+`extract_vacancy_requirements` and, less often, `decompose_requirement`/
+`evaluate_evidence_entailment[_batch]` failed instantly (~0.05s) with `HTTP 400`:
+
+```json
+{"error":{"code":400,"message":"Failed to initialize samplers: failed to parse grammar","type":"invalid_request_error"}}
+```
+
+**What was confirmed:**
+
+- The failure is thrown by `common/sampling.cpp`'s `llama_sampler_init_grammar` — the GBNF
+  *parser*, a step strictly after JSON-schema→grammar *conversion*. Fetching
+  `examples/json_schema_to_grammar.py` from the exact llama.cpp commit the gateway's `/props`
+  reported (matched via `build_info`) and running all four of JSA's structural schemas
+  (`VacancyExtraction`, `RequirementDecomposition`, `_RawEntailmentResult`,
+  `_RawBatchEntailmentResult`) through it converts every one without error — the schemas
+  themselves aren't malformed JSON Schema by the reference implementation's own logic.
+- `/slots` on the gateway reports `"chat_format":"peg-gemma4"` and `"reasoning_format":"deepseek"`
+  — fields absent from vanilla llama.cpp. **This gateway runs a custom fork**, so the vanilla
+  reference converter above is corroborating evidence only (the schema is spec-valid), not proof
+  of what this fork's actual grammar/constrained-decoding path does at request time.
+- **The failure was not reproducible on demand.** The exact byte-identical request (same schema,
+  same `max_tokens`, same `context_length`, same everything) that failed once then succeeded on
+  every later retry — including varying `max_tokens`/`context_length` independently and firing 5
+  requests concurrently. `/slots` also showed the single processing slot (`parallel=1` in this
+  gateway's per-model config) pinned on one generation for several minutes at a pathologically
+  slow decode rate during testing, consistent with contention from another client sharing the
+  gateway — a risk called out going into this diagnosis, since this llama.cpp instance serves
+  more than one project.
+
+**Conclusion: no specific schema construct is identified as the cause**, and none is claimed.
+Simplifying the schema was considered (the task's preferred fix) but isn't backed by evidence —
+guessing at removals (`pattern`/`format`/`$ref`/nullable `anyOf`) risks papering over a transient
+infra issue while silently weakening response validation. The `weight`/`confidence` fields'
+`minimum`/`maximum` constraints are also worth noting as a likely-inert (not broken) detail: the
+vanilla converter only special-cases `minimum`/`maximum` for `"type": "integer"` — on JSA's
+`"type": "number"` fields it silently falls through to an unconstrained number rule rather than
+erroring, so those bounds are already not enforced server-side even when grammar mode works.
+
+**Fix implemented** (`app/llm/providers/openai_compatible.py`): the existing json_schema→
+json_object fallback (previously triggered only when a server rejects `response_format` outright)
+now also triggers on this exact llama.cpp error text via `_is_grammar_parse_error()`. One retry
+per provider instance's first occurrence; the schema instruction stays in the system prompt and
+the response is still validated against the Pydantic model client-side (`ModelRouter.route()`'s
+`output_schema.model_validate(payload)`), so this trades server-side grammar enforcement for a
+working call rather than a silent correctness gap. The match is on the server's own error
+wording — text that OpenRouter and other cloud providers never produce — so it is inherently
+scoped to llama.cpp-family servers without a config flag and never changes an OpenRouter request.
+Separately, `chat_template_kwargs: {"enable_thinking": false}` (the vLLM/llama.cpp convention for
+Qwen3-family models) is sent only when `APP_MATCHING_LLM_REASONING_MITIGATION_ENABLED=true` (the
+same flag as the OpenRouter reasoning-mitigation above — both are "reasoning mitigation," just a
+different mechanism per provider); it's inert for the Gemma model this gateway currently has
+loaded and ready for when a Qwen3 preset is loaded instead.
+
+**Not done, and why**: live end-to-end verification (running several real matching tasks through
+this local model) could not be completed — the gateway's single slot was occupied by a long-
+running generation for the duration of testing, consistent with the contention finding above, and
+forcing it off would affect whatever other client is using it. The unit-level fix is tested
+(`tests/unit/test_openai_compatible_provider.py`: fallback triggers on the exact error text,
+does not trigger on an unrelated 400, `chat_template_kwargs` gating matches the flag) but not
+yet confirmed against a live successful extraction on this gateway.
+
 ## Discovery-time keyword score and the shadow e5 scorer
 
 This section is about a different, earlier score than the matching-v2 pipeline above:

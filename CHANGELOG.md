@@ -89,6 +89,31 @@ semantic versioning for new releases; older historical version numbers are prese
 
 ### Fixed
 
+- **Matching against a local llama.cpp gateway could fail every structural task
+  (`extract_vacancy_requirements`, `decompose_requirement`, `evaluate_evidence_entailment[_batch]`)
+  with `HTTP 400 "Failed to initialize samplers: failed to parse grammar"` in ~0.05s.** Traced to
+  `common/sampling.cpp`'s `llama_sampler_init_grammar` (the GBNF *parser*, a separate step from
+  JSON-schema→grammar *conversion*) in the exact llama.cpp build behind the gateway (`/props`
+  build_info, commit-matched against `examples/json_schema_to_grammar.py` from the same commit,
+  which converts all four of JSA's structural schemas without error - so the schemas aren't
+  fundamentally malformed JSON Schema). The failure was **not reproducible on demand**: the
+  identical schema/payload that failed once then succeeded on every subsequent retry, including
+  under a deliberate concurrent-request test, pointing at a transient/stateful cause (most likely
+  contention on the gateway's single processing slot, `parallel=1`, from another project sharing
+  it - this exact risk was flagged going in) rather than a specific broken schema construct.
+  Given that, `OpenAICompatibleProvider` now treats this llama.cpp-specific error text the same
+  way it already treats a rejected `response_format`: one automatic retry with `json_object`
+  instead of `json_schema` (schema instruction stays in the system prompt, response is still
+  Pydantic-validated client-side), then sticks with `json_object` for the rest of that provider
+  instance's calls. The match is on the server's exact error wording, which OpenRouter and other
+  cloud providers never produce, so this needs no config flag and never touches their requests.
+  Separately, `chat_template_kwargs: {"enable_thinking": false}` (the vLLM/llama.cpp convention
+  for Qwen3-family models) is now sent when `APP_MATCHING_LLM_REASONING_MITIGATION_ENABLED=true`
+  (the same flag introduced for OpenRouter's reasoning-token truncation above) - a no-op for the
+  currently-loaded non-Qwen3 model, ready for when that gateway is pointed at a Qwen3 preset.
+  `usage`/`finish_reason` logging from that same change now also covers this path. See
+  `docs/matching-architecture.md` for the full diagnosis, including why a specific "fix the
+  schema" recommendation isn't given.
 - **Login confirmation stuck forever on a site where sign-in and the account area share a URL.**
   On sites like Michael Page, the sign-in form and the logged-in "My Page" area render at the
   same path, so "Я вошёл — сохранить" always saw the sign-in URL marker and rejected a completed
