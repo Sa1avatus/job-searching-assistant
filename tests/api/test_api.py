@@ -2,6 +2,7 @@ import json
 from types import SimpleNamespace
 
 import httpx
+import structlog
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -11,13 +12,15 @@ from ui_http import get_ui_page
 from app.api.main import (
     app,
     build_model_providers,
+    greenhouse_http_client,
+    llm_http_client,
     llm_is_configured,
     required_api_scope,
     serialize_discovery_outcomes,
 )
 from app.config import Settings, get_settings
 from app.services.job_discovery import DiscoveryOutcome, JobDiscoveryService
-from app.storage.database import Base
+from app.storage.database import Base, session_scope
 from app.storage.tables import ApplicationMatchResultRow, ApplicationRow, UserRow, VacancyRow
 
 client = TestClient(app)
@@ -599,3 +602,298 @@ def test_review_has_metadata_tags_source_button_and_in_place_rejection() -> None
     # Reject removes only affected card without queue reload
     assert "decision === 'reject'" in html
     assert "closest('article')" in html
+
+
+def _discovery_test_env(monkeypatch):
+    """Create an in-memory SQLite database with a user, vacancy, and an
+    awaiting-review application, and return the session factory and ids."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    user_id = "discovery-test-user"
+    vacancy_id = "vacancy-discovery-1"
+    application_id = "application-discovery-1"
+    with session_factory() as session:
+        session.add(UserRow(id=user_id, display_name="Discovery Test Candidate"))
+        session.add(
+            VacancyRow(
+                id=vacancy_id,
+                source_url="https://example.test/vacancy/1",
+                title="Discovery Engineer",
+                company="Example",
+            )
+        )
+        session.add(
+            ApplicationRow(
+                id=application_id,
+                user_id=user_id,
+                vacancy_id=vacancy_id,
+                status="awaiting_review",
+                match_score=80,
+            )
+        )
+        session.commit()
+    return session_factory, user_id, vacancy_id, application_id
+
+
+def _make_outcome(application_id: str, vacancy_id: str, url: str) -> DiscoveryOutcome:
+    return DiscoveryOutcome(
+        application_id=application_id,
+        vacancy_id=vacancy_id,
+        title="Discovery Engineer",
+        company="Example",
+        source_url=url,
+        location="Remote",
+        match_score=80,
+        status="created",
+        application_status="awaiting_review",
+        vacancy_summary="Build discovery systems.",
+        work_format="remote",
+    )
+
+
+class _StubProvider:
+    """Non-empty provider stand-in so the discover endpoints enter the drafting loop."""
+
+    def __init__(self) -> None:
+        self.name = "stub-provider"
+
+
+def _setup_discovery_test(monkeypatch, settings: Settings):
+    """Override dependencies and return (test_client, sentinel_llm_client, captured, ids)."""
+    session_factory, user_id, vacancy_id, application_id = _discovery_test_env(monkeypatch)
+    monkeypatch.setattr("app.api.main.get_settings", lambda: settings)
+
+    sentinel_llm_client = object.__new__(httpx.AsyncClient)
+    captured: list[httpx.AsyncClient] = []
+
+    def _capture_provider(http_client, session, user_id, settings, purpose=None):
+        captured.append(http_client)
+        return (_StubProvider(),)
+
+    monkeypatch.setattr("app.api.main.build_user_model_providers", _capture_provider)
+
+    def _always_needs_refresh(self, application_id: str) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "app.services.materials_generation.MaterialsGenerationService.needs_material_refresh",
+        _always_needs_refresh,
+    )
+
+    overrides = app.dependency_overrides
+    overrides[session_scope] = lambda: session_factory()
+    overrides[llm_http_client] = lambda: sentinel_llm_client
+
+    test_client = TestClient(app)
+    return test_client, sentinel_llm_client, captured, user_id, vacancy_id, application_id
+
+
+def _cleanup_discovery_test():
+    app.dependency_overrides.clear()
+
+
+def test_discover_headhunter_vacancies_routes_llm_client_and_handles_draft_failure(
+    monkeypatch,
+) -> None:
+    settings = Settings(_env_file=None, matching_v2_enabled=False)
+    test_client, sentinel_llm, captured, user_id, _, application_id = _setup_discovery_test(
+        monkeypatch, settings
+    )
+    try:
+        outcome = _make_outcome(application_id, "vacancy-discovery-1", "https://hh.ru/vacancy/1")
+
+        async def fake_discover_headhunter(self, user_id, headhunter_adapter=None, **kwargs):
+            return [outcome]
+
+        monkeypatch.setattr(
+            JobDiscoveryService, "discover_headhunter_vacancies", fake_discover_headhunter
+        )
+
+        draft_calls: list[str] = []
+
+        async def failing_draft(self, application_id, **kwargs):
+            draft_calls.append(application_id)
+            raise RuntimeError("draft failed")
+
+        monkeypatch.setattr(
+            "app.services.materials_generation.MaterialsGenerationService.draft_materials",
+            failing_draft,
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            response = test_client.post(
+                f"/v1/users/{user_id}/discover-headhunter-vacancies",
+                json={"search_text": "engineer", "limit": 15},
+            )
+
+        assert response.status_code == 200
+        assert len(captured) == 1
+        assert captured[0] is sentinel_llm
+        assert draft_calls == [application_id]
+        warnings = [
+            entry
+            for entry in logs
+            if entry.get("event") == "draft_materials_failed"
+            and entry.get("application_id") == application_id
+            and entry.get("error_type") == "RuntimeError"
+        ]
+        assert len(warnings) == 1
+        data = response.json()
+        assert data[0]["application_id"] == application_id
+    finally:
+        _cleanup_discovery_test()
+
+
+def test_discover_linkedin_vacancies_routes_llm_client_and_handles_draft_failure(
+    monkeypatch,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        matching_v2_enabled=False,
+        enable_linkedin_apply=True,
+    )
+    test_client, sentinel_llm, captured, user_id, _, application_id = _setup_discovery_test(
+        monkeypatch, settings
+    )
+    try:
+        outcome = _make_outcome(
+            application_id, "vacancy-discovery-1", "https://www.linkedin.com/jobs/view/1"
+        )
+
+        async def fake_discover_linkedin(self, user_id, linkedin_adapter=None, **kwargs):
+            return [outcome]
+
+        monkeypatch.setattr(
+            JobDiscoveryService, "discover_linkedin_vacancies", fake_discover_linkedin
+        )
+
+        draft_calls: list[str] = []
+
+        async def failing_draft(self, application_id, **kwargs):
+            draft_calls.append(application_id)
+            raise RuntimeError("draft failed")
+
+        monkeypatch.setattr(
+            "app.services.materials_generation.MaterialsGenerationService.draft_materials",
+            failing_draft,
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            response = test_client.post(
+                f"/v1/users/{user_id}/discover-linkedin-vacancies",
+                json={"search_text": "engineer", "limit": 15},
+            )
+
+        assert response.status_code == 200
+        assert len(captured) == 1
+        assert captured[0] is sentinel_llm
+        assert draft_calls == [application_id]
+        warnings = [
+            entry
+            for entry in logs
+            if entry.get("event") == "draft_materials_failed"
+            and entry.get("application_id") == application_id
+            and entry.get("error_type") == "RuntimeError"
+        ]
+        assert len(warnings) == 1
+        data = response.json()
+        assert data[0]["application_id"] == application_id
+    finally:
+        _cleanup_discovery_test()
+
+
+def test_discover_greenhouse_vacancies_routes_clients_and_handles_draft_failure(
+    monkeypatch,
+) -> None:
+    settings = Settings(_env_file=None, matching_v2_enabled=False)
+    session_factory, user_id, vacancy_id, application_id = _discovery_test_env(monkeypatch)
+    monkeypatch.setattr("app.api.main.get_settings", lambda: settings)
+
+    sentinel_llm_client = object.__new__(httpx.AsyncClient)
+    sentinel_greenhouse_client = object.__new__(httpx.AsyncClient)
+    captured_llm: list[httpx.AsyncClient] = []
+    captured_greenhouse: list[httpx.AsyncClient] = []
+
+    def _capture_provider(http_client, session, user_id, settings, purpose=None):
+        captured_llm.append(http_client)
+        return (_StubProvider(),)
+
+    monkeypatch.setattr("app.api.main.build_user_model_providers", _capture_provider)
+
+    def _always_needs_refresh(self, application_id: str) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "app.services.materials_generation.MaterialsGenerationService.needs_material_refresh",
+        _always_needs_refresh,
+    )
+
+    class _FakeGreenhouseApi:
+        def __init__(self, http_client: httpx.AsyncClient) -> None:
+            captured_greenhouse.append(http_client)
+            self._http_client = http_client
+
+    monkeypatch.setattr("app.api.main.GreenhouseJobBoardApi", _FakeGreenhouseApi)
+
+    overrides = app.dependency_overrides
+    overrides[session_scope] = lambda: session_factory()
+    overrides[llm_http_client] = lambda: sentinel_llm_client
+    overrides[greenhouse_http_client] = lambda: sentinel_greenhouse_client
+
+    test_client = TestClient(app)
+    try:
+        outcome = _make_outcome(
+            application_id, vacancy_id, "https://boards.greenhouse.io/example/jobs/1"
+        )
+
+        async def fake_discover_greenhouse(self, user_id, greenhouse_adapter=None, **kwargs):
+            return [outcome]
+
+        monkeypatch.setattr(
+            JobDiscoveryService, "discover_greenhouse_vacancies", fake_discover_greenhouse
+        )
+
+        draft_calls: list[str] = []
+
+        async def failing_draft(self, application_id, **kwargs):
+            draft_calls.append(application_id)
+            raise RuntimeError("draft failed")
+
+        monkeypatch.setattr(
+            "app.services.materials_generation.MaterialsGenerationService.draft_materials",
+            failing_draft,
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            response = test_client.post(
+                f"/v1/users/{user_id}/discover-greenhouse-vacancies",
+                json={
+                    "board_urls": ["https://boards.greenhouse.io/example"],
+                    "search_text": "engineer",
+                    "limit": 15,
+                },
+            )
+
+        assert response.status_code == 200
+        assert len(captured_llm) == 1
+        assert captured_llm[0] is sentinel_llm_client
+        assert len(captured_greenhouse) == 1
+        assert captured_greenhouse[0] is sentinel_greenhouse_client
+        assert draft_calls == [application_id]
+        warnings = [
+            entry
+            for entry in logs
+            if entry.get("event") == "draft_materials_failed"
+            and entry.get("application_id") == application_id
+            and entry.get("error_type") == "RuntimeError"
+        ]
+        assert len(warnings) == 1
+        data = response.json()
+        assert data[0]["application_id"] == application_id
+    finally:
+        _cleanup_discovery_test()

@@ -197,6 +197,13 @@ semantic versioning for new releases; older historical version numbers are prese
   instead of once per search - amplifying load on the RAG service and on the external LLM used for
   matching/materials generation when many vacancies were found at once. The profile/CV is now
   ingested at most once per search (memoized per selected CV).
+- **Discovery cover-letter drafts now use the LLM client's own timeout.** The hh.ru, LinkedIn and
+  Greenhouse discover endpoints previously drafted cover letters through the job-board HTTP
+  clients, whose 30 s timeout was far shorter than the LLM provider's generation time, so
+  drafts often died mid-generation. They now draft through `llm_http_client`, whose timeout is
+  `materials_generation_timeout_seconds + 10`, and a failed draft is logged
+  (`draft_materials_failed`) instead of being silently skipped - the vacancy is still returned
+  for review without its cover letter.
 
 ## [2.0.0] - 2026-09-19
 

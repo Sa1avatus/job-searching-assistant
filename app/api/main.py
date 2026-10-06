@@ -3100,7 +3100,7 @@ async def discover_headhunter_vacancies(
     user_id: str,
     request: DiscoverHeadHunterVacanciesRequest,
     session: Annotated[Session, Depends(session_scope)],
-    http_client: Annotated[httpx.AsyncClient, Depends(headhunter_http_client)],
+    http_client: Annotated[httpx.AsyncClient, Depends(llm_http_client)],
 ) -> list[DiscoveryOutcomeResponse]:
     """Search hh.ru by the candidate's verified skills and stage results as awaiting_review.
 
@@ -3135,7 +3135,12 @@ async def discover_headhunter_vacancies(
                     outcome.application_id,
                     replace_mismatched_cover_letter=True,
                 )
-            except Exception:  # noqa: BLE001 - a drafting failure must not fail the whole search
+            except Exception as error:  # noqa: BLE001 - a drafting failure must not fail the whole search
+                logger.warning(
+                    "draft_materials_failed",
+                    application_id=outcome.application_id,
+                    error_type=type(error).__name__,
+                )
                 continue
     return serialize_discovery_outcomes(outcomes)
 
@@ -3148,7 +3153,7 @@ async def discover_linkedin_vacancies(
     user_id: str,
     request: DiscoverLinkedInVacanciesRequest,
     session: Annotated[Session, Depends(session_scope)],
-    http_client: Annotated[httpx.AsyncClient, Depends(headhunter_http_client)],
+    http_client: Annotated[httpx.AsyncClient, Depends(llm_http_client)],
 ) -> list[DiscoveryOutcomeResponse]:
     """Search LinkedIn's job search page (native Easy Apply jobs only) via browser automation.
 
@@ -3191,7 +3196,12 @@ async def discover_linkedin_vacancies(
                     outcome.application_id,
                     replace_mismatched_cover_letter=True,
                 )
-            except Exception:  # noqa: BLE001 - a drafting failure must not fail the whole search
+            except Exception as error:  # noqa: BLE001 - a drafting failure must not fail the whole search
+                logger.warning(
+                    "draft_materials_failed",
+                    application_id=outcome.application_id,
+                    error_type=type(error).__name__,
+                )
                 continue
     return serialize_discovery_outcomes(outcomes)
 
@@ -3205,6 +3215,7 @@ async def discover_greenhouse_vacancies(
     request: DiscoverGreenhouseVacanciesRequest,
     session: Annotated[Session, Depends(session_scope)],
     http_client: Annotated[httpx.AsyncClient, Depends(greenhouse_http_client)],
+    llm_client: Annotated[httpx.AsyncClient, Depends(llm_http_client)],
 ) -> list[DiscoveryOutcomeResponse]:
     """Search known or explicitly supplied Greenhouse company boards through their public API."""
     try:
@@ -3225,7 +3236,7 @@ async def discover_greenhouse_vacancies(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
     settings = get_settings()
-    providers = build_user_model_providers(http_client, session, user_id, settings)
+    providers = build_user_model_providers(llm_client, session, user_id, settings)
     if providers:
         materials_service = MaterialsGenerationService(session, ModelRouter(providers))
         for outcome in outcomes:
@@ -3236,7 +3247,12 @@ async def discover_greenhouse_vacancies(
                     outcome.application_id,
                     replace_mismatched_cover_letter=True,
                 )
-            except Exception:  # noqa: BLE001 - drafting failure must not discard the vacancy
+            except Exception as error:  # noqa: BLE001 - a drafting failure must not discard the vacancy
+                logger.warning(
+                    "draft_materials_failed",
+                    application_id=outcome.application_id,
+                    error_type=type(error).__name__,
+                )
                 continue
     return serialize_discovery_outcomes(outcomes)
 

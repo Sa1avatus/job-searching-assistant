@@ -13,3 +13,8 @@ debug.log
 # Embedded git worktrees must never be staged
 .worktrees/
 models/ltr/
+
+# Agent plans and backup copies: not project sources
+# (also kept out of the AHAWR retrieval index, which follows .gitignore)
+.hermes/plans/
+*_backup*
